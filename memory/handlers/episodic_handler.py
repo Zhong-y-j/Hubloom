@@ -32,14 +32,19 @@ class EpisodicHandler(MemoryHandler):
         source: str = "memory",
         metadata: Optional[dict] = None,
     ) -> str:
+        meta = dict(metadata or {})
+        ref_session_id = meta.pop("ref_session_id", None)
+        importance = int(meta.pop("importance", 0) or 0)
         item = EpisodicItem(
             id=None,
             content=content,
             namespace=self.namespace,
             source=source,  # type: ignore[arg-type]
-            metadata=metadata or {},
+            metadata=meta,
             created_at=now_local_str(),
             last_accessed_at=now_local_str(),
+            ref_session_id=ref_session_id,
+            importance=importance,
         )
         return await self.store.add(item)
 

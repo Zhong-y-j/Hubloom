@@ -26,10 +26,24 @@ class ConversationHandler(MemoryHandler):
         self.store = store
         self.session_id = session_id
 
-    async def append(self, message: Message) -> str:
+    async def append(
+        self,
+        message: Message,
+        *,
+        source: str = "memory",
+        metadata: Optional[dict] = None,
+        token_count: int | None = None,
+        turn_index: int | None = None,
+    ) -> str:
         """追加一条对话消息（推荐入口）。"""
         return await asyncio.to_thread(
-            self.store.add_message, self.session_id, message
+            self.store.add_message,
+            self.session_id,
+            message,
+            source=source,
+            metadata=metadata,
+            token_count=token_count,
+            turn_index=turn_index,
         )
 
     async def remember(

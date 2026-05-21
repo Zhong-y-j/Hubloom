@@ -36,6 +36,10 @@ class OpenAIEmbedder(Embedder):
         self._model = model
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
+    @property
+    def model_name(self) -> str:
+        return self._model
+
     async def embed(self, texts: list[str]) -> list[list[float]]:
         # OpenAI embedding API 支持 batch；保持输入顺序输出
         cleaned: Sequence[str] = [str(t or "").strip() for t in texts]

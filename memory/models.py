@@ -26,6 +26,9 @@ class EpisodicItem:
             **示例**：开发自测 ``mem:dev_alice:default``；生产建议
             ``mem:usr_8f3a2b1c:default``、``mem:usr_8f3a2b1c:sess_abc123``。
 
+        ref_session_id: 来源会话 ID（与 conversation.session_id 对齐，可选）
+        content_hash: 正文哈希，用于去重（可由 store 自动计算）
+        importance: 重要度 0–100，越大越不易被 LRU/TTL 淘汰（策略层使用）
         metadata: 记忆条目的元数据
         created_at: 记忆条目的创建时间
         last_accessed_at: 记忆条目的最后一次访问时间
@@ -43,8 +46,10 @@ class EpisodicItem:
     last_accessed_at: str = field(default_factory=now_local_str)
     access_count: int = 0
     source: MemorySource = "memory"
-    # id 允许为空：推荐由 store/manager 生成（例如 UUID）。
     id: str | None = None
+    ref_session_id: str | None = None
+    content_hash: str | None = None
+    importance: int = 0
 
 
 @dataclass
@@ -65,3 +70,8 @@ class SemanticItem:
     access_count: int = 0
     source: MemorySource = "memory"
     id: str | None = None
+    ref_session_id: str | None = None
+    content_hash: str | None = None
+    embedding_model: str | None = None
+    embedding_dim: int | None = None
+    importance: int = 0

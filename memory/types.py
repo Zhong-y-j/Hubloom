@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from typing import Literal, TypeAlias
 
-# 记忆类型（当前仅两种；未来可扩展）
+# 记忆类型
 MemoryType: TypeAlias = Literal["episodic", "semantic", "conversation"]
 
-# 检索模式
+# 可检索的长期记忆（不含 conversation）
+LongTermMemoryType: TypeAlias = Literal["episodic", "semantic"]
+
+LONG_TERM_MEMORY_TYPES: tuple[LongTermMemoryType, ...] = ("episodic", "semantic")
+
+# 检索模式（仅 episodic / semantic）
 RecallMode: TypeAlias = Literal["keyword", "semantic", "hybrid"]
 
 # 记忆来源

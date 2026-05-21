@@ -1,14 +1,17 @@
 """
-packages/context/conversation_store.py
-
 对话历史持久化存储，基于 SQLite。
 """
+
+from __future__ import annotations
 
 import json
 import os
 import sqlite3
 import uuid
+from typing import Any, Optional
+
 from core.models import Message, Role, ToolCall
+from memory.store.schema_migrate import ensure_columns
 
 
 class ConversationSQLitesStore:
@@ -16,10 +19,14 @@ class ConversationSQLitesStore:
 
     每条消息按 session_id 归档，支持多用户多会话。
     与 ContextAssembler 配合：store 负责完整持久化，assembler 负责裁剪组装。
-
-    Args:
-        db_path: SQLite 数据库文件路径
     """
+
+    _EXTRA_COLUMNS = {
+        "metadata_json": "TEXT DEFAULT '{}'",
+        "source": "TEXT DEFAULT 'memory'",
+        "token_count": "INTEGER",
+        "turn_index": "INTEGER",
+    }
 
     def __init__(self, db_path: str = "data/memory.db"):
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
@@ -38,15 +45,29 @@ class ConversationSQLitesStore:
                 tool_calls   TEXT,
                 tool_call_id TEXT,
                 name         TEXT,
-                created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime'))
+                created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%S', 'now', 'localtime')),
+                metadata_json TEXT DEFAULT '{}',
+                source       TEXT DEFAULT 'memory',
+                token_count  INTEGER,
+                turn_index   INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_session_time
                 ON conversation_memory(session_id, created_at);
             """
         )
+        ensure_columns(self.conn, "conversation_memory", self._EXTRA_COLUMNS)
         self.conn.commit()
 
-    def add_message(self, session_id: str, message: Message) -> str:
+    def add_message(
+        self,
+        session_id: str,
+        message: Message,
+        *,
+        source: str = "memory",
+        metadata: Optional[dict[str, Any]] = None,
+        token_count: int | None = None,
+        turn_index: int | None = None,
+    ) -> str:
         """持久化一条消息，返回生成的消息 ID。"""
         msg_id = uuid.uuid4().hex
 
@@ -68,8 +89,10 @@ class ConversationSQLitesStore:
 
         self.conn.execute(
             """
-            INSERT INTO conversation_memory (id, session_id, role, content, tool_calls, tool_call_id, name)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO conversation_memory
+                (id, session_id, role, content, tool_calls, tool_call_id, name,
+                 metadata_json, source, token_count, turn_index)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 msg_id,
@@ -79,6 +102,10 @@ class ConversationSQLitesStore:
                 tool_calls_json,
                 message.tool_call_id,
                 message.name,
+                json.dumps(metadata or {}, ensure_ascii=False),
+                source,
+                token_count,
+                turn_index,
             ),
         )
         self.conn.commit()
@@ -88,7 +115,7 @@ class ConversationSQLitesStore:
         """获取最近 N 条消息（按时间正序返回）。"""
         rows = self.conn.execute(
             """
-            SELECT role, content, tool_calls, tool_call_id, name
+            SELECT id, role, content, tool_calls, tool_call_id, name, metadata_json
             FROM conversation_memory
             WHERE session_id = ?
             ORDER BY created_at DESC, rowid DESC
@@ -97,14 +124,13 @@ class ConversationSQLitesStore:
             (session_id, limit),
         ).fetchall()
 
-        messages = [self._row_to_message(row) for row in reversed(rows)]
-        return messages
+        return [self._row_to_message(row) for row in reversed(rows)]
 
     def get_all(self, session_id: str) -> list[Message]:
         """获取会话的完整历史。"""
         rows = self.conn.execute(
             """
-            SELECT role, content, tool_calls, tool_call_id, name
+            SELECT id, role, content, tool_calls, tool_call_id, name, metadata_json
             FROM conversation_memory
             WHERE session_id = ?
             ORDER BY created_at ASC, rowid ASC
@@ -155,7 +181,7 @@ class ConversationSQLitesStore:
 
     @staticmethod
     def _row_to_message(row: sqlite3.Row) -> Message:
-        """将数据库行转换为 Message 对象。"""
+        """将数据库行转换为 Message；消息 id 写入 metadata['_id'] 供上层使用。"""
         role_map = {
             "system": Role.SYSTEM,
             "user": Role.USER,

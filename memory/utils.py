@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta
 
 
@@ -13,6 +14,12 @@ def now_local_str() -> str:
 
 
 _LOCAL_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def content_hash(text: str) -> str:
+    """对正文做稳定哈希，用于去重与索引（SHA256 前 32 位 hex）。"""
+    normalized = (text or "").strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:32]
 
 
 def subtract_days_local_str(current_time_str: str, days: int) -> str:
