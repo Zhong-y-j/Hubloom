@@ -8,8 +8,6 @@ import json
 import os
 import sqlite3
 import uuid
-from typing import Optional
-
 from core.models import Message, Role, ToolCall
 
 
@@ -25,7 +23,7 @@ class ConversationSQLitesStore:
 
     def __init__(self, db_path: str = "data/memory.db"):
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
-        self.conn = sqlite3.connect(db_path)
+        self.conn = sqlite3.connect(db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self._init_db()
 
@@ -116,12 +114,13 @@ class ConversationSQLitesStore:
 
         return [self._row_to_message(row) for row in rows]
 
-    def clear_session(self, session_id: str) -> None:
-        """清空指定会话。"""
-        self.conn.execute(
+    def clear_session(self, session_id: str) -> int:
+        """清空指定会话的全部消息，返回删除条数。"""
+        cursor = self.conn.execute(
             "DELETE FROM conversation_memory WHERE session_id = ?", (session_id,)
         )
         self.conn.commit()
+        return cursor.rowcount
 
     def list_sessions(self) -> list[dict]:
         """列出所有会话概览。"""

@@ -5,20 +5,26 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from memory.models import EpisodicItem
+from core.models import Message, Role
+from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from memory.store.episodic_sqlite_store import EpisodicSQLiteStore
 from memory.store.semantic_sqlite_store import SemanticSQLiteStore
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 
-# from memory.handlers import MemoryHandler, EpisodicHandler, SemanticHandler
-# from memory.embedders import OpenAIEmbedder
+from memory.handlers import (
+    MemoryHandler,
+    EpisodicHandler,
+    SemanticHandler,
+    ConversationHandler,
+)
+from memory.embedders import OpenAIEmbedder
 
 
 async def main() -> None:
     db_path = "data/memory_test.db"
-    namespace = "mem:tester:default"
+    session_id = "sess_demo_001"
+    namespace = f"mem:{session_id}:default"
 
-    # SQLite 不会自动创建父目录，需先确保 data/ 存在
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
     episodic_store = EpisodicSQLiteStore(db_path)
@@ -26,14 +32,24 @@ async def main() -> None:
     conversation_store = ConversationSQLitesStore(db_path)
 
     print(f"已建表: episodic_memory, semantic_memory, conversation_memory")
-    # handlers: dict[str, MemoryHandler] = {
-    #     "episodic": EpisodicHandler(store=episodic_store, namespace=namespace),
-    #     "semantic": SemanticHandler(
-    #         store=semantic_store,
-    #         embedder=OpenAIEmbedder(),
-    #         namespace=namespace,
-    #     ),
-    # }
+    handlers: dict[str, MemoryHandler] = {
+        "episodic": EpisodicHandler(store=episodic_store, namespace=namespace),
+        "semantic": SemanticHandler(
+            store=semantic_store,
+            embedder=OpenAIEmbedder(),
+            namespace=namespace,
+        ),
+        "conversation": ConversationHandler(
+            store=conversation_store, session_id=session_id
+        ),
+    }
+
+    await handlers["episodic"].remember(content="用户打招呼", metadata={"turn": 1})
+    await handlers["semantic"].remember(content="用户打招呼", metadata={"turn": 1})
+    await handlers["conversation"].append(Message(role=Role.USER, content="你好"))
+    await handlers["conversation"].append(
+        Message(role=Role.ASSISTANT, content="你好，有什么可以帮你？")
+    )
 
 
 if __name__ == "__main__":
