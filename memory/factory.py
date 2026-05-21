@@ -8,6 +8,7 @@ from typing import Literal
 from memory.embedders import OpenAIEmbedder
 from memory.embedders.base import Embedder
 from memory.handlers import (
+    AssociativeHandler,
     ConversationHandler,
     EpisodicHandler,
     EpisodicQdrantHandler,
@@ -18,10 +19,12 @@ from memory.handlers import (
 from memory.manager import MemoryManager
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from memory.store.episodic_sqlite_store import EpisodicSQLiteStore
+from memory.store.neo4j_store import Neo4jStore
 from memory.store.qdrant_memory_store import QdrantMemoryStore
 from memory.store.semantic_sqlite_store import SemanticSQLiteStore
 
 VectorBackend = Literal["sqlite", "qdrant"]
+GraphBackend = Literal["neo4j", "none"]
 
 
 def create_memory_manager(
@@ -32,8 +35,10 @@ def create_memory_manager(
     qdrant_url: str | None = None,
     qdrant_collection: str | None = None,
     embedder: Embedder | None = None,
+    graph_backend: GraphBackend = "neo4j",
+    neo4j_uri: str | None = None,
 ) -> MemoryManager:
-    """创建带 conversation + 长期记忆的 MemoryManager。
+    """创建带 conversation + 长期记忆 + 联想记忆的 MemoryManager。
 
     Args:
         namespace: 长期记忆命名空间；conversation 使用同一字符串作为 session_id
@@ -42,6 +47,8 @@ def create_memory_manager(
         qdrant_url: Qdrant 地址，默认读环境变量 ``QDRANT_URL``
         qdrant_collection: 集合名，默认读 ``QDRANT_COLLECTION``
         embedder: 向量嵌入器，默认 ``OpenAIEmbedder()``
+        graph_backend: ``neo4j`` 注册 associative；``none`` 不启用图记忆
+        neo4j_uri: Neo4j 地址，默认读 ``NEO4J_URI``
     """
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -77,6 +84,13 @@ def create_memory_manager(
         handlers["semantic"] = SemanticHandler(
             store=SemanticSQLiteStore(db_path),
             embedder=embedder or OpenAIEmbedder(),
+            namespace=namespace,
+        )
+
+    if graph_backend == "neo4j":
+        neo4j_store = Neo4jStore(uri=neo4j_uri)
+        handlers["associative"] = AssociativeHandler(
+            store=neo4j_store,
             namespace=namespace,
         )
 

@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from .types import MemorySource
+from .types import EntityType, LongTermMemoryType, MemorySource
 
 from .utils import now_local_str
 
@@ -75,3 +75,60 @@ class SemanticItem:
     embedding_model: str | None = None
     embedding_dim: int | None = None
     importance: int = 0
+
+
+@dataclass
+class GraphEntity:
+    """联想记忆 · 图实体节点（Neo4j ``:Entity``）。"""
+
+    id: str
+    namespace: str
+    name: str
+    entity_type: EntityType = "other"
+    aliases: list[str] = field(default_factory=list)
+    description: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    created_at: str = field(default_factory=now_local_str)
+    updated_at: str | None = None
+    source: MemorySource = "memory"
+    ref_session_id: str | None = None
+    importance: int = 0
+
+
+@dataclass
+class GraphRelation:
+    """联想记忆 · 实体间关系边。"""
+
+    namespace: str
+    from_entity_id: str
+    to_entity_id: str
+    from_name: str
+    to_name: str
+    relation_type: str = "RELATES_TO"
+    relation_label: str | None = None
+    weight: float = 1.0
+    created_at: str | None = None
+    id: str | None = None
+
+
+@dataclass
+class GraphMemoryRef:
+    """联想记忆 · 指向 episodic/semantic 向量记忆的引用节点。"""
+
+    id: str
+    namespace: str
+    memory_type: LongTermMemoryType
+    memory_id: str
+    entity_id: str | None = None
+    content_preview: str | None = None
+    created_at: str | None = None
+
+
+@dataclass
+class AssociativeRecallResult:
+    """联想记忆检索结果：种子实体 + 邻域 + 关联记忆引用。"""
+
+    seed: GraphEntity | None = None
+    entities: list[GraphEntity] = field(default_factory=list)
+    relations: list[GraphRelation] = field(default_factory=list)
+    memory_refs: list[GraphMemoryRef] = field(default_factory=list)

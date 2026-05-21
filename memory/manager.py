@@ -5,9 +5,10 @@ from typing import Optional, TypeAlias
 
 from core.models import Message
 
+from .handlers.associative_handler import AssociativeHandler
 from .handlers.base import MemoryHandler
 from .handlers.conversation_handler import ConversationHandler
-from .models import EpisodicItem, SemanticItem
+from .models import AssociativeRecallResult, EpisodicItem, SemanticItem
 from .utils import now_local_str
 from .types import (
     LONG_TERM_MEMORY_TYPES,
@@ -27,6 +28,7 @@ class RecallResult:
     memory_type: MemoryType | None
     messages: list[Message] | None = None
     items: list[MemoryItem] | None = None
+    graph: AssociativeRecallResult | None = None
 
 
 class MemoryManager:
@@ -59,6 +61,12 @@ class MemoryManager:
             raise ValueError("未注册 conversation Handler 或类型不匹配")
         return handler
 
+    def _associative_handler(self) -> AssociativeHandler:
+        handler = self.handlers.get("associative")
+        if not isinstance(handler, AssociativeHandler):
+            raise ValueError("未注册 associative Handler 或类型不匹配")
+        return handler
+
     # ───── 统一入口：存储 ─────
     async def remember(
         self,
@@ -75,6 +83,7 @@ class MemoryManager:
 
         - ``conversation``: 必须传 ``message``（完整 Message，含 role/tool_calls）
         - ``episodic`` / ``semantic``: 必须传 ``content``
+        - ``associative``: 传 ``content`` 和/或 ``metadata``（``from_name``+``to_name`` 建关系等，见 AssociativeHandler）
         - 长期记忆可在 ``metadata`` 中传 ``ref_session_id``、``importance``（0–100）
         """
         if memory_type == "conversation":
@@ -86,6 +95,24 @@ class MemoryManager:
                 metadata=metadata,
                 token_count=token_count,
                 turn_index=turn_index,
+            )
+
+        if memory_type == "associative":
+            meta = metadata or {}
+            has_triple = meta.get("from_name") and meta.get("to_name")
+            has_link = (
+                meta.get("entity_id")
+                and meta.get("memory_type")
+                and meta.get("memory_id")
+            )
+            if not content and not has_triple and not has_link:
+                raise ValueError(
+                    "associative 存储须传 content=和/或 metadata（from_name+to_name 或 entity_id+memory_*）"
+                )
+            return await self._associative_handler().remember(
+                content=content or "",
+                source=source,
+                metadata=metadata,
             )
 
         if not content:
@@ -110,7 +137,8 @@ class MemoryManager:
 
         - ``memory_type="conversation"``: 忽略 query，按时间取最近 ``top_k`` 条 Message
         - ``memory_type="episodic"|"semantic"``: 单路检索
-        - ``memory_type`` 未传: 按 ``mode`` 在 episodic/semantic 间检索（hybrid=两路合并）
+        - ``memory_type="associative"``: 图邻域检索，结果在 ``graph`` 字段
+        - ``memory_type`` 未传: 按 ``mode`` 在 episodic/semantic 间检索（hybrid=两路合并，不含 associative）
         """
         if memory_type == "conversation":
             messages = await self._conversation_handler().recall(
@@ -131,7 +159,15 @@ class MemoryManager:
             )
             return RecallResult(memory_type=memory_type, items=list(items))
 
-        # 长期记忆多路召回（默认不含 conversation）
+        if memory_type == "associative":
+            graph = await self._associative_handler().recall_graph(
+                query=query,
+                top_k=top_k,
+                filters=filters,
+            )
+            return RecallResult(memory_type="associative", graph=graph)
+
+        # 长期记忆多路召回（默认不含 conversation / associative）
         types: list[LongTermMemoryType]
         if memory_types is not None:
             types = memory_types
