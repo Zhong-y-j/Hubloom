@@ -57,7 +57,7 @@ class SearchDocumentsTool(BaseTool):
         if not results:
             return "未找到相关文档资料。"
 
-        lines = ["[DOCUMENTS]"]
+        lines = []
         for i, doc in enumerate(results, 1):
             meta = doc.get("metadata", {})
             section = meta.get("section_path", "")
@@ -74,5 +74,4 @@ class SearchDocumentsTool(BaseTool):
             lines.append(" | ".join(header_parts))
             lines.append(doc["text"])
             lines.append("")
-        lines.append("[/DOCUMENTS]")
         return "\n".join(lines)

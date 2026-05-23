@@ -29,12 +29,12 @@ async def main() -> None:
         query_optimizer=query_optimizer,
     )
 
-    kb.clear()
+    # kb.clear()
     # # 3. 添加文档（只需执行一次）
-    doc_id = await kb.add_document(
-        "/Users/zhong/Desktop/Git-store/CODE/面试/AI项目个人工作内容及实现思路.docx"
-    )
-    print(f"文档已索引: {doc_id}")
+    # doc_id = await kb.add_document(
+    #     "/Users/zhong/Desktop/Git-store/CODE/面试/AI项目个人工作内容及实现思路.docx"
+    # )
+    # print(f"文档已索引: {doc_id}")
 
     # # # 4. 搜索文档
     tool = SearchDocumentsTool(kb, top_k=3)
