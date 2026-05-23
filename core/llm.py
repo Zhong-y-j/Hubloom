@@ -3,6 +3,26 @@ from openai import AsyncOpenAI
 from .provider import *
 from .models import *
 from .exceptions import *
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    RetryError,
+)
+
+
+def _llm_retry(max_attempts=3, min_wait=1, max_wait=30):
+    """重试：仅「可恢复」类型。限流/超时多试几次有意义；404/鉴权/超长等重试无用。
+
+    以后若要重试「部分 5xx」，不要扩大 LLMAPIError 白名单，改用 retry_if + 判断 status_code。
+    """
+    return retry(
+        stop=stop_after_attempt(max_attempts),
+        wait=wait_exponential(multiplier=1, min=min_wait, max=max_wait),
+        retry=retry_if_exception_type((RateLimitExceeded, LLMTimeout)),
+        reraise=True,
+    )
 
 
 class LLM(LLMProvider):
@@ -125,6 +145,7 @@ class LLM(LLMProvider):
         )
         yield StreamEndEvent(final_output)
 
+    @_llm_retry()
     async def generate(
         self,
         messages: list[Message],
@@ -132,7 +153,56 @@ class LLM(LLMProvider):
         stop: list[str] | None = None,
         **kwargs,
     ) -> LLMOutput:
-        pass
+        try:
+            params = self._build_params(messages, tools, stop, stream=False, **kwargs)
+            response = await self.client.chat.completions.create(**params)
+        except RetryError as e:
+            original = e.last_attempt.exception() if e.last_attempt else e
+            raise self._map_exception(original) from original
+        except Exception as e:
+            raise self._map_exception(e) from e
+
+        choice = response.choices[0]
+        message = choice.message
+
+        # 解析工具调用
+        tool_calls: list[ToolCall] = []
+        if message.tool_calls:
+            for tc in message.tool_calls:
+                try:
+                    args = (
+                        json.loads(tc.function.arguments)
+                        if tc.function.arguments
+                        else {}
+                    )
+                except json.JSONDecodeError:
+                    args = {}
+                tool_calls.append(
+                    ToolCall(id=tc.id, name=tc.function.name, arguments=args)
+                )
+
+        fr = choice.finish_reason
+        if fr == "tool_calls":
+            stop_reason = StopReason.TOOL_CALLS
+        elif fr == "length":
+            stop_reason = StopReason.LENGTH
+        elif fr == "stop":
+            stop_reason = StopReason.STOP
+        else:
+            stop_reason = StopReason.ERROR
+
+        usage = None
+        if response.usage:
+            u = response.usage
+            usage = TokenUsage(u.prompt_tokens, u.completion_tokens, u.total_tokens)
+
+        return LLMOutput(
+            content=message.content or "",
+            tool_calls=tool_calls,
+            stop_reason=stop_reason,
+            usage=usage,
+            raw_response=response,
+        )
 
     # 构建请求参数
     def _build_params(

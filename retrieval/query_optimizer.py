@@ -96,7 +96,7 @@ class QueryOptimizer:
 
         try:
             response = await self.llm.generate(
-                messages=[{"role": "user", "content": prompt}]
+                messages=[Message(role=Role.USER, content=prompt)]
             )
             hyde_text = (response.content or "").strip()
 

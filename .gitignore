@@ -3,3 +3,6 @@ __pycache__
 venv
 
 .env
+
+# 忽略 data 目录下所有内容（含子目录，如 knowledge_db、chroma 等）
+data/
