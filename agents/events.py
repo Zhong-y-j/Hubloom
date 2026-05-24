@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from core.models import TokenUsage
@@ -132,7 +132,18 @@ class IntentOutcomeEvent(AgentEvent):
         return self.is_clear
 
 
-# -------- Reflection --------
+@dataclass
+class MemoryConsolidatedEvent(AgentEvent):
+    """回合结束后长期记忆提炼写入结果。"""
+
+    episodic: list[str]
+    semantic: list[str]
+    relations: list[str]
+    links: list[str] = field(default_factory=list)
+    skipped: bool = False
+    error: str | None = None
+
+
 @dataclass
 class StageEvent(AgentEvent):
     stage: str  # "initial" | "reflection" | "revise"

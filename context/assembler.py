@@ -6,6 +6,12 @@ import re
 from typing import List, Optional, Dict, Any
 from core.models import Message, Role
 
+_MEMORY_TYPE_LABELS = {
+    "episodic": "情景",
+    "semantic": "语义",
+}
+_PINNED_SYSTEM_TAGS = ("[MEMORY]", "[DOCUMENTS]", "[GRAPH]")
+
 
 class ContextAssembler:
     """上下文装配器：将多源信息组装成可直接传给 LLM 的消息列表。
@@ -38,22 +44,24 @@ class ContextAssembler:
         documents: Optional[List[Dict]] = None,
         histories: Optional[List[Message]] = None,
         current_task: str = "",
+        graph_summary: Optional[str] = None,
     ) -> List[Message]:
         """组装最终发送给 LLM 的消息列表。
 
         Args:
             system_prompt: 系统角色设定和工具规则（必备）
-            memories: 记忆条目列表（需含 content 属性或为 dict），来自 MemoryStore系统的检索结果。
-            documents: RAG 结果列表，每条含 text, metadata, score，来自 RAG 系统的检索结果。
+            memories: 长期记忆条目（episodic/semantic），来自 MemoryContextProvider
+            documents: RAG 结果列表，每条含 text, metadata, score
             histories: 历史对话消息（最近若干轮）
             current_task: 当前用户输入，将作为最后一条 USER 消息
+            graph_summary: 联想记忆图摘要文本（associative recall 格式化结果）
 
         Returns:
             可直接传入 llm.generate_stream() 的消息列表。
         """
         # 1. Gather：收集所有候选内容，统一为 Message 格式并标记优先级/分数
         candidates: List[Dict[str, Any]] = self._gather(
-            system_prompt, memories, documents, histories
+            system_prompt, memories, documents, histories, graph_summary
         )
 
         # 2. Select：去重、评分、按 Token 预算筛选
@@ -72,6 +80,7 @@ class ContextAssembler:
         memories: Optional[List[Any]],
         documents: Optional[List[Dict]],
         histories: Optional[List[Message]],
+        graph_summary: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         candidates = []
 
@@ -82,25 +91,44 @@ class ContextAssembler:
             )
         )
 
-        # 记忆（高于文档，作为 SYSTEM 消息注入）
+        # 长期记忆（episodic / semantic）
         if memories:
             for mem in memories:
-                # 兼容对象和字典格式
-                content = getattr(mem, "content", mem.get("content", ""))
-                if not content:
-                    continue
+                content = getattr(mem, "content", None)
+                memory_type = ""
+                score = 0.7
                 if isinstance(mem, dict):
+                    content = mem.get("content", "")
+                    memory_type = str(mem.get("memory_type") or "")
                     score = float(mem.get("score", 0.7))
                 else:
-                    score = float(getattr(mem, "score", 0.7))
+                    content = content or ""
+                    meta = getattr(mem, "metadata", None)
+                    if isinstance(meta, dict) and meta.get("score") is not None:
+                        score = float(meta["score"])
+                if not content:
+                    continue
+                label = _MEMORY_TYPE_LABELS.get(memory_type, "相关")
+                formatted = f"[{label}记忆 | 相关度: {score:.2f}] {content}"
                 candidates.append(
                     _make_candidate(
                         type_="memory",
-                        content=f"[相关记忆] {content}",
+                        content=formatted,
                         priority=70,
                         score=score,
                     )
                 )
+
+        # 联想记忆图摘要
+        if graph_summary and graph_summary.strip():
+            candidates.append(
+                _make_candidate(
+                    type_="graph",
+                    content=graph_summary.strip(),
+                    priority=68,
+                    score=0.72,
+                )
+            )
 
         # 文档（RAG 结果）
         if documents:
@@ -200,6 +228,7 @@ class ContextAssembler:
         # 分组
         system_items = []
         memory_items = []
+        graph_items = []
         document_items = []
         history_items = []
 
@@ -208,6 +237,8 @@ class ContextAssembler:
                 system_items.append(item)
             elif item["type"] == "memory":
                 memory_items.append(item)
+            elif item["type"] == "graph":
+                graph_items.append(item)
             elif item["type"] == "document":
                 document_items.append(item)
             elif item["type"] == "history":
@@ -225,6 +256,14 @@ class ContextAssembler:
                 + "\n[/MEMORY]"
             )
             messages.append(Message(role=Role.SYSTEM, content=mem_block))
+
+        if graph_items:
+            graph_block = (
+                "[GRAPH]\n"
+                + "\n".join(item["content"] for item in graph_items)
+                + "\n[/GRAPH]"
+            )
+            messages.append(Message(role=Role.SYSTEM, content=graph_block))
 
         # 3) 文档块（作为单独的 SYSTEM 消息）
         if document_items:
@@ -258,17 +297,34 @@ class ContextAssembler:
         if total <= self.max_tokens:
             return messages
 
-        # 策略：固定保留首尾，从后往前填充中间部分
-        # - 首部：第一条 SYSTEM（角色设定）
-        # - 尾部：最后一条 USER（当前任务）
-        # - 中间：从后往前贪心填充（优先保留最近的对话）
+        if not messages:
+            return messages
 
-        head = messages[0]
-        tail = messages[-1] if len(messages) > 1 else None
-        middle = messages[1:-1] if len(messages) > 2 else []
+        pinned: list[Message] = []
+        rest_start = 0
+
+        pinned.append(messages[0])
+        rest_start = 1
+
+        while rest_start < len(messages):
+            msg = messages[rest_start]
+            if msg.role == Role.SYSTEM and any(
+                tag in msg.content for tag in _PINNED_SYSTEM_TAGS
+            ):
+                pinned.append(msg)
+                rest_start += 1
+            else:
+                break
+
+        tail: Message | None = None
+        if len(messages) > rest_start and messages[-1].role == Role.USER:
+            tail = messages[-1]
+            middle = messages[rest_start:-1]
+        else:
+            middle = messages[rest_start:]
 
         budget = self.max_tokens
-        budget -= self._estimate_tokens(head.content)
+        budget -= sum(self._estimate_tokens(msg.content) for msg in pinned)
         if tail:
             budget -= self._estimate_tokens(tail.content)
 
@@ -281,7 +337,7 @@ class ContextAssembler:
 
         kept_middle.reverse()
 
-        result = [head] + kept_middle
+        result = pinned + kept_middle
         if tail:
             result.append(tail)
         return result

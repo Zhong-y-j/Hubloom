@@ -13,6 +13,7 @@ from agents.events import (
     ErrorEvent,
     FinalAnswerEvent,
     IntentOutcomeEvent,
+    MemoryConsolidatedEvent,
     RunStatsEvent,
     TextDeltaEvent,
     ToolCallEvent,
@@ -25,18 +26,28 @@ from memory.embedders.openai_embedder import OpenAIEmbedder
 from memory.factory import create_memory_manager
 from retrieval.knowledge_base import KnowledgeBase
 from tools import ToolRegistry
-from tools.builtin import SearchDocumentsTool
+from tools.builtin import SearchDocumentsTool, SearchMemoryTool
+from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 
+conversation_store = ConversationSQLitesStore("data/memory.db")
 kb = KnowledgeBase(embedder=OpenAIEmbedder(), persist_dir="data/knowledge_db")
-tools = ToolRegistry.from_tools([SearchDocumentsTool(kb)])
 namespace = "mem:tester_id:default"
 memory_manager = create_memory_manager(namespace=namespace)
+tools = ToolRegistry.from_tools(
+    [
+        SearchDocumentsTool(kb),
+        SearchMemoryTool(memory_manager),
+    ]
+)
 agent = ReActAgent(
     create_llm(),
     tools,
     memory_manager=memory_manager,
+    conversation_store=conversation_store,
+    session_id=namespace,
     context_assembler=ContextAssembler(),
     knowledge_base=kb,
+    consolidate_memory=True,
 )
 
 
@@ -133,6 +144,25 @@ class AgentRunPrinter:
             print(json.dumps(intent.to_dict(), ensure_ascii=False, indent=2))
             return
 
+        if isinstance(ev, MemoryConsolidatedEvent):
+            print(f"\n{'═' * 56}")
+            print("▣ 长期记忆提炼写入")
+            print(f"{'═' * 56}")
+            if ev.error:
+                print(f"  错误: {ev.error}")
+            elif ev.skipped:
+                print("  （本轮无可写入的长期记忆）")
+            else:
+                if ev.episodic:
+                    print("  情景:", ev.episodic)
+                if ev.semantic:
+                    print("  语义:", ev.semantic)
+                if ev.relations:
+                    print("  关系:", ev.relations)
+                if ev.links:
+                    print("  图↔向量链接:", ev.links)
+            return
+
         if isinstance(ev, FinalAnswerEvent):
             print(f"\n{'═' * 56}")
             print("▣ 用户可见回复")
@@ -156,7 +186,9 @@ class AgentRunPrinter:
 
 
 async def main() -> None:
-    query = "直接给我起草一份关于“神灯AR互动式投影一体机”项目的合作合同模版。合作方是研发，合作范围市场推广，核心条款关注点收益分成模式。根据这些内容，给我一个初步的模版"
+    query = (
+        "张三是我的员工上了一个月的班几乎天天迟到，还没有过试用期，我想要开除他可以吗"
+    )
     print(f"用户问题: {query}\n")
     printer = AgentRunPrinter(query=query)
     async for ev in agent.run_stream(query):

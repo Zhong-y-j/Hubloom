@@ -21,6 +21,7 @@ from agents.events import (
     ToolResultEvent,
     RunStatsEvent,
     IntentOutcomeEvent,
+    MemoryConsolidatedEvent,
 )
 from agents.base import Agent
 from agents.intent import (
@@ -36,6 +37,7 @@ from tools import ToolRegistry, ToolRunner
 
 if TYPE_CHECKING:
     from context.assembler import ContextAssembler
+    from context.memory_context import MemoryContextProvider
     from memory.store.conversation_sqlite_store import ConversationSQLitesStore
     from memory.manager import MemoryManager
     from retrieval.knowledge_base import KnowledgeBase
@@ -92,22 +94,6 @@ def _default_allowed_tools(tools: ToolRegistry) -> set[str]:
     return registered & set(_READONLY_TOOL_NAMES)
 
 
-def _memory_item_to_prefetch_dict(item: Any) -> dict[str, Any] | None:
-    """将 recall 返回的条目转为 ContextAssembler 可用的 dict。"""
-    if isinstance(item, dict):
-        content = str(item.get("content", "")).strip()
-        score = float(item.get("score", 0.75))
-    else:
-        content = str(getattr(item, "content", "")).strip()
-        score = 0.75
-        meta = getattr(item, "metadata", None)
-        if isinstance(meta, dict) and meta.get("score") is not None:
-            score = float(meta["score"])
-    if not content:
-        return None
-    return {"content": content, "score": score}
-
-
 class ReActAgent(Agent):
     """
     ReActAgent（意图澄清）：流式 LLM + 可选只读工具 + 结构化 intent 输出。
@@ -131,8 +117,10 @@ class ReActAgent(Agent):
         context_assembler: ContextAssembler | None = None,
         knowledge_base: KnowledgeBase | None = None,
         history_limit: int = 20,
-        prefetch_memory_top_k: int = 3,
+        prefetch_memory_top_k: int = 5,
         prefetch_docs_top_k: int = 3,
+        prefetch_associative: bool = True,
+        consolidate_memory: bool = True,
         emit_structured_intent: bool = True,
         accept_stop: Callable[[str, int, int], bool] | None = None,
         premature_stop_nudge: str | None = None,
@@ -159,6 +147,23 @@ class ReActAgent(Agent):
         self._history_limit = history_limit
         self._prefetch_memory_top_k = prefetch_memory_top_k
         self._prefetch_docs_top_k = prefetch_docs_top_k
+        self._prefetch_associative = prefetch_associative
+        self._consolidate_memory = consolidate_memory
+        self._last_user_task = ""
+        self._memory_context: MemoryContextProvider | None = None
+        if memory_manager is not None:
+            from context.memory_context import MemoryContextProvider
+
+            self._memory_context = MemoryContextProvider(
+                memory_manager,
+                hybrid_top_k=prefetch_memory_top_k,
+                include_associative=prefetch_associative,
+            )
+        self._memory_consolidator = None
+        if memory_manager is not None and consolidate_memory:
+            from memory.consolidator import MemoryConsolidator
+
+            self._memory_consolidator = MemoryConsolidator(memory_manager, llm)
         self._emit_structured_intent = emit_structured_intent
         self._accept_stop = accept_stop
         self._premature_stop_nudge = premature_stop_nudge
@@ -182,21 +187,13 @@ class ReActAgent(Agent):
             return
         self._conversation_store.add_message(self._session_id, message)  # type: ignore[union-attr]
 
-    async def _prefetch_memories(self, task: str) -> list[dict[str, Any]]:
-        if self.memory is None:
-            return []
-        result = await self.memory.recall(
-            query=task,
-            top_k=self._prefetch_memory_top_k,
-            mode="hybrid",
-        )
-        items: list[Any] = list(result.items or [])
-        out: list[dict[str, Any]] = []
-        for item in items:
-            row = _memory_item_to_prefetch_dict(item)
-            if row:
-                out.append(row)
-        return out
+    async def _prefetch_long_term_memory(
+        self, task: str
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        if self._memory_context is None:
+            return [], None
+        ctx = await self._memory_context.recall_for_context(task)
+        return ctx.memories, ctx.graph_summary
 
     async def _prefetch_documents(self, task: str) -> list[dict[str, Any]] | None:
         if self._knowledge_base is None:
@@ -226,6 +223,8 @@ class ReActAgent(Agent):
         if not task:
             raise ValueError("task must not be empty")
 
+        self._last_user_task = task
+
         if self._context_assembler is None:
             self._history = [
                 Message(role=Role.SYSTEM, content=self._system_prompt_str),
@@ -238,7 +237,7 @@ class ReActAgent(Agent):
                 )
             return
 
-        memory_items = await self._prefetch_memories(task)
+        memory_items, graph_summary = await self._prefetch_long_term_memory(task)
         documents = await self._prefetch_documents(task)
         histories = self._load_conversation_histories()
 
@@ -248,6 +247,7 @@ class ReActAgent(Agent):
             documents=documents,
             histories=histories,
             current_task=task,
+            graph_summary=graph_summary,
         )
 
         if self._should_persist:
@@ -342,6 +342,29 @@ class ReActAgent(Agent):
                 is_clear=intent.is_clear,
             )
         yield FinalAnswerEvent(content=display, usage=usage, intent=intent)
+
+        if self._memory_consolidator is not None and self._last_user_task:
+            from memory.consolidator import MemoryConsolidationResult
+
+            consolidation = MemoryConsolidationResult(skipped=True)
+            try:
+                consolidation = await self._memory_consolidator.consolidate(
+                    user_message=self._last_user_task,
+                    assistant_message=display,
+                    session_id=self._session_id,
+                )
+            except Exception as exc:
+                consolidation = MemoryConsolidationResult(
+                    skipped=True, error=str(exc)
+                )
+            yield MemoryConsolidatedEvent(
+                episodic=consolidation.episodic_written,
+                semantic=consolidation.semantic_written,
+                relations=consolidation.relations_written,
+                links=consolidation.links_written,
+                skipped=consolidation.skipped,
+                error=consolidation.error,
+            )
 
     async def run(self, task: str) -> AgentEvent:
         last_final: FinalAnswerEvent | None = None

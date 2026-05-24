@@ -202,11 +202,13 @@ class QdrantMemoryStore:
                 vector = []
 
             if memory_type == "episodic":
-                items.append(self._payload_to_episodic(str(ranked.id), payload))
+                item = self._payload_to_episodic(str(ranked.id), payload)
             else:
-                items.append(
-                    self._payload_to_semantic(str(ranked.id), payload, vector or [])
+                item = self._payload_to_semantic(
+                    str(ranked.id), payload, vector or []
                 )
+            item.metadata["score"] = float(ranked.score)
+            items.append(item)
 
             update_points.append(
                 PointStruct(id=ranked.id, vector=vector or [], payload=payload)
