@@ -8,8 +8,9 @@ from .events import (
     ToolCallEvent,
     ToolResultEvent,
     IntentOutcomeEvent,
+    MemoryConsolidatedEvent,
 )
-from .intent import StructuredIntent
+from .intent import StructuredIntent, parse_intent_from_answer
 from .react import ReActAgent
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     "AgentEvent",
     "ReActAgent",
     "StructuredIntent",
+    "parse_intent_from_answer",
     "TextDeltaEvent",
     "FinalAnswerEvent",
     "ErrorEvent",
@@ -24,4 +26,5 @@ __all__ = [
     "ToolResultEvent",
     "RunStatsEvent",
     "IntentOutcomeEvent",
+    "MemoryConsolidatedEvent",
 ]
