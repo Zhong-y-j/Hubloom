@@ -89,7 +89,10 @@ class ContextAssembler:
                 content = getattr(mem, "content", mem.get("content", ""))
                 if not content:
                     continue
-                score = getattr(mem, "score", 0.7) if hasattr(mem, "score") else 0.7
+                if isinstance(mem, dict):
+                    score = float(mem.get("score", 0.7))
+                else:
+                    score = float(getattr(mem, "score", 0.7))
                 candidates.append(
                     _make_candidate(
                         type_="memory",
