@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from agents.intent import StructuredIntent
-from agents.plan_models import ExecutionResult
-from agents.reflection_models import ReflectionVerdict
+from agents.core.intent import StructuredIntent
+from agents.plan.models import ExecutionResult
+from agents.reflection.models import ReflectionVerdict
 
 # Hub 路由结果（一轮用户输入）
 ROUTE_CLARIFY_ONLY = "clarify_only"

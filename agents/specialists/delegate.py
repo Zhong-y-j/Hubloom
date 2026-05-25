@@ -7,8 +7,8 @@ from typing import Any
 
 from core.provider import LLMProvider
 
-from agents.events import StepOutputDeltaEvent
-from agents.plan_models import ExecutionStep, SubTaskResult
+from agents.core.events import StepOutputDeltaEvent
+from agents.plan.models import ExecutionStep, SubTaskResult
 from agents.specialists.worker import LLMSpecialistAgent, create_default_specialists
 
 

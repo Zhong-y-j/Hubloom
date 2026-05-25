@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import AsyncIterator
 
-from agents.events import (
+from agents.core.events import (
     AgentEvent,
     ErrorEvent,
     ExecutionResultEvent,
@@ -13,7 +13,7 @@ from agents.events import (
     HubTurnCompleteEvent,
     PlanReadyEvent,
 )
-from agents.hub_models import (
+from agents.hub.models import (
     ROUTE_CLARIFY_ONLY,
     ROUTE_DIRECT_REPLY,
     ROUTE_PLAN_EXECUTE,
@@ -22,12 +22,12 @@ from agents.hub_models import (
     ROUTE_PLAN_REVISE_REFLECT,
     HubTurnOutcome,
 )
-from agents.intent import StructuredIntent
-from agents.plan_execute import LLMPlanGenerator, PlanExecuteAgent, expand_rerun_step_ids
-from agents.plan_models import ExecutionResult, StepStatus
-from agents.react import ReActAgent
-from agents.reflection import ReflectionAgent
-from agents.reflection_models import ReflectionVerdict
+from agents.core.intent import StructuredIntent
+from agents.plan.execute import LLMPlanGenerator, PlanExecuteAgent, expand_rerun_step_ids
+from agents.plan.models import ExecutionResult, StepStatus
+from agents.react.agent import ReActAgent
+from agents.reflection.agent import ReflectionAgent
+from agents.reflection.models import ReflectionVerdict
 
 
 class CortexHub:

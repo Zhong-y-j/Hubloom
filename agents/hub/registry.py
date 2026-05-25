@@ -1,6 +1,6 @@
 """默认专业 Agent 注册表（PlanExecute / Hub 测试共用）。"""
 
-from agents.plan_execute import InMemoryAgentRegistry
+from agents.plan.execute import InMemoryAgentRegistry
 
 
 def build_default_registry() -> InMemoryAgentRegistry:

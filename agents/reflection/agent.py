@@ -11,15 +11,15 @@ from typing import Any
 from core.models import Message, Role
 from core.provider import DeltaEvent, LLMProvider, StreamEndEvent, StreamErrorEvent
 
-from agents.events import (
+from agents.core.events import (
     AgentEvent,
     ErrorEvent,
     ReflectionCompleteEvent,
     ReflectionStartEvent,
     ReflectionTextDeltaEvent,
 )
-from agents.plan_models import ExecutionResult, ExecutionStepTrace, StepStatus
-from agents.reflection_models import ReflectionIssue, ReflectionVerdict
+from agents.plan.models import ExecutionResult, ExecutionStepTrace, StepStatus
+from agents.reflection.models import ReflectionIssue, ReflectionVerdict
 
 _REFLECTION_JSON_BLOCK_RE = re.compile(
     r"```(?:json|reflection)?\s*\n(.*?)\n```",

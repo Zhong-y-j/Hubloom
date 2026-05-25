@@ -11,8 +11,8 @@ from typing import Any, Protocol, runtime_checkable
 from core.models import Message, Role
 from core.provider import DeltaEvent, LLMProvider, StreamEndEvent, StreamErrorEvent
 
-from agents.base import Agent
-from agents.events import (
+from agents.core.base import Agent
+from agents.core.events import (
     AgentEvent,
     ErrorEvent,
     ExecutionResultEvent,
@@ -26,8 +26,8 @@ from agents.events import (
     StepOutputDeltaEvent,
     StepStartEvent,
 )
-from agents.intent import StructuredIntent
-from agents.plan_models import (
+from agents.core.intent import StructuredIntent
+from agents.plan.models import (
     ExecutionPlan,
     ExecutionResult,
     ExecutionStep,

@@ -1,58 +1,67 @@
-from .base import Agent
-from .events import (
-    AgentEvent,
+"""灵枢 Agent 层：ReAct · PlanExecute · Reflection · Hub。"""
+
+from .core import Agent, AgentEvent, StructuredIntent, parse_intent_from_answer
+from .core.events import (
     ErrorEvent,
     ExecutionResultEvent,
     FinalAnswerEvent,
-    PlanCreatedEvent,
     HubPhaseEvent,
     HubTurnCompleteEvent,
+    IntentOutcomeEvent,
+    MemoryConsolidatedEvent,
+    PlanCreatedEvent,
+    PlanReadyEvent,
+    PlanTextDeltaEvent,
     ReflectionCompleteEvent,
     ReflectionStartEvent,
     ReflectionTextDeltaEvent,
     RunStatsEvent,
     StepCompleteEvent,
     StepErrorEvent,
+    StepOutputDeltaEvent,
     StepStartEvent,
     TextDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
-    IntentOutcomeEvent,
-    MemoryConsolidatedEvent,
 )
-from .intent import StructuredIntent, parse_intent_from_answer
-from .plan_execute import (
-    AgentRegistry,
+from .hub import CortexHub, HubTurnOutcome, build_default_registry
+from .plan import (
     DefaultResultAggregator,
+    ExecutionPlan,
+    ExecutionResult,
+    ExecutionStep,
+    ExecutionStepTrace,
     InMemoryAgentRegistry,
     LLMPlanGenerator,
     PlanExecuteAgent,
     PlanGenerator,
     ResultAggregator,
     StepDelegate,
+    StepStatus,
     StubPlanGenerator,
     StubStepDelegate,
-)
-from .plan_models import (
-    ExecutionPlan,
-    ExecutionResult,
-    ExecutionStep,
-    ExecutionStepTrace,
-    StepStatus,
     SubTaskResult,
+    expand_rerun_step_ids,
+    parse_plan_json,
+    plan_from_dict,
 )
-from .default_registry import build_default_registry
-from .hub import CortexHub
-from .hub_models import HubTurnOutcome
 from .react import ReActAgent
-from .reflection import ReflectionAgent, parse_reflection_json, verdict_from_dict
-from .reflection_models import ReflectionIssue, ReflectionVerdict
-from .specialists import LLMSpecialistAgent, RegistryStepDelegate, create_default_specialists
+from .reflection import (
+    ReflectionAgent,
+    ReflectionIssue,
+    ReflectionVerdict,
+    parse_reflection_json,
+    verdict_from_dict,
+)
+from .specialists import (
+    LLMSpecialistAgent,
+    RegistryStepDelegate,
+    create_default_specialists,
+)
 
 __all__ = [
     "Agent",
     "AgentEvent",
-    "AgentRegistry",
     "ReActAgent",
     "PlanExecuteAgent",
     "StructuredIntent",
@@ -70,6 +79,7 @@ __all__ = [
     "LLMPlanGenerator",
     "parse_plan_json",
     "plan_from_dict",
+    "expand_rerun_step_ids",
     "InMemoryAgentRegistry",
     "StubStepDelegate",
     "DefaultResultAggregator",

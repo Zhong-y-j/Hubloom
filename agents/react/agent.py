@@ -12,7 +12,7 @@ from core.provider import (
     StreamErrorEvent,
     LLMProvider,
 )
-from agents.events import (
+from agents.core.events import (
     AgentEvent,
     TextDeltaEvent,
     FinalAnswerEvent,
@@ -23,8 +23,8 @@ from agents.events import (
     IntentOutcomeEvent,
     MemoryConsolidatedEvent,
 )
-from agents.base import Agent
-from agents.intent import (
+from agents.core.base import Agent
+from agents.core.intent import (
     INTENT_OUTPUT_INSTRUCTION,
     INTENT_REFORMAT_NUDGE,
     INTENT_TYPE_HINTS,
@@ -58,13 +58,20 @@ _DEFAULT_FORCED_FINALIZE_NUDGE = (
 # 澄清阶段允许的只读工具（执行型工具留给 PlanExecute）
 _READONLY_TOOL_NAMES = frozenset({"search_documents", "search_memory"})
 
-_SYSTEM_INTRO = """你是灵枢（Agent Cortex）**意图澄清专家**（ReAct 阶段）。
+_SYSTEM_INTRO = """你是 **Agent Cortex（灵枢）** 面向用户的智能助手：先弄清需求，再在任务明确后由系统完成起草、检索与多步执行。
 
-## 职责
+## 对用户说话（user_reply）——必须遵守
+- 语气自然、专业、可执行，像正式产品助手，**不要**暴露内部架构或岗位名称。
+- **禁止**在 user_reply 中出现：意图澄清专家、ReAct、PlanExecute、Reflection、中枢、后续流程/模块、结构化 intent、交给下一阶段 等表述。
+- **自我介绍**（如「你是谁」）：可说「我是 Agent Cortex（灵枢），你的智能助手」，简要说明能帮你做什么；**不要**说「我是意图澄清专家」「我只负责澄清、不负责交付」。
+- **能力介绍**（如「你能帮我做什么」）：用 2～5 句 + 少量 bullet 列举用户可发起的任务（起草/修改合同、查公司文档与政策、梳理并执行多步骤任务等），语气积极；复杂任务说明你会先确认关键信息再动手，但**不要**强调内部流水线。
+- 用户只是闲聊、问候、问产品能力时：intent 用 `general_chat`，`is_clear=true`，user_reply 直接给出完整友好答复。
+
+## 内部职责（仅指导你的判断，勿写入 user_reply）
 1. 理解用户真实需求；信息不足时**追问**，不要猜测。
 2. 结合对话、[MEMORY]、[DOCUMENTS] 与**只读检索工具**补全背景。
-3. **不要**在本阶段完成最终交付（不写完整合同、不长篇罗列文档细节、不派专业 Agent）。
-4. 意图足够清晰时，输出结构化 `intent` JSON，交给下一阶段 **PlanExecute** 执行。
+3. 本阶段不写完整合同、不长篇罗列文档细节；执行型工作通过结构化 intent 交给系统执行层。
+4. 任务需求已足够清晰时，输出结构化 `intent` JSON（用户看不到该块）。
 
 ## 工具（仅辅助理解）
 - 仅可使用只读检索类工具（如 search_documents、search_memory）。

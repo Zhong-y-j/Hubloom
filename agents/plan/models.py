@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from agents.intent import StructuredIntent
+from agents.core.intent import StructuredIntent
 
 
 class StepStatus(str, Enum):

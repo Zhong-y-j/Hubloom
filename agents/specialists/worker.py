@@ -15,8 +15,8 @@ from core.provider import (
     StreamErrorEvent,
 )
 
-from agents.events import StepOutputDeltaEvent
-from agents.plan_models import SubTaskResult
+from agents.core.events import StepOutputDeltaEvent
+from agents.plan.models import SubTaskResult
 
 PROGRAMMING_SYSTEM = """你是灵枢的专业 Agent · **编程与技术规格**。
 
