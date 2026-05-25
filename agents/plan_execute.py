@@ -371,6 +371,24 @@ class StubStepDelegate:
         )
 
 
+def expand_rerun_step_ids(plan: ExecutionPlan, step_ids: list[int]) -> set[int]:
+    """将需重跑的步骤扩展为包含所有下游依赖步骤。"""
+    rerun = {sid for sid in step_ids if sid > 0}
+    if not rerun:
+        return rerun
+    while True:
+        added = False
+        for step in plan.steps:
+            if step.step_id in rerun:
+                continue
+            if any(dep in rerun for dep in step.dependencies):
+                rerun.add(step.step_id)
+                added = True
+        if not added:
+            break
+    return rerun
+
+
 class DefaultResultAggregator:
     """按步骤顺序拼接成功步骤的 output。"""
 
@@ -463,6 +481,9 @@ class PlanExecuteAgent(Agent):
         *,
         plan: ExecutionPlan | None = None,
         skip_plan_generation: bool = False,
+        revision_feedback: str = "",
+        rerun_step_ids: list[int] | None = None,
+        prior_outputs: dict[int, str] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """流式执行，产出 Plan / Step / Result 事件。
 
@@ -470,6 +491,9 @@ class PlanExecuteAgent(Agent):
             intent: ReAct 输出的结构化意图。
             plan: 若已生成计划，传入后可跳过 Plan 阶段（与 skip_plan_generation 配合）。
             skip_plan_generation: 为 True 时必须提供 plan，只跑 Execute 分发。
+            revision_feedback: Reflection 打回时的修改说明（注入专业 Agent 上下文）。
+            rerun_step_ids: 指定重跑的 step_id；未列出的步骤沿用 prior_outputs。
+            prior_outputs: 上一轮成功步骤的 output，供修订时复用。
         """
         if not intent.is_clear:
             yield ErrorEvent(
@@ -484,6 +508,15 @@ class PlanExecuteAgent(Agent):
         if skip_plan_generation and plan is None:
             yield ErrorEvent(error="skip_plan_generation 为 True 时必须传入 plan")
             return
+        if rerun_step_ids is not None:
+            if plan is None:
+                yield ErrorEvent(error="修订重跑必须传入 plan")
+                return
+            if not skip_plan_generation:
+                yield ErrorEvent(
+                    error="修订重跑须 skip_plan_generation=True 且传入既有 plan"
+                )
+                return
 
         start = time.monotonic()
         tool_calls = 0
@@ -498,10 +531,55 @@ class PlanExecuteAgent(Agent):
 
         yield PlanCreatedEvent(steps=[s.to_dict() for s in plan.steps])
 
-        completed_outputs: dict[int, str] = {}
+        rerun_set: set[int] | None = None
+        if rerun_step_ids is not None:
+            rerun_set = expand_rerun_step_ids(plan, rerun_step_ids)
+
+        completed_outputs: dict[int, str] = dict(prior_outputs or {})
         trace: list[ExecutionStepTrace] = []
+        feedback = (revision_feedback or "").strip()
 
         for step in sorted(plan.steps, key=lambda s: s.step_id):
+            if rerun_set is not None and step.step_id not in rerun_set:
+                if step.step_id in completed_outputs:
+                    row = ExecutionStepTrace(
+                        step_id=step.step_id,
+                        agent_type=step.agent_type,
+                        status=StepStatus.SUCCESS,
+                        task_description=step.task_description,
+                        output=completed_outputs[step.step_id],
+                    )
+                    trace.append(row)
+                    yield StepStartEvent(
+                        step_id=step.step_id,
+                        description=f"（沿用上一轮）{step.task_description}",
+                        agent_type=step.agent_type,
+                        agent_id="",
+                    )
+                    yield StepCompleteEvent(
+                        step_id=step.step_id,
+                        summary=completed_outputs[step.step_id],
+                    )
+                    continue
+                blockers = [
+                    dep
+                    for dep in step.dependencies
+                    if dep not in completed_outputs
+                ]
+                if blockers:
+                    row = ExecutionStepTrace(
+                        step_id=step.step_id,
+                        agent_type=step.agent_type,
+                        status=StepStatus.SKIPPED,
+                        task_description=step.task_description,
+                        error=f"依赖步骤未完成: {blockers}",
+                    )
+                    trace.append(row)
+                    yield StepErrorEvent(
+                        step_id=step.step_id,
+                        error=row.error or "依赖未满足",
+                    )
+                continue
             blockers = [
                 dep
                 for dep in step.dependencies
@@ -552,6 +630,8 @@ class PlanExecuteAgent(Agent):
                     dep: completed_outputs[dep] for dep in step.dependencies
                 },
                 "step": step.to_dict(),
+                "revision_feedback": feedback,
+                "is_revision": rerun_set is not None and step.step_id in rerun_set,
             }
 
             step_start = time.monotonic()

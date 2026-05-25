@@ -104,6 +104,26 @@ class ExecutionResultEvent(AgentEvent):
     result: Any  # ExecutionResult
 
 
+# -------- Hub --------
+@dataclass
+class HubPhaseEvent(AgentEvent):
+    """Hub 进入某一阶段（ReAct / plan / reflection）。"""
+
+    phase: str  # "react" | "plan" | "reflection" | "revision"
+
+
+@dataclass
+class HubTurnCompleteEvent(AgentEvent):
+    """Hub 一轮结束：对用户最终展示 user_reply +（可选）deliverable。"""
+
+    route: str
+    user_reply: str
+    deliverable: str | None = None
+    intent: Any = None
+    execution_result: Any = None
+    reflection_verdict: Any = None
+
+
 # -------- Reflection --------
 @dataclass
 class ReflectionStartEvent(AgentEvent):

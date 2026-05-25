@@ -133,9 +133,12 @@ class AgentRunPrinter:
         if isinstance(ev, IntentOutcomeEvent):
             intent: StructuredIntent = ev.intent
             print(f"\n{'═' * 56}")
-            route = (
-                "→ PlanExecute" if ev.should_invoke_plan else "→ 直接回复（不进 Plan）"
-            )
+            if not ev.is_clear:
+                route = "→ 继续澄清（不进 Plan）"
+            elif ev.should_invoke_plan:
+                route = "→ PlanExecute"
+            else:
+                route = "→ 直接回复（不进 Plan）"
             print(
                 f"▣ 结构化意图  is_clear={ev.is_clear}  "
                 f"intent={intent.intent!r}  {route}"

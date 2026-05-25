@@ -41,11 +41,7 @@ class MemoryContextProvider:
         if not query:
             return MemoryRecallContext()
 
-        hybrid = await self._memory.recall(
-            query=query,
-            top_k=self.hybrid_top_k,
-            mode="hybrid",
-        )
+        hybrid = await self._safe_recall_hybrid(query)
         memories = normalize_memory_items(hybrid)
 
         graph_summary: str | None = None
@@ -57,6 +53,16 @@ class MemoryContextProvider:
         return MemoryRecallContext(
             memories=memories, graph_summary=graph_summary
         )
+
+    async def _safe_recall_hybrid(self, query: str) -> RecallResult | None:
+        try:
+            return await self._memory.recall(
+                query=query,
+                top_k=self.hybrid_top_k,
+                mode="hybrid",
+            )
+        except Exception:
+            return None
 
     async def _safe_recall_associative(
         self, query: str

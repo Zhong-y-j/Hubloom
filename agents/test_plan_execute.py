@@ -26,35 +26,11 @@ from agents.events import (
     StepStartEvent,
 )
 from agents.intent import StructuredIntent
-from agents.plan_execute import (
-    InMemoryAgentRegistry,
-    LLMPlanGenerator,
-    PlanExecuteAgent,
-)
+from agents.default_registry import build_default_registry
+from agents.plan_execute import InMemoryAgentRegistry, LLMPlanGenerator, PlanExecuteAgent
 from agents.plan_models import ExecutionPlan, ExecutionResult, StepStatus
 from agents.specialists import RegistryStepDelegate
 from core import create_llm
-
-
-def _build_registry() -> InMemoryAgentRegistry:
-    reg = InMemoryAgentRegistry()
-    reg.register(
-        {
-            "agent_id": "prog-001",
-            "agent_type": "programming",
-            "capabilities": ["programming"],
-            "description": "编程与技术规格 Agent",
-        }
-    )
-    reg.register(
-        {
-            "agent_id": "legal-001",
-            "agent_type": "legal",
-            "capabilities": ["legal"],
-            "description": "法律条款 Agent",
-        }
-    )
-    return reg
 
 
 def _sample_intent() -> StructuredIntent:
@@ -262,7 +238,7 @@ async def _run_execute_stream(
 
 async def main() -> None:
     intent = _sample_intent()
-    registry = _build_registry()
+    registry = build_default_registry()
     llm = create_llm()
     printer = PlanExecuteStreamPrinter()
 

@@ -5,6 +5,8 @@ from .events import (
     ExecutionResultEvent,
     FinalAnswerEvent,
     PlanCreatedEvent,
+    HubPhaseEvent,
+    HubTurnCompleteEvent,
     ReflectionCompleteEvent,
     ReflectionStartEvent,
     ReflectionTextDeltaEvent,
@@ -39,6 +41,9 @@ from .plan_models import (
     StepStatus,
     SubTaskResult,
 )
+from .default_registry import build_default_registry
+from .hub import CortexHub
+from .hub_models import HubTurnOutcome
 from .react import ReActAgent
 from .reflection import ReflectionAgent, parse_reflection_json, verdict_from_dict
 from .reflection_models import ReflectionIssue, ReflectionVerdict
@@ -81,6 +86,11 @@ __all__ = [
     "StepCompleteEvent",
     "StepErrorEvent",
     "ExecutionResultEvent",
+    "CortexHub",
+    "HubTurnOutcome",
+    "HubPhaseEvent",
+    "HubTurnCompleteEvent",
+    "build_default_registry",
     "ReflectionAgent",
     "ReflectionVerdict",
     "ReflectionIssue",

@@ -59,6 +59,14 @@ def _build_user_prompt(
         parts.extend(["", "## 前置步骤产出（须参考）"])
         for step_id, text in sorted(deps.items(), key=lambda x: int(x[0])):
             parts.append(f"### 步骤 {step_id}\n{text}")
+    if context.get("is_revision") and context.get("revision_feedback"):
+        parts.extend(
+            [
+                "",
+                "## 审查打回 · 须按下列意见修订本步产出",
+                str(context.get("revision_feedback")),
+            ]
+        )
     return "\n".join(parts)
 
 
