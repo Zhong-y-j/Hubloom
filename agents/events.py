@@ -43,6 +43,20 @@ class ErrorEvent(AgentEvent):
 
 # -------- Plan-and-Execute --------
 @dataclass
+class PlanTextDeltaEvent(AgentEvent):
+    """Plan 阶段 LLM 原始输出增量（流式）。"""
+
+    delta: str
+
+
+@dataclass
+class PlanReadyEvent(AgentEvent):
+    """Plan 阶段结束，携带解析后的 ExecutionPlan。"""
+
+    plan: Any  # ExecutionPlan
+
+
+@dataclass
 class PlanCreatedEvent(AgentEvent):
     """计划已生成（供 UI 渲染步骤条等）。"""
 
@@ -55,6 +69,16 @@ class StepStartEvent(AgentEvent):
 
     step_id: int
     description: str
+    agent_type: str = ""
+    agent_id: str = ""
+
+
+@dataclass
+class StepOutputDeltaEvent(AgentEvent):
+    """某一步专业 Agent 产出增量（流式）。"""
+
+    step_id: int
+    delta: str
 
 
 @dataclass
@@ -71,6 +95,13 @@ class StepErrorEvent(AgentEvent):
 
     step_id: int
     error: str
+
+
+@dataclass
+class ExecutionResultEvent(AgentEvent):
+    """PlanExecute 完整执行结果（供 Reflection / Hub）。"""
+
+    result: Any  # ExecutionResult
 
 
 # -------- 以下为 ReAct 专用事件 --------
