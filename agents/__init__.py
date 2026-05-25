@@ -5,6 +5,9 @@ from .events import (
     ExecutionResultEvent,
     FinalAnswerEvent,
     PlanCreatedEvent,
+    ReflectionCompleteEvent,
+    ReflectionStartEvent,
+    ReflectionTextDeltaEvent,
     RunStatsEvent,
     StepCompleteEvent,
     StepErrorEvent,
@@ -37,6 +40,8 @@ from .plan_models import (
     SubTaskResult,
 )
 from .react import ReActAgent
+from .reflection import ReflectionAgent, parse_reflection_json, verdict_from_dict
+from .reflection_models import ReflectionIssue, ReflectionVerdict
 from .specialists import LLMSpecialistAgent, RegistryStepDelegate, create_default_specialists
 
 __all__ = [
@@ -76,6 +81,14 @@ __all__ = [
     "StepCompleteEvent",
     "StepErrorEvent",
     "ExecutionResultEvent",
+    "ReflectionAgent",
+    "ReflectionVerdict",
+    "ReflectionIssue",
+    "ReflectionStartEvent",
+    "ReflectionTextDeltaEvent",
+    "ReflectionCompleteEvent",
+    "parse_reflection_json",
+    "verdict_from_dict",
     "LLMSpecialistAgent",
     "RegistryStepDelegate",
     "create_default_specialists",

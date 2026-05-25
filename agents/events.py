@@ -104,6 +104,30 @@ class ExecutionResultEvent(AgentEvent):
     result: Any  # ExecutionResult
 
 
+# -------- Reflection --------
+@dataclass
+class ReflectionStartEvent(AgentEvent):
+    """开始审查 PlanExecute 产出。"""
+
+    step_count: int
+    partial_success: bool = False
+
+
+@dataclass
+class ReflectionTextDeltaEvent(AgentEvent):
+    """Reflection 阶段 LLM 审查说明增量（流式）。"""
+
+    delta: str
+
+
+@dataclass
+class ReflectionCompleteEvent(AgentEvent):
+    """Reflection 结束，携带结构化审查结论（Hub 主消费此事件）。"""
+
+    verdict: Any  # ReflectionVerdict
+    elapsed_ms: int = 0
+
+
 # -------- 以下为 ReAct 专用事件 --------
 @dataclass
 class ToolCallEvent(AgentEvent):
