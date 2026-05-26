@@ -2,6 +2,6 @@
 
 from loguru import logger
 
-from .log import log, restore_print, setup_log
+from .log import log, setup_log
 
-__all__ = ["setup_log", "log", "logger", "restore_print"]
+__all__ = ["setup_log", "log", "logger"]

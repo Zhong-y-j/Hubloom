@@ -31,7 +31,6 @@ def setup_log(
 
     - ``log_uncaught=True``：未捕获异常（如 NameError）写入日志并保留终端 traceback
     - ``capture_print``：``print`` 内容写入日志；终端仍显示 print
-    - 环境变量 ``CORTEX_LOG_CONSOLE=1`` 可打开终端日志
     """
     path = Path(file or _LOG_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,11 +118,3 @@ def _hook_uncaught_exceptions() -> None:
         _original_excepthook(exc_type, exc_value, exc_traceback)
 
     sys.excepthook = _log_excepthook
-
-
-def restore_print() -> None:
-    builtins.print = _original_print
-
-
-def restore_excepthook() -> None:
-    sys.excepthook = _original_excepthook

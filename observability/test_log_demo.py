@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from observability import log, logger, setup_log, restore_print
+from observability import log, logger, setup_log
 
 
 def main() -> None:
@@ -19,7 +19,7 @@ def main() -> None:
         "图记忆失败 error=Unable to retrieve routing information"
     )
     # 故意触发未捕获异常，验证会写入 logs/agentcortex.log（含完整 traceback）
-    print(a)  # noqa: F821 — NameError 测试
+    # print(a)  # noqa: F821 — NameError 测试
 
 
 if __name__ == "__main__":

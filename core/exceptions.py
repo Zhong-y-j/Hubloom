@@ -1,4 +1,4 @@
-"""LLM 统一异常类型"""
+"""LLM 统一异常类型定义，将 SDK 异常映射为领域异常"""
 
 
 class LLMException(Exception):
