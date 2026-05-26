@@ -11,4 +11,5 @@ dependencies = [
     "neo4j>=5.26.0",
     "markitdown[docx]>=0.1.5",
     "chromadb>=1.5.9",
+    "loguru>=0.7.3",
 ]
