@@ -1,0 +1,42 @@
+2026-05-26 13:13:41 | INFO    | observability/log.py:93 in setup_log() | 日志已启用 | file=/Users/zhong/Desktop/AgentCortex /logs/agentcortex.log
+2026-05-26 13:13:41 | INFO    | observability/log.py:113 in patched_print() | [print] | text=这条 print 会进日志文件
+2026-05-26 13:13:41 | INFO    | observability/test_log_demo.py:14 in main() | Hub 开始 | phase=react | session=mem:tester_id:default | turn=1
+2026-05-26 13:13:41 | INFO    | observability/test_log_demo.py:15 in main() | 预取记忆 | query=我叫张三 | hits=0 | namespace=mem:tester_id:default
+2026-05-26 13:13:41 | INFO    | observability/test_log_demo.py:16 in main() | LLM 流式 | content=很高兴认识你，张三！
+2026-05-26 13:13:41 | INFO    | observability/test_log_demo.py:17 in main() | 写入 Qdrant | episodic=["用户姓名：张三"] | skipped=False
+2026-05-26 13:13:41 | WARNING | observability/test_log_demo.py:18 in main() | 图记忆失败 error=Unable to retrieve routing information
+2026-05-26 13:14:39 | INFO    | observability/log.py:89 in setup_log() | 日志已启用 | file=/Users/zhong/Desktop/AgentCortex /logs/agentcortex.log
+2026-05-26 13:14:39 | INFO    | observability/log.py:109 in patched_print() | [print] | text=这条 print 会进日志文件
+2026-05-26 13:14:39 | INFO    | observability/test_log_demo.py:14 in main() | Hub 开始 | phase=react | session=mem:tester_id:default | turn=1
+2026-05-26 13:14:39 | INFO    | observability/test_log_demo.py:15 in main() | 预取记忆 | query=我叫张三 | hits=0 | namespace=mem:tester_id:default
+2026-05-26 13:14:39 | INFO    | observability/test_log_demo.py:16 in main() | LLM 流式 | content=很高兴认识你，张三！
+2026-05-26 13:14:39 | INFO    | observability/test_log_demo.py:17 in main() | 写入 Qdrant | episodic=["用户姓名：张三"] | skipped=False
+2026-05-26 13:14:39 | WARNING | observability/test_log_demo.py:18 in main() | 图记忆失败 error=Unable to retrieve routing information
+2026-05-26 13:15:02 | INFO    | observability/log.py:82 in setup_log() | 日志已启用 | file=/Users/zhong/Desktop/AgentCortex /logs/agentcortex.log
+2026-05-26 13:15:02 | INFO    | observability/log.py:102 in patched_print() | [print] | text=这条 print 会进日志文件
+2026-05-26 13:15:02 | INFO    | observability/test_log_demo.py:14 in main() | Hub 开始 | phase=react | session=mem:tester_id:default | turn=1
+2026-05-26 13:15:02 | INFO    | observability/test_log_demo.py:15 in main() | 预取记忆 | query=我叫张三 | hits=0 | namespace=mem:tester_id:default
+2026-05-26 13:15:02 | INFO    | observability/test_log_demo.py:16 in main() | LLM 流式 | content=很高兴认识你，张三！
+2026-05-26 13:15:02 | INFO    | observability/test_log_demo.py:17 in main() | 写入 Qdrant | episodic=["用户姓名：张三"] | skipped=False
+2026-05-26 13:15:02 | WARNING | observability/test_log_demo.py:18 in main() | 图记忆失败 error=Unable to retrieve routing information
+2026-05-26 13:16:03 | INFO    | observability/log.py:82 in setup_log() | 日志已启用 | file=/Users/zhong/Desktop/AgentCortex /logs/agentcortex.log
+2026-05-26 13:16:03 | INFO    | observability/log.py:102 in patched_print() | [print] | text=这条 print 会进日志文件
+2026-05-26 13:16:03 | INFO    | observability/test_log_demo.py:14 in main() | Hub 开始 | phase=react | session=mem:tester_id:default | turn=1
+2026-05-26 13:16:03 | INFO    | observability/test_log_demo.py:15 in main() | 预取记忆 | query=我叫张三 | hits=0 | namespace=mem:tester_id:default
+2026-05-26 13:16:03 | INFO    | observability/test_log_demo.py:16 in main() | LLM 流式 | content=很高兴认识你，张三！
+2026-05-26 13:16:03 | INFO    | observability/test_log_demo.py:17 in main() | 写入 Qdrant | episodic=["用户姓名：张三"] | skipped=False
+2026-05-26 13:16:03 | WARNING | observability/test_log_demo.py:18 in main() | 图记忆失败 error=Unable to retrieve routing information
+2026-05-26 13:18:07 | INFO    | observability/log.py:82 in setup_log() | 日志已启用 | file=/Users/zhong/Desktop/AgentCortex /logs/agentcortex.log
+2026-05-26 13:18:07 | INFO    | observability/test_log_demo.py:12 in main() | [print] | text=这条 print 会进日志文件
+2026-05-26 13:18:07 | INFO    | observability/test_log_demo.py:14 in main() | Hub 开始 | phase=react | session=mem:tester_id:default | turn=1
+2026-05-26 13:18:07 | INFO    | observability/test_log_demo.py:15 in main() | 预取记忆 | query=我叫张三 | hits=0 | namespace=mem:tester_id:default
+2026-05-26 13:18:07 | INFO    | observability/test_log_demo.py:16 in main() | LLM 流式 | content=很高兴认识你，张三！
+2026-05-26 13:18:07 | INFO    | observability/test_log_demo.py:17 in main() | 写入 Qdrant | episodic=["用户姓名：张三"] | skipped=False
+2026-05-26 13:18:07 | WARNING | observability/test_log_demo.py:18 in main() | 图记忆失败 error=Unable to retrieve routing information
+2026-05-26 13:18:38 | INFO    | observability/log.py:82 in setup_log() | 日志已启用 | file=/Users/zhong/Desktop/AgentCortex /logs/agentcortex.log
+2026-05-26 13:18:38 | INFO    | observability/test_log_demo.py:12 in main() | [print] | text=这条 print 会进日志文件
+2026-05-26 13:18:38 | INFO    | observability/test_log_demo.py:14 in main() | Hub 开始 | phase=react | session=mem:tester_id:default | turn=1
+2026-05-26 13:18:38 | INFO    | observability/test_log_demo.py:15 in main() | 预取记忆 | query=我叫张三 | hits=0 | namespace=mem:tester_id:default
+2026-05-26 13:18:38 | INFO    | observability/test_log_demo.py:16 in main() | LLM 流式 | content=很高兴认识你，张三！
+2026-05-26 13:18:38 | INFO    | observability/test_log_demo.py:17 in main() | 写入 Qdrant | episodic=["用户姓名：张三"] | skipped=False
+2026-05-26 13:18:38 | WARNING | observability/test_log_demo.py:18 in main() | 图记忆失败 error=Unable to retrieve routing information

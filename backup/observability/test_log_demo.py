@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from observability import log, logger, restore_print, setup_log
+from observability import log, logger, setup_log
 
 
 def main() -> None:
@@ -16,9 +16,6 @@ def main() -> None:
     log("LLM 流式", content="很高兴认识你，张三！")
     log("写入 Qdrant", episodic='["用户姓名：张三"]', skipped=False)
     logger.warning("图记忆失败 error=Unable to retrieve routing information")
-
-    restore_print()
-    print(f"完成，查看: {path}")
 
 
 if __name__ == "__main__":
