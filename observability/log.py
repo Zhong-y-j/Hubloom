@@ -3,11 +3,13 @@ from __future__ import annotations
 import builtins
 import os
 import sys
+import traceback
 from pathlib import Path
 
 from loguru import logger
 
 _original_print = builtins.print
+_original_excepthook = sys.excepthook
 _LOG_FILE = Path(os.getenv("CORTEX_LOG_FILE", "logs/agentcortex.log"))
 
 # 文件日志含：相对路径、行号、函数名（便于定位代码）
@@ -23,11 +25,13 @@ def setup_log(
     level: str | None = None,
     console: bool | None = None,
     capture_print: bool = False,
+    log_uncaught: bool = True,
 ) -> Path:
     """配置日志：默认只写入 ``logs/agentcortex.log``（不在控制台重复打日志）。
 
-    环境变量 ``CORTEX_LOG_CONSOLE=1`` 可重新打开终端日志输出。
-    ``print`` 仍会显示在终端（与 ``capture_print`` 无关）。
+    - ``log_uncaught=True``：未捕获异常（如 NameError）写入日志并保留终端 traceback
+    - ``capture_print``：``print`` 内容写入日志；终端仍显示 print
+    - 环境变量 ``CORTEX_LOG_CONSOLE=1`` 可打开终端日志
     """
     path = Path(file or _LOG_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -61,6 +65,8 @@ def setup_log(
 
     if capture_print:
         _hook_print()
+    if log_uncaught:
+        _hook_uncaught_exceptions()
 
     log("日志已启用", file=str(path.resolve()))
     return path.resolve()
@@ -90,5 +96,34 @@ def _hook_print() -> None:
     builtins.print = patched_print  # type: ignore[assignment]
 
 
+def _hook_uncaught_exceptions() -> None:
+    """未捕获异常：写入日志文件，终端仍由默认 excepthook 打印 traceback。"""
+
+    def _log_excepthook(
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_traceback,
+    ) -> None:
+        if issubclass(exc_type, KeyboardInterrupt):
+            _original_excepthook(exc_type, exc_value, exc_traceback)
+            return
+        tb = "".join(
+            traceback.format_exception(exc_type, exc_value, exc_traceback)
+        ).strip()
+        logger.error(
+            "error | type={} | msg={}\n{}",
+            exc_type.__name__,
+            exc_value,
+            tb,
+        )
+        _original_excepthook(exc_type, exc_value, exc_traceback)
+
+    sys.excepthook = _log_excepthook
+
+
 def restore_print() -> None:
     builtins.print = _original_print
+
+
+def restore_excepthook() -> None:
+    sys.excepthook = _original_excepthook
