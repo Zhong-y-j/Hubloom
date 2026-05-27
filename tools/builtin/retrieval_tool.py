@@ -1,7 +1,13 @@
 from typing import Any
 
+from observability import log
 from tools.base import BaseTool
 from retrieval.knowledge_base import KnowledgeBase
+
+
+def _preview(text: str, limit: int = 80) -> str:
+    text = (text or "").replace("\n", " ")
+    return text if len(text) <= limit else text[:limit] + "…"
 
 
 class SearchDocumentsTool(BaseTool):
@@ -53,7 +59,14 @@ class SearchDocumentsTool(BaseTool):
         if optimize not in ("none", "hyde", "mqe"):
             optimize = "none"
 
+        log(
+            "rag tool search",
+            query=_preview(query),
+            optimize=optimize,
+            top_k=self.top_k,
+        )
         results = await self.kb.search(query, top_k=self.top_k, optimize=optimize)
+        log("rag tool search done", count=len(results))
         if not results:
             return "未找到相关文档资料。"
 

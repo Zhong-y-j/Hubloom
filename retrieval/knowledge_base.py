@@ -5,10 +5,26 @@ from typing import Optional, List, Dict, Literal
 import chromadb
 from chromadb.config import Settings
 
+from observability import log, logger
 from .loader import DocumentLoader
 from .semantic_splitter import SemanticSplitter
 from embedders.base import Embedder
 from .query_optimizer import QueryOptimizer
+
+
+def _preview(text: str, limit: int = 80) -> str:
+    text = (text or "").replace("\n", " ")
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _hits_preview(results: List[Dict], limit: int = 3) -> str:
+    parts: list[str] = []
+    for r in (results or [])[: max(0, limit)]:
+        score = float(r.get("score", 0.0))
+        meta = r.get("metadata") or {}
+        source = meta.get("doc_name") or meta.get("section_path") or ""
+        parts.append(f"{score:.3f}:{source}:{_preview(r.get('text', ''), 60)}")
+    return "; ".join(parts)
 
 
 class KnowledgeBase:
@@ -57,13 +73,44 @@ class KnowledgeBase:
         if doc_id is None:
             doc_id = str(uuid.uuid4().hex)
 
+        doc_name = os.path.basename(file_path)
+        log("rag ingest start", file=file_path, doc_id=doc_id, doc_name=doc_name)
+        t0 = time.perf_counter()
+        try:
+            return await self._add_document_impl(
+                file_path, doc_id, doc_name, t0
+            )
+        except Exception as e:
+            logger.warning(
+                "rag ingest failed | file={} | doc_id={} | detail={}",
+                file_path,
+                doc_id,
+                str(e)[:200],
+            )
+            raise
+
+    async def _add_document_impl(
+        self,
+        file_path: str,
+        doc_id: str,
+        doc_name: str,
+        t0: float,
+    ) -> str:
         # 1. 加载文档（通过 MarkItDown 统一转为 Markdown）
         markdown_text = self.loader.load(file_path)
 
         # 2. 语义分块（返回块列表，每个块包含 content 和 metadata）
         chunk_dicts = self.splitter.split(markdown_text)
         if not chunk_dicts:
+            logger.warning(
+                "rag ingest empty chunks | file={} | doc_id={}",
+                file_path,
+                doc_id,
+            )
+            log("rag ingest done", doc_id=doc_id, chunks=0, duration_ms=0)
             return doc_id
+
+        log("rag ingest chunks", doc_id=doc_id, chunks=len(chunk_dicts))
 
         # 3. 准备存入 ChromaDB 的数据
         ids = []
@@ -71,8 +118,6 @@ class KnowledgeBase:
         embeddings = []
         metadatas = []
 
-        # 提取文档基本信息
-        doc_name = os.path.basename(file_path)
         source_type = os.path.splitext(file_path)[1].lower()
         indexed_at = time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -120,6 +165,13 @@ class KnowledgeBase:
             metadatas=metadatas,
         )
 
+        duration_ms = int((time.perf_counter() - t0) * 1000)
+        log(
+            "rag ingest done",
+            doc_id=doc_id,
+            chunks=len(chunk_dicts),
+            duration_ms=duration_ms,
+        )
         return doc_id
 
     async def search(
@@ -140,34 +192,77 @@ class KnowledgeBase:
         Returns:
             检索结果列表
         """
-        if optimize != "none" and self.query_optimizer:
-            if optimize == "mqe":
-                # MQE：生成多个查询，并行检索，合并去重
-                queries = await self.query_optimizer.optimize(query, "mqe")
-                all_results = []
-                for q in queries:
-                    results = await self._vector_search(q, top_k, where)
-                    all_results.extend(results)
-                return self._deduplicate_and_sort(all_results, top_k)
-
-            elif optimize == "hyde":
-                # HyDE：用假设文档检索
-                hyde_text = await self.query_optimizer.optimize(query, "hyde")
-                return await self._vector_search(hyde_text, top_k, where)
-
-        # 默认：直接检索
-        return await self._vector_search(query, top_k, where)
+        log(
+            "rag search",
+            query=_preview(query),
+            top_k=top_k,
+            optimize=optimize,
+        )
+        try:
+            if optimize != "none" and self.query_optimizer:
+                if optimize == "mqe":
+                    queries = await self.query_optimizer.optimize(query, "mqe")
+                    log("rag search mqe", variant_count=len(queries))
+                    all_results = []
+                    for q in queries:
+                        all_results.extend(
+                            await self._vector_search(q, top_k, where)
+                        )
+                    results = self._deduplicate_and_sort(all_results, top_k)
+                elif optimize == "hyde":
+                    hyde_text = await self.query_optimizer.optimize(query, "hyde")
+                    log(
+                        "rag search hyde",
+                        hyde_len=len(hyde_text),
+                        preview=_preview(hyde_text, 60),
+                    )
+                    results = await self._vector_search(hyde_text, top_k, where)
+                else:
+                    results = await self._vector_search(query, top_k, where)
+            else:
+                results = await self._vector_search(query, top_k, where)
+        except Exception as e:
+            logger.warning(
+                "rag search failed | query={} | detail={}",
+                _preview(query),
+                str(e)[:200],
+            )
+            raise
+        log(
+            "rag search done",
+            count=len(results),
+            hits=_hits_preview(results),
+        )
+        return results
 
     def delete_document(self, doc_id: str) -> None:
         """删除指定文档的所有分块。"""
-        self.collection.delete(where={"doc_id": doc_id})
+        try:
+            self.collection.delete(where={"doc_id": doc_id})
+        except Exception as e:
+            logger.warning(
+                "rag delete failed | doc_id={} | detail={}",
+                doc_id,
+                str(e)[:200],
+            )
+            raise
+        log("rag delete", doc_id=doc_id)
 
     def clear(self) -> None:
         """清空整个知识库。"""
-        self.client.delete_collection(self.collection_name)
-        self.collection = self.client.get_or_create_collection(
-            name=self.collection_name
-        )
+        try:
+            self.client.delete_collection(self.collection_name)
+            self.collection = self.client.get_or_create_collection(
+                name=self.collection_name
+            )
+        except Exception as e:
+            logger.warning(
+                "rag clear failed | collection={} | detail={}",
+                self.collection_name,
+                str(e)[:200],
+            )
+            raise
+        log("rag clear", collection=self.collection_name)
 
     async def _vector_search(
         self, query: str, top_k: int, where: Optional[dict]

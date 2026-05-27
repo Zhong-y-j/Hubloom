@@ -2,6 +2,12 @@ import re
 from typing import List, Literal
 from core.provider import LLMProvider
 from core.models import Message, Role
+from observability import log, logger
+
+
+def _preview(text: str, limit: int = 80) -> str:
+    text = (text or "").replace("\n", " ")
+    return text if len(text) <= limit else text[:limit] + "…"
 
 
 class QueryOptimizer:
@@ -28,13 +34,21 @@ class QueryOptimizer:
             - HyDE: 返回假设文档文本（str）
             - MQE: 返回多个查询变体（List[str]）
         """
+        log("rag optimize", strategy=strategy, query=_preview(query))
         if strategy == "mqe":
-            return await self._mqe(query)
-        elif strategy == "hyde":
-            return await self._hyde(query)
-        else:
-            # 不优化，直接返回原查询
-            return query
+            result = await self._mqe(query)
+            log("rag optimize done", strategy=strategy, variant_count=len(result))
+            return result
+        if strategy == "hyde":
+            result = await self._hyde(query)
+            log(
+                "rag optimize done",
+                strategy=strategy,
+                hyde_len=len(result),
+                preview=_preview(result, 60),
+            )
+            return result
+        return query
 
     async def _mqe(self, query: str, num_variants: int = 3) -> List[str]:
         """多查询扩展：生成多个语义等价但表述不同的查询。
@@ -62,8 +76,11 @@ class QueryOptimizer:
             # 按换行分割，去除空行和首尾空白
             variants = [line.strip() for line in raw_text.split("\n") if line.strip()]
 
-            # 如果生成失败或数量不足，回退到原始查询
             if not variants:
+                logger.warning(
+                    "rag optimize mqe empty | query={}",
+                    _preview(query),
+                )
                 return [query]
 
             # 限制数量并保证包含原始查询
@@ -73,8 +90,12 @@ class QueryOptimizer:
 
             return variants
 
-        except Exception:
-            # LLM 调用失败时，只返回原始查询
+        except Exception as e:
+            logger.warning(
+                "rag optimize mqe failed | query={} | detail={}",
+                _preview(query),
+                str(e)[:200],
+            )
             return [query]
 
     async def _hyde(self, query: str) -> str:
@@ -100,20 +121,27 @@ class QueryOptimizer:
             )
             hyde_text = (response.content or "").strip()
 
-            # 如果生成失败，回退到原查询
             if not hyde_text:
+                logger.warning(
+                    "rag optimize hyde empty | query={}",
+                    _preview(query),
+                )
                 return query
 
             return hyde_text
 
-        except Exception:
-            # LLM 调用失败时，返回原查询
+        except Exception as e:
+            logger.warning(
+                "rag optimize hyde failed | query={} | detail={}",
+                _preview(query),
+                str(e)[:200],
+            )
             return query
 
 
 if __name__ == "__main__":
     import asyncio
-    from agents.core import create_llm
+    from core import create_llm
 
     async def main():
         optimizer = QueryOptimizer(create_llm())
