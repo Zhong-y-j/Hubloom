@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from observability import log, logger
 from memory.embedders.base import Embedder
 from memory.handlers.base import MemoryHandler
 from memory.lifecycle import LifecyclePolicy, TTLBasedPolicy
@@ -9,6 +10,11 @@ from memory.models import EpisodicItem
 from memory.store import QdrantMemoryStore
 from memory.store import QdrantMemoryStoreScope
 from memory.utils import now_local_str
+
+
+def _preview(text: str, limit: int = 80) -> str:
+    text = (text or "").replace("\n", " ")
+    return text if len(text) <= limit else text[:limit] + "…"
 
 
 class EpisodicQdrantHandler(MemoryHandler):
@@ -53,25 +59,41 @@ class EpisodicQdrantHandler(MemoryHandler):
         source: str = "memory",
         metadata: Optional[dict] = None,
     ) -> str:
-        emb = (await self.embedder.embed([content]))[0]
-        meta = dict(metadata or {})
-        ref_session_id = meta.pop("ref_session_id", None)
-        importance = int(meta.pop("importance", 0) or 0)
-        embedding_model = getattr(self.embedder, "model_name", None)
-        item = EpisodicItem(
-            id=None,
-            content=content,
+        try:
+            emb = (await self.embedder.embed([content]))[0]
+            meta = dict(metadata or {})
+            ref_session_id = meta.pop("ref_session_id", None)
+            importance = int(meta.pop("importance", 0) or 0)
+            embedding_model = getattr(self.embedder, "model_name", None)
+            item = EpisodicItem(
+                id=None,
+                content=content,
+                namespace=self.namespace,
+                source=source,  # type: ignore[arg-type]
+                metadata=meta,
+                created_at=now_local_str(),
+                last_accessed_at=now_local_str(),
+                ref_session_id=ref_session_id,
+                importance=importance,
+            )
+            if embedding_model:
+                item.metadata.setdefault("embedding_model", embedding_model)
+            item_id = await self.store.add_episodic(item, emb)
+        except Exception as e:
+            logger.warning(
+                "episodic remember failed | namespace={} | detail={}",
+                self.namespace,
+                str(e)[:200],
+            )
+            raise
+        log(
+            "episodic remember",
             namespace=self.namespace,
-            source=source,  # type: ignore[arg-type]
-            metadata=meta,
-            created_at=now_local_str(),
-            last_accessed_at=now_local_str(),
-            ref_session_id=ref_session_id,
+            id=item_id,
             importance=importance,
+            preview=_preview(content),
         )
-        if embedding_model:
-            item.metadata.setdefault("embedding_model", embedding_model)
-        return await self.store.add_episodic(item, emb)
+        return item_id
 
     async def recall(
         self,
@@ -82,22 +104,72 @@ class EpisodicQdrantHandler(MemoryHandler):
         mode: str = "semantic",
     ) -> list[EpisodicItem]:
         _ = mode
-        q_emb = (await self.embedder.embed([query]))[0]
-        return await self.store.search_episodic(
+        try:
+            q_emb = (await self.embedder.embed([query]))[0]
+            items = await self.store.search_episodic(
+                namespace=self.namespace,
+                query_embedding=q_emb,
+                top_k=top_k,
+                score_threshold=self._score_threshold,
+                filters=filters,
+            )
+        except Exception as e:
+            logger.warning(
+                "episodic recall failed | namespace={} | detail={}",
+                self.namespace,
+                str(e)[:200],
+            )
+            raise
+        log(
+            "episodic recall",
             namespace=self.namespace,
-            query_embedding=q_emb,
+            query=_preview(query),
+            count=len(items),
             top_k=top_k,
-            score_threshold=self._score_threshold,
-            filters=filters,
         )
+        return items
 
     async def forget(self, item_id: str) -> bool:
-        return await self.store.delete(item_id, self.namespace)
+        try:
+            ok = await self.store.delete(item_id, self.namespace)
+        except Exception as e:
+            logger.warning(
+                "episodic forget failed | namespace={} | id={} | detail={}",
+                self.namespace,
+                item_id,
+                str(e)[:200],
+            )
+            raise
+        log("episodic forget", namespace=self.namespace, id=item_id, ok=ok)
+        return ok
 
     async def clear_all(self) -> int:
-        return await self.store.clear_namespace(self.namespace, memory_type="episodic")
+        try:
+            n = await self.store.clear_namespace(
+                self.namespace, memory_type="episodic"
+            )
+        except Exception as e:
+            logger.warning(
+                "episodic clear failed | namespace={} | detail={}",
+                self.namespace,
+                str(e)[:200],
+            )
+            raise
+        log("episodic clear", namespace=self.namespace, deleted=n)
+        return n
 
     async def run_maintenance(self, current_time_str: str) -> int:
-        return await self._lifecycle_policy.evict(
-            self._scoped, self.namespace, current_time_str
-        )
+        try:
+            n = await self._lifecycle_policy.evict(
+                self._scoped, self.namespace, current_time_str
+            )
+        except Exception as e:
+            logger.warning(
+                "episodic maintenance failed | namespace={} | detail={}",
+                self.namespace,
+                str(e)[:200],
+            )
+            raise
+        if n:
+            log("episodic maintenance", namespace=self.namespace, evicted=n)
+        return n

@@ -4,6 +4,7 @@ import asyncio
 from typing import Optional
 
 from core.models import Message, Role
+from observability import log, logger
 from memory.handlers.base import MemoryHandler
 from memory.store import ConversationSQLitesStore
 
@@ -50,15 +51,32 @@ class ConversationHandler(MemoryHandler):
         turn_index: int | None = None,
     ) -> str:
         """追加一条对话消息（推荐入口）。"""
-        return await asyncio.to_thread(
-            self.store.add_message,
-            self.session_id,
-            message,
-            source=source,
-            metadata=metadata,
-            token_count=token_count,
-            turn_index=turn_index,
+        try:
+            msg_id = await asyncio.to_thread(
+                self.store.add_message,
+                self.session_id,
+                message,
+                source=source,
+                metadata=metadata,
+                token_count=token_count,
+                turn_index=turn_index,
+            )
+        except Exception as e:
+            logger.warning(
+                "conversation append failed | session_id={} | role={} | detail={}",
+                self.session_id,
+                message.role.value,
+                str(e)[:200],
+            )
+            raise
+        log(
+            "conversation append",
+            session_id=self.session_id,
+            role=message.role.value,
+            id=msg_id,
+            content_len=len(str(message.content or "")),
         )
+        return msg_id
 
     async def remember(
         self,
@@ -82,7 +100,24 @@ class ConversationHandler(MemoryHandler):
         # 对话记忆按时间取最近 N 条；query/mode 预留给后续摘要检索
         _ = query, filters, mode
         limit = top_k if top_k > 0 else 20
-        return await asyncio.to_thread(self.store.get_recent, self.session_id, limit)
+        try:
+            messages = await asyncio.to_thread(
+                self.store.get_recent, self.session_id, limit
+            )
+        except Exception as e:
+            logger.warning(
+                "conversation recall failed | session_id={} | detail={}",
+                self.session_id,
+                str(e)[:200],
+            )
+            raise
+        log(
+            "conversation recall",
+            session_id=self.session_id,
+            count=len(messages),
+            top_k=limit,
+        )
+        return messages
 
     async def get_all(self) -> list[Message]:
         """获取本会话完整历史（正序）。"""
@@ -95,7 +130,17 @@ class ConversationHandler(MemoryHandler):
 
     async def clear_all(self) -> int:
         """清空当前 session 的全部对话记录。"""
-        return await asyncio.to_thread(self.store.clear_session, self.session_id)
+        try:
+            n = await asyncio.to_thread(self.store.clear_session, self.session_id)
+        except Exception as e:
+            logger.warning(
+                "conversation clear failed | session_id={} | detail={}",
+                self.session_id,
+                str(e)[:200],
+            )
+            raise
+        log("conversation clear", session_id=self.session_id, deleted=n)
+        return n
 
     async def run_maintenance(self, current_time_str: str) -> int:
         # 对话裁剪由 ContextAssembler 在组装时控制条数，不做存储层淘汰

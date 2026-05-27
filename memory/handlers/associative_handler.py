@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from typing import Optional
 
+from observability import log, logger
 from memory.handlers.base import MemoryHandler
 from memory.models import AssociativeRecallResult, GraphEntity
 from memory.store import Neo4jStore
 from memory.types import EntityType, LongTermMemoryType, MemorySource
 from memory.utils import now_local_str
+
+
+def _preview(text: str, limit: int = 80) -> str:
+    text = (text or "").replace("\n", " ")
+    return text if len(text) <= limit else text[:limit] + "…"
 
 
 class AssociativeHandler(MemoryHandler):
@@ -64,15 +70,32 @@ class AssociativeHandler(MemoryHandler):
         weight: float = 1.0,
     ) -> str:
         """建立两实体及 ``RELATES_TO`` 关系，返回关系 elementId。"""
-        return await self.store.relate(
+        try:
+            rel_id = await self.store.relate(
+                namespace=self.namespace,
+                from_name=from_name,
+                to_name=to_name,
+                relation_label=relation_label,
+                from_entity_type=from_entity_type,
+                to_entity_type=to_entity_type,
+                weight=weight,
+            )
+        except Exception as e:
+            logger.warning(
+                "associative remember relation failed | namespace={} | detail={}",
+                self.namespace,
+                str(e)[:200],
+            )
+            raise
+        log(
+            "associative remember relation",
             namespace=self.namespace,
             from_name=from_name,
             to_name=to_name,
-            relation_label=relation_label,
-            from_entity_type=from_entity_type,
-            to_entity_type=to_entity_type,
-            weight=weight,
+            relation_label=relation_label or "",
+            id=rel_id,
         )
+        return rel_id
 
     async def remember_entity(
         self,
@@ -100,7 +123,23 @@ class AssociativeHandler(MemoryHandler):
             importance=importance,
             created_at=now_local_str(),
         )
-        return await self.store.upsert_entity(entity)
+        try:
+            entity_id = await self.store.upsert_entity(entity)
+        except Exception as e:
+            logger.warning(
+                "associative remember entity failed | namespace={} | detail={}",
+                self.namespace,
+                str(e)[:200],
+            )
+            raise
+        log(
+            "associative remember entity",
+            namespace=self.namespace,
+            name=name,
+            entity_type=entity_type,
+            id=entity_id,
+        )
+        return entity_id
 
     async def link_memory(
         self,
@@ -111,13 +150,30 @@ class AssociativeHandler(MemoryHandler):
         content_preview: str | None = None,
     ) -> str:
         """实体挂载 ``MemoryRef``，指向 Qdrant episodic/semantic。"""
-        return await self.store.link_memory(
+        try:
+            ref_id = await self.store.link_memory(
+                namespace=self.namespace,
+                entity_id=entity_id,
+                memory_type=memory_type,
+                memory_id=memory_id,
+                content_preview=content_preview,
+            )
+        except Exception as e:
+            logger.warning(
+                "associative link_memory failed | namespace={} | detail={}",
+                self.namespace,
+                str(e)[:200],
+            )
+            raise
+        log(
+            "associative link_memory",
             namespace=self.namespace,
             entity_id=entity_id,
             memory_type=memory_type,
             memory_id=memory_id,
-            content_preview=content_preview,
+            id=ref_id,
         )
+        return ref_id
 
     async def recall_graph(
         self,
@@ -130,13 +186,32 @@ class AssociativeHandler(MemoryHandler):
         meta = dict(filters or {})
         hops = int(meta.get("hops", self.default_hops))
         include_refs = bool(meta.get("include_memory_refs", self._include_memory_refs))
-        return await self.store.recall_neighbors(
+        try:
+            result = await self.store.recall_neighbors(
+                namespace=self.namespace,
+                query=query,
+                hops=hops,
+                limit=top_k,
+                include_memory_refs=include_refs,
+            )
+        except Exception as e:
+            logger.warning(
+                "associative recall failed | namespace={} | detail={}",
+                self.namespace,
+                str(e)[:200],
+            )
+            raise
+        log(
+            "associative recall",
             namespace=self.namespace,
-            query=query,
+            query=_preview(query),
             hops=hops,
-            limit=top_k,
-            include_memory_refs=include_refs,
+            seed=result.seed.name if result.seed else None,
+            entities=len(result.entities),
+            relations=len(result.relations),
+            memory_refs=len(result.memory_refs),
         )
+        return result
 
     # ── MemoryHandler 统一接口 ───────────────────────────
 
@@ -214,10 +289,31 @@ class AssociativeHandler(MemoryHandler):
 
     async def forget(self, item_id: str) -> bool:
         """删除实体节点（``DETACH DELETE``，含关联边）。"""
-        return await self.store.delete_entity(item_id, self.namespace)
+        try:
+            ok = await self.store.delete_entity(item_id, self.namespace)
+        except Exception as e:
+            logger.warning(
+                "associative forget failed | namespace={} | id={} | detail={}",
+                self.namespace,
+                item_id,
+                str(e)[:200],
+            )
+            raise
+        log("associative forget", namespace=self.namespace, id=item_id, ok=ok)
+        return ok
 
     async def clear_all(self) -> int:
-        return await self.store.clear_namespace(self.namespace)
+        try:
+            n = await self.store.clear_namespace(self.namespace)
+        except Exception as e:
+            logger.warning(
+                "associative clear failed | namespace={} | detail={}",
+                self.namespace,
+                str(e)[:200],
+            )
+            raise
+        log("associative clear", namespace=self.namespace, deleted=n)
+        return n
 
     async def run_maintenance(self, current_time_str: str) -> int:
         _ = current_time_str
