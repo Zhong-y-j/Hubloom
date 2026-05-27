@@ -116,6 +116,11 @@ class ConversationHandler(MemoryHandler):
             session_id=self.session_id,
             count=len(messages),
             top_k=limit,
+            last=(
+                f"{messages[-1].role.value}:{str(messages[-1].content or '')[:80].replace(chr(10), ' ')}"
+                if messages
+                else ""
+            ),
         )
         return messages
 

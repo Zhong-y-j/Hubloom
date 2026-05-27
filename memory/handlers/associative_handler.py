@@ -15,6 +15,16 @@ def _preview(text: str, limit: int = 80) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def _list_preview(values: list[str], limit: int = 5) -> str:
+    values = list(values or [])
+    if not values:
+        return ""
+    shown = values[: max(0, limit)]
+    more = len(values) - len(shown)
+    base = ", ".join(shown)
+    return f"{base} (+{more})" if more > 0 else base
+
+
 class AssociativeHandler(MemoryHandler):
     """联想记忆专员：实体与关系写入 Neo4j，按图邻域检索。
 
@@ -210,6 +220,13 @@ class AssociativeHandler(MemoryHandler):
             entities=len(result.entities),
             relations=len(result.relations),
             memory_refs=len(result.memory_refs),
+            neighbors=_list_preview([e.name for e in result.entities]),
+            rels=_list_preview(
+                [
+                    f"{r.from_name}-[{r.relation_label or r.relation_type}]->{r.to_name}"
+                    for r in result.relations
+                ]
+            ),
         )
         return result
 

@@ -10,7 +10,7 @@ from loguru import logger
 
 _original_print = builtins.print
 _original_excepthook = sys.excepthook
-_LOG_FILE = Path(os.getenv("CORTEX_LOG_FILE", "logs/agentcortex.log"))
+_LOG_FILE = Path(os.getenv("CORTEX_LOG_FILE", "logs/debug.log"))
 
 # 文件日志含：相对路径、行号、函数名（便于定位代码）
 _FILE_LOG_FORMAT = (
@@ -27,7 +27,7 @@ def setup_log(
     capture_print: bool = False,
     log_uncaught: bool = True,
 ) -> Path:
-    """配置日志：默认只写入 ``logs/agentcortex.log``（不在控制台重复打日志）。
+    """配置日志：默认只写入 ``logs/debug.log``（不在控制台重复打日志）。
 
     - ``log_uncaught=True``：未捕获异常（如 NameError）写入日志并保留终端 traceback
     - ``capture_print``：``print`` 内容写入日志；终端仍显示 print

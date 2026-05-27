@@ -17,6 +17,18 @@ def _preview(text: str, limit: int = 80) -> str:
     return text if len(text) <= limit else text[:limit] + "…"
 
 
+def _hits_preview(items: list[SemanticItem], limit: int = 3) -> str:
+    parts: list[str] = []
+    for it in (items or [])[: max(0, limit)]:
+        score = it.metadata.get("score")
+        try:
+            score_s = f"{float(score):.3f}"
+        except Exception:
+            score_s = "?"
+        parts.append(f"{score_s}:{_preview(it.content, 60)}")
+    return "; ".join(parts)
+
+
 class SemanticQdrantHandler(MemoryHandler):
     """语义记忆（Qdrant）：写入与检索均走向量。
 
@@ -127,6 +139,7 @@ class SemanticQdrantHandler(MemoryHandler):
             query=_preview(query),
             count=len(items),
             top_k=top_k,
+            hits=_hits_preview(items),
         )
         return items
 
@@ -146,9 +159,7 @@ class SemanticQdrantHandler(MemoryHandler):
 
     async def clear_all(self) -> int:
         try:
-            n = await self.store.clear_namespace(
-                self.namespace, memory_type="semantic"
-            )
+            n = await self.store.clear_namespace(self.namespace, memory_type="semantic")
         except Exception as e:
             logger.warning(
                 "semantic clear failed | namespace={} | detail={}",
