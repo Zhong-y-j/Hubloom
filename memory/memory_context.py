@@ -18,7 +18,17 @@ class MemoryRecallContext:
 
 
 class MemoryContextProvider:
-    """从 MemoryManager 召回长期记忆，并规范化为 assembler 可消费的 dict 列表。"""
+    """从 MemoryManager 召回长期记忆，并规范化为 assembler 可消费的 dict 列表。
+
+    Args:
+        memory_manager: MemoryManager 实例
+        hybrid_top_k: 混合检索返回条数
+        associative_top_k: 关联检索返回条数
+        include_associative: 是否包含关联检索
+        associative_hops: 关联检索跳数
+    Actions:
+        recall_for_context: 召回长期记忆
+    """
 
     def __init__(
         self,

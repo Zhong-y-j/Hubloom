@@ -33,34 +33,14 @@ SYSTEM_PROMPT = (
 )
 
 
-def _print_messages(messages: list[Message], *, full: bool) -> None:
-    print(f"\n{'=' * 60}")
-    print(f"  交给 LLM 的 messages（共 {len(messages)} 条）")
-    print(f"{'=' * 60}")
-    for i, msg in enumerate(messages):
-        content = str(msg.content or "")
-        print(f"\n--- [{i}] role={msg.role.value} ---")
-        if full:
-            print(content)
-        else:
-            if len(content) <= 500:
-                print(content)
-            else:
-                print(content[:500])
-                print(f"\n... (共 {len(content)} 字符，加 --full 看全文)")
-
-
-async def main(*, no_graph: bool, full: bool) -> None:
+async def main() -> None:
     setup_log()
 
-    mem = create_memory_manager(
-        namespace=NAMESPACE,
-        graph_backend="none" if no_graph else "neo4j",
-    )
+    mem = create_memory_manager(namespace=NAMESPACE, graph_backend="none")
     provider = MemoryContextProvider(
         mem,
         hybrid_top_k=5,
-        include_associative=not no_graph,
+        include_associative=True,
     )
 
     print("--- 1. MemoryContextProvider 召回 ---")
@@ -68,15 +48,7 @@ async def main(*, no_graph: bool, full: bool) -> None:
     print("query:", QUERY)
 
     ctx = await provider.recall_for_context(QUERY)
-    print(f"memories: {len(ctx.memories)} 条")
-    for row in ctx.memories:
-        print(
-            f"  - [{row.get('memory_type')}] "
-            f"score={row.get('score', 0):.2f} | {row.get('content', '')[:60]}"
-        )
-    print("graph_summary:", "有" if ctx.graph_summary else "无")
-
-    # 对话历史（与 ReAct 一致：从 conversation 取最近 N 条）
+    print(ctx)
     conv = await mem.recall(memory_type="conversation", top_k=10)
     histories = conv.messages or []
 
@@ -90,20 +62,8 @@ async def main(*, no_graph: bool, full: bool) -> None:
         current_task=QUERY,
         graph_summary=ctx.graph_summary,
     )
-
-    _print_messages(messages, full=full)
-
-    print("\n--- 结构说明 ---")
-    print("[0] system     → 人设/规则")
-    print("[?] system     → [MEMORY]...[/MEMORY]  （有长期记忆时）")
-    print("[?] system     → [GRAPH]...[/GRAPH]    （有图摘要时）")
-    print("[?] user/assistant → 最近对话轮次")
-    print("[最后] user    → 当前用户输入（current_task）")
+    print(messages)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--no-graph", action="store_true", help="不启用 Neo4j 图召回")
-    parser.add_argument("--full", action="store_true", help="打印每条 message 全文")
-    args = parser.parse_args()
-    asyncio.run(main(no_graph=args.no_graph, full=args.full))
+    asyncio.run(main())
