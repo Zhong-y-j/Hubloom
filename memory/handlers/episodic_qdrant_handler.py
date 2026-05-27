@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from observability import log, logger
-from memory.embedders.base import Embedder
+from embedders.base import Embedder
 from memory.handlers.base import MemoryHandler
 from memory.lifecycle import LifecyclePolicy, TTLBasedPolicy
 from memory.models import EpisodicItem
@@ -158,9 +158,7 @@ class EpisodicQdrantHandler(MemoryHandler):
 
     async def clear_all(self) -> int:
         try:
-            n = await self.store.clear_namespace(
-                self.namespace, memory_type="episodic"
-            )
+            n = await self.store.clear_namespace(self.namespace, memory_type="episodic")
         except Exception as e:
             logger.warning(
                 "episodic clear failed | namespace={} | detail={}",

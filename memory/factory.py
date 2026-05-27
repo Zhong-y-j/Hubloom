@@ -5,8 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-from memory.embedders import OpenAIEmbedder
-from memory.embedders.base import Embedder
+from embedders import OpenAIEmbedder
+from embedders.base import Embedder
 from memory.handlers import (
     AssociativeHandler,
     ConversationHandler,
