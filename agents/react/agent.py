@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
@@ -34,10 +35,11 @@ from agents.core.intent import (
     resolve_display_text,
 )
 from tools import ToolRegistry, ToolRunner
+from observability import log as _log
 
 if TYPE_CHECKING:
-    from context.assembler import ContextAssembler
-    from context.memory_context import MemoryContextProvider
+    from memory.context import ContextAssembler
+    from memory.memory_context import MemoryContextProvider
     from memory.store.conversation_sqlite_store import ConversationSQLitesStore
     from memory.manager import MemoryManager
     from retrieval.knowledge_base import KnowledgeBase
@@ -57,6 +59,23 @@ _DEFAULT_FORCED_FINALIZE_NUDGE = (
 
 # 澄清阶段允许的只读工具（执行型工具留给 PlanExecute）
 _READONLY_TOOL_NAMES = frozenset({"search_documents", "search_memory"})
+
+# ReAct agent 日志开关：默认关闭，避免刷屏；需要时设 CORTEX_REACT_LOG=1
+_REACT_LOG_ENABLED = "1"
+
+
+def _react_log(message: str, /, **fields) -> None:
+    if not _REACT_LOG_ENABLED:
+        return
+    _log(message, **fields)
+
+
+def _clip(text: str | None, n: int = 160) -> str:
+    s = (text or "").strip().replace("\n", "\\n")
+    if len(s) <= n:
+        return s
+    return s[:n] + f"…(+{len(s) - n})"
+
 
 _SYSTEM_INTRO = """你是 **Agent Cortex（灵枢）** 面向用户的智能助手：先弄清需求，再在任务明确后由系统完成起草、检索与多步执行。
 
@@ -157,7 +176,7 @@ class ReActAgent(Agent):
         self._last_user_task = ""
         self._memory_context: MemoryContextProvider | None = None
         if memory_manager is not None:
-            from context.memory_context import MemoryContextProvider
+            from memory.memory_context import MemoryContextProvider
 
             self._memory_context = MemoryContextProvider(
                 memory_manager,
@@ -229,6 +248,15 @@ class ReActAgent(Agent):
             raise ValueError("task must not be empty")
 
         self._last_user_task = task
+        _react_log(
+            "react bootstrap start",
+            task=_clip(task, 120),
+            has_assembler=bool(self._context_assembler),
+            has_memory=bool(self.memory),
+            has_kb=bool(self._knowledge_base),
+            persist=bool(self._should_persist),
+            session_id=self._session_id,
+        )
 
         if self._context_assembler is None:
             self._history = [
@@ -240,11 +268,21 @@ class ReActAgent(Agent):
                     self._session_id,
                     Message(role=Role.USER, content=task),
                 )
+            _react_log(
+                "react bootstrap done (no assembler)", history=len(self._history)
+            )
             return
 
         memory_items, graph_summary = await self._prefetch_long_term_memory(task)
         documents = await self._prefetch_documents(task)
         histories = self._load_conversation_histories()
+        _react_log(
+            "react bootstrap prefetched",
+            memories=len(memory_items or []),
+            graph_summary=bool((graph_summary or "").strip()),
+            documents=len(documents or []) if documents is not None else None,
+            histories=len(histories or []) if histories is not None else None,
+        )
 
         self._history = self._context_assembler.assemble(
             system_prompt=self._system_prompt_str,
@@ -254,6 +292,7 @@ class ReActAgent(Agent):
             current_task=task,
             graph_summary=graph_summary,
         )
+        _react_log("react bootstrap done", history=len(self._history))
 
         if self._should_persist:
             self._conversation_store.add_message(  # type: ignore[union-attr]
@@ -285,8 +324,19 @@ class ReActAgent(Agent):
         display, intent = parse_intent_from_answer(answer)
         if intent is not None:
             self.last_intent = intent
+            _react_log(
+                "react intent parsed",
+                ok=True,
+                intent=intent.intent,
+                is_clear=intent.is_clear,
+            )
             return resolve_display_text(display, intent, raw_fallback=answer), intent
 
+        _react_log(
+            "react intent parse failed; reformatting",
+            ok=False,
+            answer_len=len(answer or ""),
+        )
         extra = await self.llm.generate(
             messages=self.get_history()
             + [
@@ -299,11 +349,22 @@ class ReActAgent(Agent):
         display2, intent2 = parse_intent_from_answer(reformatted)
         if intent2 is not None:
             self.last_intent = intent2
+            _react_log(
+                "react intent parsed (reformatted)",
+                ok=True,
+                intent=intent2.intent,
+                is_clear=intent2.is_clear,
+            )
             return (
                 resolve_display_text(display2, intent2, raw_fallback=reformatted),
                 intent2,
             )
 
+        _react_log(
+            "react intent parse failed (reformatted); fallback",
+            ok=False,
+            reformatted_len=len(reformatted),
+        )
         fallback = StructuredIntent(
             is_clear=False,
             intent="unknown",
@@ -325,6 +386,14 @@ class ReActAgent(Agent):
         start: float,
     ) -> AsyncIterator[AgentEvent]:
         """结束一轮：解析 intent → 统计 → IntentOutcome → FinalAnswer。"""
+        _react_log(
+            "react finish_turn",
+            steps=steps,
+            tool_calls=tool_calls_count,
+            tool_errors=tool_errors_count,
+            answer_len=len(raw_answer or ""),
+            elapsed_ms=int((time.monotonic() - start) * 1000),
+        )
         if raw_answer:
             self.add_message(Message(role=Role.ASSISTANT, content=raw_answer))
 
@@ -358,6 +427,15 @@ class ReActAgent(Agent):
                 )
             except Exception as exc:
                 consolidation = MemoryConsolidationResult(skipped=True, error=str(exc))
+            _react_log(
+                "react memory consolidated",
+                skipped=consolidation.skipped,
+                episodic=consolidation.episodic_written,
+                semantic=consolidation.semantic_written,
+                relations=consolidation.relations_written,
+                links=consolidation.links_written,
+                error=consolidation.error,
+            )
             yield MemoryConsolidatedEvent(
                 episodic=consolidation.episodic_written,
                 semantic=consolidation.semantic_written,
@@ -387,6 +465,15 @@ class ReActAgent(Agent):
         tool_errors_count = 0
         self.tools_invoked_this_run = []
 
+        _react_log(
+            "react run_stream start",
+            task=_clip(task, 120),
+            max_steps=self.max_steps,
+            allowed_tools=(
+                ",".join(sorted(self.allowed_tools)) if self.allowed_tools else ""
+            ),
+            emit_structured_intent=self._emit_structured_intent,
+        )
         await self._bootstrap_context(task)
 
         premature_stop_retries = 0
@@ -418,10 +505,16 @@ class ReActAgent(Agent):
                     break
 
                 elif isinstance(ev, StreamErrorEvent):
+                    _react_log(
+                        "react llm stream error",
+                        step=steps,
+                        error=str(ev.error),
+                    )
                     yield ErrorEvent(error=str(ev.error))
                     return
 
             if final_stop is None:
+                _react_log("react error: stream ended without end event", step=steps)
                 yield ErrorEvent(error="LLM stream ended without StreamEndEvent")
                 return
 
@@ -429,6 +522,15 @@ class ReActAgent(Agent):
                 tail = stream_filter.flush()
                 if tail:
                     yield TextDeltaEvent(delta=tail)
+
+            _react_log(
+                "react step done",
+                step=steps,
+                stop_reason=str(final_stop),
+                content_len=len(full_text),
+                tool_calls=len(tool_calls or []),
+                tool_calls_total=tool_calls_count,
+            )
 
             if final_stop == StopReason.STOP:
                 answer = full_text.strip()
@@ -442,12 +544,23 @@ class ReActAgent(Agent):
                     and premature_stop_retries < self._max_premature_stop_retries
                 ):
                     premature_stop_retries += 1
+                    _react_log(
+                        "react premature_stop retry",
+                        step=steps,
+                        retries=premature_stop_retries,
+                        max_retries=self._max_premature_stop_retries,
+                    )
                     self.add_message(Message(role=Role.ASSISTANT, content=answer))
                     nudge = self._premature_stop_nudge or _DEFAULT_PREMATURE_STOP_NUDGE
                     self.add_message(Message(role=Role.SYSTEM, content=nudge))
                     continue
 
                 if reject_stop and self._accept_stop is not None:
+                    _react_log(
+                        "react forced_finalize",
+                        step=steps,
+                        tool_calls=tool_calls_count,
+                    )
                     if answer:
                         self.add_message(Message(role=Role.ASSISTANT, content=answer))
                     finalize = (
@@ -489,18 +602,36 @@ class ReActAgent(Agent):
                 for tc in tool_calls:
                     tool_calls_count += 1
                     self.tools_invoked_this_run.append(tc.name)
+                    _react_log(
+                        "react tool_call",
+                        step=steps,
+                        tool=tc.name,
+                        call_id=tc.id,
+                        arg_keys=",".join(sorted(tc.arguments.keys())),
+                    )
                     yield ToolCallEvent(
                         call_id=tc.id, tool_name=tc.name, args=tc.arguments
                     )
 
+                tool_start = time.monotonic()
                 results = await asyncio.gather(
                     *[self.tool_runner.run(tc.name, tc.arguments) for tc in tool_calls],
                     return_exceptions=False,
                 )
+                tool_elapsed_ms = int((time.monotonic() - tool_start) * 1000)
 
                 for tc, (result, is_error) in zip(tool_calls, results):
                     if is_error:
                         tool_errors_count += 1
+                    _react_log(
+                        "react tool_result",
+                        step=steps,
+                        tool=tc.name,
+                        call_id=tc.id,
+                        is_error=is_error,
+                        elapsed_ms=tool_elapsed_ms,
+                        result_len=len(result or ""),
+                    )
                     yield ToolResultEvent(
                         call_id=tc.id,
                         tool_name=tc.name,
@@ -519,6 +650,7 @@ class ReActAgent(Agent):
                 continue
 
             if final_stop == StopReason.LENGTH:
+                _react_log("react length_truncated; summarize", step=steps)
                 self.add_message(
                     Message(
                         role=Role.SYSTEM,
@@ -537,6 +669,9 @@ class ReActAgent(Agent):
                     yield ev
                 return
 
+            _react_log(
+                "react unexpected stop_reason", step=steps, stop_reason=str(final_stop)
+            )
             yield ErrorEvent(error=f"Unexpected stop_reason: {final_stop}")
             return
 
@@ -545,6 +680,9 @@ class ReActAgent(Agent):
                 role=Role.SYSTEM,
                 content="已达到最大步数。请给出简短 user_reply + ```intent```（不要再调用工具）。",
             )
+        )
+        _react_log(
+            "react max_steps reached; summarize", steps=steps, max_steps=self.max_steps
         )
         answer = await self._final_summarize()
         async for ev in self._finish_turn(
