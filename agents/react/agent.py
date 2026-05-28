@@ -124,6 +124,37 @@ class ReActAgent(Agent):
 
     输出 ``IntentOutcomeEvent`` + ``FinalAnswerEvent``（含 ``intent`` 字段），
     供后续 PlanExecute 消费。
+
+    Args:
+        llm:
+        tools: 工具注册表
+        system_prompt: 系统提示词，默认使用 _build_default_system(tools)
+        max_steps: 最大步数，默认8
+        allowed_tools: 允许的工具列表，默认使用 _default_allowed_tools(tools)
+        tool_max_attempts: 工具最大尝试次数，默认2
+        memory_manager: 记忆管理器，默认None
+        conversation_store: 历史会话存储
+        session_id: 会话ID
+        context_assembler: 上下文装配器
+        knowledge_base: 知识库
+        history_limit: 历史记录限制，默认20
+        prefetch_memory_top_k: 预取记忆TopK，默认5
+        prefetch_docs_top_k: 预取文档TopK，默认3
+        prefetch_associative: 预取关联记忆，默认True
+        consolidate_memory: 合并记忆，默认True
+        emit_structured_intent: 是否输出结构化意图，默认True
+        accept_stop: 接受停止，默认None
+        premature_stop_nudge: 过早停止提示，默认None
+        forced_finalize_nudge: 强制最终提示，默认None
+        max_premature_stop_retries: 过早停止最大重试次数，默认3，默认值为3
+
+    Actions:
+        add_message: 添加消息
+        get_history: 获取历史消息
+        get_last_intent: 获取最后一轮意图
+        run: 运行一轮
+        run_stream: 运行一轮流式
+        get_last_intent: 获取最后一轮意图
     """
 
     def __init__(

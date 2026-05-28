@@ -27,10 +27,18 @@ from agents.core.events import (
 )
 from agents.core.intent import StructuredIntent
 from agents.hub.registry import build_default_registry
-from agents.plan.execute import InMemoryAgentRegistry, LLMPlanGenerator, PlanExecuteAgent
+from agents.plan.execute import (
+    InMemoryAgentRegistry,
+    LLMPlanGenerator,
+    PlanExecuteAgent,
+)
 from agents.plan.models import ExecutionPlan, ExecutionResult, StepStatus
 from agents.specialists import RegistryStepDelegate
 from core import create_llm
+
+from observability import setup_log
+
+setup_log()
 
 
 def _sample_intent() -> StructuredIntent:

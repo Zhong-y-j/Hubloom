@@ -45,7 +45,7 @@ agent = ReActAgent(
     create_llm(),
     tools,
     memory_manager=memory_manager,
-    conversation_store=conversation_store,
+    # conversation_store=conversation_store,
     session_id=namespace,
     context_assembler=ContextAssembler(),
     knowledge_base=kb,
@@ -191,7 +191,11 @@ class AgentRunPrinter:
 
 
 async def main() -> None:
-    query = "我做过几个AI项目"
+    query = """
+    我们团队在跟「合同项目A」和「供应商B公司」谈采购框架协议，（6月15日）前要出一版审查意见。
+我比较在意付款节点和违约责任，希望你之后帮我：回复尽量简洁、列要点时用编号。
+另外不要把我司内部的报价金额写进对外邮件草稿里。
+    """
     print(f"用户问题: {query}\n")
     printer = AgentRunPrinter(query=query)
     async for ev in agent.run_stream(query):
