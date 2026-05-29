@@ -9,15 +9,19 @@ from agents.plan import LLMPlanGenerator, PlanExecuteAgent
 from agents.react import ReActAgent
 from agents.reflection import ReflectionAgent
 from agents.specialists import RegistryStepDelegate
-from context import ContextAssembler
+from memory.context import ContextAssembler
 from core import create_llm
-from memory.embedders.openai_embedder import OpenAIEmbedder
+from embedders.openai_embedder import OpenAIEmbedder
 from memory.factory import create_memory_manager
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from retrieval.knowledge_base import KnowledgeBase
 from tools import ToolRegistry
 from tools.builtin import SearchDocumentsTool, SearchMemoryTool
 
+DEFAULT_QUERY = (
+    "帮我写一份 5 万元的软件开发合同，要有源代码归属和付款节点，"
+    "技术规格和法律条款都要。"
+)
 
 DEFAULT_SESSION_ID = "mem:hub_test:default"
 DEFAULT_MEMORY_DB = "data/memory.db"
