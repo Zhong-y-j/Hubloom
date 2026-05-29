@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from agents.core.agent_log import clip, memory_log
+
 from .manager import MemoryManager, RecallResult
 from .models import AssociativeRecallResult, EpisodicItem, SemanticItem
 
@@ -60,6 +62,12 @@ class MemoryContextProvider:
             if graph is not None:
                 graph_summary = format_associative_graph(graph)
 
+        memory_log(
+            "recall_for_context done",
+            query=clip(query, 80),
+            hybrid_hits=len(memories),
+            has_graph=bool((graph_summary or "").strip()),
+        )
         return MemoryRecallContext(memories=memories, graph_summary=graph_summary)
 
     async def _safe_recall_hybrid(self, query: str) -> RecallResult | None:
@@ -69,7 +77,13 @@ class MemoryContextProvider:
                 top_k=self.hybrid_top_k,
                 mode="hybrid",
             )
-        except Exception:
+        except Exception as exc:
+            memory_log(
+                "recall hybrid failed",
+                query=clip(query, 80),
+                error=type(exc).__name__,
+                detail=clip(str(exc), 120),
+            )
             return None
 
     async def _safe_recall_associative(
@@ -85,7 +99,13 @@ class MemoryContextProvider:
                     "include_memory_refs": True,
                 },
             )
-        except Exception:
+        except Exception as exc:
+            memory_log(
+                "recall associative failed",
+                query=clip(query, 80),
+                error=type(exc).__name__,
+                detail=clip(str(exc), 120),
+            )
             return None
         return result.graph
 

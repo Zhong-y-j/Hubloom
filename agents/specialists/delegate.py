@@ -9,6 +9,7 @@ from core.provider import LLMProvider
 
 from agents.core.events import StepOutputDeltaEvent
 from agents.plan.models import ExecutionStep, SubTaskResult
+from agents.core.agent_log import specialist_log
 from agents.specialists.worker import LLMSpecialistAgent, create_default_specialists
 
 
@@ -45,12 +46,23 @@ class RegistryStepDelegate:
     ) -> SubTaskResult:
         worker = self._resolve_worker(step, agent_info)
         if worker is None:
+            specialist_log(
+                "delegate missing worker",
+                step_id=step.step_id,
+                agent_type=step.agent_type,
+            )
             return SubTaskResult(
                 success=False,
                 content="",
                 error=f"未注册的专业 Agent: {step.agent_type!r}",
                 agent_id=str(agent_info.get("agent_id") or ""),
             )
+        specialist_log(
+            "delegate start",
+            step_id=step.step_id,
+            agent_type=step.agent_type,
+            worker_id=worker.agent_id,
+        )
         return await worker.run(
             task_description=step.task_description,
             expected_output=step.expected_output,
@@ -66,6 +78,11 @@ class RegistryStepDelegate:
     ) -> AsyncIterator[StepOutputDeltaEvent | SubTaskResult]:
         worker = self._resolve_worker(step, agent_info)
         if worker is None:
+            specialist_log(
+                "delegate_stream missing worker",
+                step_id=step.step_id,
+                agent_type=step.agent_type,
+            )
             yield SubTaskResult(
                 success=False,
                 content="",
@@ -73,6 +90,12 @@ class RegistryStepDelegate:
                 agent_id=str(agent_info.get("agent_id") or ""),
             )
             return
+        specialist_log(
+            "delegate_stream start",
+            step_id=step.step_id,
+            agent_type=step.agent_type,
+            worker_id=worker.agent_id,
+        )
         async for item in worker.run_stream(
             step_id=step.step_id,
             task_description=step.task_description,

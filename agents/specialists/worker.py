@@ -16,6 +16,7 @@ from core.provider import (
 )
 
 from agents.core.events import StepOutputDeltaEvent
+from agents.core.agent_log import clip, specialist_log
 from agents.plan.models import SubTaskResult
 
 PROGRAMMING_SYSTEM = """你是灵枢的专业 Agent · **编程与技术规格**。
@@ -122,20 +123,40 @@ class LLMSpecialistAgent:
             )
             content = (out.content or "").strip()
             if not content:
+                elapsed_ms = int((time.monotonic() - start) * 1000)
+                specialist_log(
+                    "run empty",
+                    agent_type=self.agent_type,
+                    agent_id=self.agent_id,
+                    elapsed_ms=elapsed_ms,
+                )
                 return SubTaskResult(
                     success=False,
                     content="",
                     error="专业 Agent 返回空内容",
                     agent_id=self.agent_id,
-                    elapsed_ms=int((time.monotonic() - start) * 1000),
+                    elapsed_ms=elapsed_ms,
                 )
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            specialist_log(
+                "run done",
+                agent_type=self.agent_type,
+                agent_id=self.agent_id,
+                output_len=len(content),
+                elapsed_ms=elapsed_ms,
+            )
             return SubTaskResult(
                 success=True,
                 content=content,
                 agent_id=self.agent_id,
-                elapsed_ms=int((time.monotonic() - start) * 1000),
+                elapsed_ms=elapsed_ms,
             )
         except Exception as exc:
+            specialist_log(
+                "run error",
+                agent_type=self.agent_type,
+                error=clip(str(exc), 120),
+            )
             return SubTaskResult(
                 success=False,
                 content="",
@@ -168,6 +189,12 @@ class LLMSpecialistAgent:
                     if ev.output.content:
                         content_parts = [ev.output.content]
                 elif isinstance(ev, StreamErrorEvent):
+                    specialist_log(
+                        "run_stream llm error",
+                        step_id=step_id,
+                        agent_type=self.agent_type,
+                        error=clip(str(ev.error), 120),
+                    )
                     yield SubTaskResult(
                         success=False,
                         content="",
@@ -177,6 +204,12 @@ class LLMSpecialistAgent:
                     )
                     return
         except Exception as exc:
+            specialist_log(
+                "run_stream error",
+                step_id=step_id,
+                agent_type=self.agent_type,
+                error=clip(str(exc), 120),
+            )
             yield SubTaskResult(
                 success=False,
                 content="",
@@ -187,20 +220,34 @@ class LLMSpecialistAgent:
             return
 
         content = "".join(content_parts).strip()
+        elapsed_ms = int((time.monotonic() - start) * 1000)
         if not content:
+            specialist_log(
+                "run_stream empty",
+                step_id=step_id,
+                agent_type=self.agent_type,
+                elapsed_ms=elapsed_ms,
+            )
             yield SubTaskResult(
                 success=False,
                 content="",
                 error="专业 Agent 返回空内容",
                 agent_id=self.agent_id,
-                elapsed_ms=int((time.monotonic() - start) * 1000),
+                elapsed_ms=elapsed_ms,
             )
             return
+        specialist_log(
+            "run_stream done",
+            step_id=step_id,
+            agent_type=self.agent_type,
+            output_len=len(content),
+            elapsed_ms=elapsed_ms,
+        )
         yield SubTaskResult(
             success=True,
             content=content,
             agent_id=self.agent_id,
-            elapsed_ms=int((time.monotonic() - start) * 1000),
+            elapsed_ms=elapsed_ms,
         )
 
 

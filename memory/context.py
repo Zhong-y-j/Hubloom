@@ -4,6 +4,8 @@ GSSC 四阶段上下文装配器
 
 import re
 from typing import List, Optional, Dict, Any
+
+from agents.core.agent_log import memory_log
 from core.models import Message, Role
 
 _MEMORY_TYPE_LABELS = {
@@ -71,7 +73,15 @@ class ContextAssembler:
         messages = self._structure(selected, current_task)
 
         # 4. Compress：若超限，从最早的历史中裁剪
-        return self._compress(messages)
+        compressed = self._compress(messages)
+        if len(compressed) < len(messages):
+            memory_log(
+                "assemble compressed",
+                before=len(messages),
+                after=len(compressed),
+                max_tokens=self.max_tokens,
+            )
+        return compressed
 
     # ────── Gather ──────
     def _gather(
@@ -340,6 +350,16 @@ class ContextAssembler:
         result = pinned + kept_middle
         if tail:
             result.append(tail)
+        dropped = len(middle) - len(kept_middle)
+        if dropped > 0:
+            memory_log(
+                "context compress",
+                dropped_history=dropped,
+                kept_history=len(kept_middle),
+                total_before=len(messages),
+                total_after=len(result),
+                max_tokens=self.max_tokens,
+            )
         return result
 
     def _calculate_total(self, messages: List[Message]) -> int:

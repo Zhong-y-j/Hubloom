@@ -1,7 +1,9 @@
 from typing import Any
 
+from agents.core.agent_log import clip
 from memory.memory_context import MemoryContextProvider
 from memory.manager import MemoryManager
+from observability import log
 from tools.base import BaseTool
 
 
@@ -52,7 +54,18 @@ class SearchMemoryTool(BaseTool):
             return "查询内容不能为空。"
 
         self._provider.include_associative = bool(include_graph)
+        log(
+            "memory tool search",
+            query=clip(query, 80),
+            include_graph=include_graph,
+            top_k=self._provider.hybrid_top_k,
+        )
         ctx = await self._provider.recall_for_context(query)
+        log(
+            "memory tool search done",
+            memories=len(ctx.memories),
+            has_graph=bool((ctx.graph_summary or "").strip()),
+        )
 
         if not ctx.memories and not ctx.graph_summary:
             return "未找到相关长期记忆。"

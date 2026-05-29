@@ -17,11 +17,7 @@ from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from retrieval.knowledge_base import KnowledgeBase
 from tools import ToolRegistry
 from tools.builtin import SearchDocumentsTool, SearchMemoryTool
-
-DEFAULT_QUERY = (
-    "帮我写一份 5 万元的软件开发合同，要有源代码归属和付款节点，"
-    "技术规格和法律条款都要。"
-)
+from agents.core.agent_log import hub_log
 
 DEFAULT_SESSION_ID = "mem:hub_test:default"
 DEFAULT_MEMORY_DB = "data/memory.db"
@@ -67,6 +63,14 @@ def build_hub(
     reflection = ReflectionAgent(llm) if run_reflection else None
     if max_revision_rounds is None:
         max_revision_rounds = int(os.getenv("HUB_MAX_REVISION_ROUNDS", "1"))
+    hub_log(
+        "build_hub",
+        session_id=session_id,
+        memory_db=memory_db_path,
+        kb_dir=kb_persist_dir,
+        run_reflection=run_reflection,
+        max_revision_rounds=max_revision_rounds,
+    )
     return CortexHub(
         react,
         plan_execute,

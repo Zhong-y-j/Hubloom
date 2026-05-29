@@ -25,6 +25,7 @@ import warnings
 
 from agents.app.bootstrap import DEFAULT_QUERY, build_hub
 from agents.scripts.hub_io import run_repl, run_turn
+from observability import setup_log
 
 warnings.filterwarnings(
     "ignore",
@@ -58,6 +59,8 @@ async def async_main(argv: list[str] | None = None) -> None:
         help="单轮用户输入（默认示例为软件开发合同需求）",
     )
     args = parser.parse_args(argv)
+
+    setup_log()
 
     run_reflection = _env_run_reflection() and not args.no_reflection
     hub = build_hub(run_reflection=run_reflection)

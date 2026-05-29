@@ -35,7 +35,7 @@ from agents.core.intent import (
     resolve_display_text,
 )
 from tools import ToolRegistry, ToolRunner
-from observability import log as _log
+from agents.core.agent_log import clip, react_log
 
 if TYPE_CHECKING:
     from memory.context import ContextAssembler
@@ -60,21 +60,8 @@ _DEFAULT_FORCED_FINALIZE_NUDGE = (
 # 澄清阶段允许的只读工具（执行型工具留给 PlanExecute）
 _READONLY_TOOL_NAMES = frozenset({"search_documents", "search_memory"})
 
-# ReAct agent 日志开关：默认关闭，避免刷屏；需要时设 CORTEX_REACT_LOG=1
-_REACT_LOG_ENABLED = "1"
-
-
 def _react_log(message: str, /, **fields) -> None:
-    if not _REACT_LOG_ENABLED:
-        return
-    _log(message, **fields)
-
-
-def _clip(text: str | None, n: int = 160) -> str:
-    s = (text or "").strip().replace("\n", "\\n")
-    if len(s) <= n:
-        return s
-    return s[:n] + f"…(+{len(s) - n})"
+    react_log(message, **fields)
 
 
 _SYSTEM_INTRO = """你是 **Agent Cortex（灵枢）** 面向用户的智能助手：先弄清需求，再在任务明确后由系统完成起草、检索与多步执行。
@@ -281,7 +268,7 @@ class ReActAgent(Agent):
         self._last_user_task = task
         _react_log(
             "react bootstrap start",
-            task=_clip(task, 120),
+            task=clip(task, 120),
             has_assembler=bool(self._context_assembler),
             has_memory=bool(self.memory),
             has_kb=bool(self._knowledge_base),
@@ -498,7 +485,7 @@ class ReActAgent(Agent):
 
         _react_log(
             "react run_stream start",
-            task=_clip(task, 120),
+            task=clip(task, 120),
             max_steps=self.max_steps,
             allowed_tools=(
                 ",".join(sorted(self.allowed_tools)) if self.allowed_tools else ""

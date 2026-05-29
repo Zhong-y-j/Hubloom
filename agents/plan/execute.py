@@ -27,6 +27,7 @@ from agents.core.events import (
     StepStartEvent,
 )
 from agents.core.intent import StructuredIntent
+from agents.core.agent_log import clip, plan_log
 from agents.plan.models import (
     ExecutionPlan,
     ExecutionResult,
@@ -278,6 +279,11 @@ class LLMPlanGenerator:
         known = await self._known_agent_types()
         messages = _plan_messages(intent, known)
         content_parts: list[str] = []
+        plan_log(
+            "create_plan_stream start",
+            intent=intent.intent,
+            known_agents=len(known),
+        )
         try:
             async for ev in self._llm.generate_stream(messages=messages, tools=None):
                 if isinstance(ev, DeltaEvent):
@@ -287,11 +293,19 @@ class LLMPlanGenerator:
                     if ev.output.content:
                         content_parts = [ev.output.content]
                 elif isinstance(ev, StreamErrorEvent):
+                    plan_log(
+                        "create_plan_stream llm error; fallback",
+                        error=str(ev.error),
+                    )
                     yield ErrorEvent(error=str(ev.error))
                     plan = await self._fallback.create_plan(intent)
                     yield PlanReadyEvent(plan=plan)
                     return
         except Exception as exc:
+            plan_log(
+                "create_plan_stream failed; fallback",
+                error=str(exc),
+            )
             yield ErrorEvent(error=f"计划流式生成失败: {exc}")
             plan = await self._fallback.create_plan(intent)
             yield PlanReadyEvent(plan=plan)
@@ -300,6 +314,10 @@ class LLMPlanGenerator:
         raw = "".join(content_parts).strip()
         data = parse_plan_json(raw)
         if not data.get("steps"):
+            plan_log(
+                "create_plan_stream parse empty; fallback",
+                raw_len=len(raw),
+            )
             plan = await self._fallback.create_plan(intent)
         else:
             plan = plan_from_dict(
@@ -308,28 +326,38 @@ class LLMPlanGenerator:
                 registry=self._registry,
                 known_agent_types=known or None,
             )
+            plan_log(
+                "create_plan_stream ready",
+                steps=len(plan.steps),
+                task_type=plan.task_type,
+            )
         yield PlanReadyEvent(plan=plan)
 
     async def create_plan(self, intent: StructuredIntent) -> ExecutionPlan:
         known = await self._known_agent_types()
+        plan_log("create_plan start", intent=intent.intent)
         try:
             out = await self._llm.generate(
                 messages=_plan_messages(intent, known),
                 tools=None,
             )
             data = parse_plan_json(out.content or "")
-        except Exception:
+        except Exception as exc:
+            plan_log("create_plan failed; fallback", error=str(exc))
             return await self._fallback.create_plan(intent)
 
         if not data.get("steps"):
+            plan_log("create_plan parse empty; fallback")
             return await self._fallback.create_plan(intent)
 
-        return plan_from_dict(
+        plan = plan_from_dict(
             data,
             intent=intent,
             registry=self._registry,
             known_agent_types=known or None,
         )
+        plan_log("create_plan ready", steps=len(plan.steps))
+        return plan
 
 
 class InMemoryAgentRegistry:
@@ -522,14 +550,24 @@ class PlanExecuteAgent(Agent):
         tool_calls = 0
         tool_errors = 0
 
+        plan_log(
+            "execute_stream start",
+            intent=intent.intent,
+            skip_plan=skip_plan_generation,
+            revision=bool((revision_feedback or "").strip()),
+            rerun=rerun_step_ids is not None,
+        )
+
         if plan is None:
             try:
                 plan = await self.plan_generator.create_plan(intent)
             except Exception as exc:
+                plan_log("execute_stream plan failed", error=str(exc))
                 yield ErrorEvent(error=f"计划生成失败: {exc}")
                 return
 
         yield PlanCreatedEvent(steps=[s.to_dict() for s in plan.steps])
+        plan_log("plan created", steps=len(plan.steps), task_type=plan.task_type)
 
         rerun_set: set[int] | None = None
         if rerun_step_ids is not None:
@@ -542,6 +580,11 @@ class PlanExecuteAgent(Agent):
         for step in sorted(plan.steps, key=lambda s: s.step_id):
             if rerun_set is not None and step.step_id not in rerun_set:
                 if step.step_id in completed_outputs:
+                    plan_log(
+                        "step reuse prior",
+                        step_id=step.step_id,
+                        agent_type=step.agent_type,
+                    )
                     row = ExecutionStepTrace(
                         step_id=step.step_id,
                         agent_type=step.agent_type,
@@ -567,6 +610,12 @@ class PlanExecuteAgent(Agent):
                     if dep not in completed_outputs
                 ]
                 if blockers:
+                    plan_log(
+                        "step skipped",
+                        step_id=step.step_id,
+                        reason="deps_in_rerun_branch",
+                        blockers=blockers,
+                    )
                     row = ExecutionStepTrace(
                         step_id=step.step_id,
                         agent_type=step.agent_type,
@@ -586,6 +635,11 @@ class PlanExecuteAgent(Agent):
                 if dep not in completed_outputs
             ]
             if blockers:
+                plan_log(
+                    "step skipped",
+                    step_id=step.step_id,
+                    blockers=blockers,
+                )
                 row = ExecutionStepTrace(
                     step_id=step.step_id,
                     agent_type=step.agent_type,
@@ -602,6 +656,11 @@ class PlanExecuteAgent(Agent):
 
             agent_info = await self.registry.resolve(step.agent_type)
             if agent_info is None:
+                plan_log(
+                    "step no agent",
+                    step_id=step.step_id,
+                    agent_type=step.agent_type,
+                )
                 row = ExecutionStepTrace(
                     step_id=step.step_id,
                     agent_type=step.agent_type,
@@ -622,7 +681,6 @@ class PlanExecuteAgent(Agent):
                 agent_type=step.agent_type,
                 agent_id=str(agent_info.get("agent_id") or ""),
             )
-
             context = {
                 "intent": intent.to_dict(),
                 "plan_task_type": plan.task_type,
@@ -633,6 +691,12 @@ class PlanExecuteAgent(Agent):
                 "revision_feedback": feedback,
                 "is_revision": rerun_set is not None and step.step_id in rerun_set,
             }
+            plan_log(
+                "step start",
+                step_id=step.step_id,
+                agent_type=step.agent_type,
+                is_revision=context["is_revision"],
+            )
 
             step_start = time.monotonic()
             sub_result: SubTaskResult | None = None
@@ -651,6 +715,13 @@ class PlanExecuteAgent(Agent):
 
             elapsed = int((time.monotonic() - step_start) * 1000)
             if sub_result.success:
+                plan_log(
+                    "step done",
+                    step_id=step.step_id,
+                    success=True,
+                    output_len=len(sub_result.content or ""),
+                    elapsed_ms=sub_result.elapsed_ms or elapsed,
+                )
                 completed_outputs[step.step_id] = sub_result.content
                 row = ExecutionStepTrace(
                     step_id=step.step_id,
@@ -667,6 +738,13 @@ class PlanExecuteAgent(Agent):
                     summary=sub_result.content or "",
                 )
             else:
+                plan_log(
+                    "step done",
+                    step_id=step.step_id,
+                    success=False,
+                    error=clip(sub_result.error, 120),
+                    elapsed_ms=sub_result.elapsed_ms or elapsed,
+                )
                 row = ExecutionStepTrace(
                     step_id=step.step_id,
                     agent_type=step.agent_type,
@@ -687,6 +765,7 @@ class PlanExecuteAgent(Agent):
                 intent=intent, plan=plan, trace=trace
             )
         except Exception as exc:
+            plan_log("aggregate failed", error=str(exc))
             yield ErrorEvent(error=f"结果汇总失败: {exc}")
             return
 
@@ -702,11 +781,20 @@ class PlanExecuteAgent(Agent):
         )
         self.last_result = result
 
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        plan_log(
+            "execute_stream done",
+            deliverable_len=len(deliverable or ""),
+            success_steps=success_count,
+            total_steps=len(plan.steps),
+            partial=partial,
+            elapsed_ms=elapsed_ms,
+        )
         yield RunStatsEvent(
             steps=len(plan.steps),
             tool_calls=tool_calls,
             tool_errors=tool_errors,
-            elapsed_ms=int((time.monotonic() - start) * 1000),
+            elapsed_ms=elapsed_ms,
         )
         yield ExecutionResultEvent(result=result)
         yield FinalAnswerEvent(content=deliverable)
@@ -719,7 +807,7 @@ class PlanExecuteAgent(Agent):
     ) -> SubTaskResult:
         last: SubTaskResult | None = None
         attempts = 1 + self.step_timeout_retry
-        for _ in range(attempts):
+        for attempt in range(attempts):
             last = await self.step_delegate.delegate(
                 step=step,
                 agent_info=agent_info,
@@ -727,6 +815,13 @@ class PlanExecuteAgent(Agent):
             )
             if last.success:
                 return last
+            if attempt + 1 < attempts:
+                plan_log(
+                    "step retry",
+                    step_id=step.step_id,
+                    attempt=attempt + 1,
+                    error=clip(last.error, 80),
+                )
         return last or SubTaskResult(success=False, error="未知错误")
 
     async def _run_step_with_retry_stream(
@@ -744,7 +839,7 @@ class PlanExecuteAgent(Agent):
 
         last: SubTaskResult | None = None
         attempts = 1 + self.step_timeout_retry
-        for _ in range(attempts):
+        for attempt in range(attempts):
             last = None
             async for item in stream_fn(
                 step=step,
@@ -758,6 +853,13 @@ class PlanExecuteAgent(Agent):
             if last is not None and last.success:
                 yield last
                 return
+            if attempt + 1 < attempts:
+                plan_log(
+                    "step retry",
+                    step_id=step.step_id,
+                    attempt=attempt + 1,
+                    error=clip(last.error if last else "", 80),
+                )
         yield last or SubTaskResult(success=False, error="未知错误")
 
     def get_last_result(self) -> ExecutionResult | None:

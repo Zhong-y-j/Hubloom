@@ -19,6 +19,7 @@ from agents.core.events import (
     ReflectionTextDeltaEvent,
 )
 from agents.plan.models import ExecutionResult, ExecutionStepTrace, StepStatus
+from agents.core.agent_log import clip, reflection_log
 from agents.reflection.models import ReflectionIssue, ReflectionVerdict
 
 _REFLECTION_JSON_BLOCK_RE = re.compile(
@@ -253,6 +254,12 @@ class ReflectionAgent:
         """流式审查：ReflectionTextDeltaEvent → ReflectionCompleteEvent(verdict)。"""
         start = time.monotonic()
         step_count = len(result.trace)
+        reflection_log(
+            "review_stream start",
+            trace_steps=step_count,
+            deliverable_len=len((result.deliverable or "")),
+            partial_success=result.partial_success,
+        )
         yield ReflectionStartEvent(
             step_count=step_count,
             partial_success=result.partial_success,
@@ -261,9 +268,16 @@ class ReflectionAgent:
         ruled = _rule_based_verdict(result)
         if ruled is not None:
             self.last_verdict = ruled
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            reflection_log(
+                "review_stream rule_based",
+                passed=ruled.passed,
+                issues=len(ruled.issues),
+                elapsed_ms=elapsed_ms,
+            )
             yield ReflectionCompleteEvent(
                 verdict=ruled,
-                elapsed_ms=int((time.monotonic() - start) * 1000),
+                elapsed_ms=elapsed_ms,
             )
             return
 
@@ -281,15 +295,21 @@ class ReflectionAgent:
                     if ev.output.content:
                         content_parts = [ev.output.content]
                 elif isinstance(ev, StreamErrorEvent):
+                    reflection_log("review_stream llm error", error=str(ev.error))
                     yield ErrorEvent(error=str(ev.error))
                     return
         except Exception as exc:
+            reflection_log("review_stream failed", error=str(exc))
             yield ErrorEvent(error=f"Reflection 流式调用失败: {exc}")
             return
 
         raw = "".join(content_parts).strip()
         data = parse_reflection_json(raw)
         if not data:
+            reflection_log(
+                "review_stream parse failed",
+                raw_len=len(raw),
+            )
             verdict = ReflectionVerdict(
                 passed=False,
                 summary="无法解析 ```reflection``` JSON",
@@ -307,9 +327,19 @@ class ReflectionAgent:
             verdict = verdict_from_dict(data, review_report=raw)
 
         self.last_verdict = verdict
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        error_issues = sum(1 for i in verdict.issues if i.severity == "error")
+        reflection_log(
+            "review_stream done",
+            passed=verdict.passed,
+            issues=len(verdict.issues),
+            error_issues=error_issues,
+            recommendation_len=len(verdict.recommendation or ""),
+            elapsed_ms=elapsed_ms,
+        )
         yield ReflectionCompleteEvent(
             verdict=verdict,
-            elapsed_ms=int((time.monotonic() - start) * 1000),
+            elapsed_ms=elapsed_ms,
         )
 
     def get_last_verdict(self) -> ReflectionVerdict | None:
