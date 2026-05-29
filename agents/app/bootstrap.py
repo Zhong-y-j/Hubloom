@@ -19,7 +19,7 @@ from tools import ToolRegistry
 from tools.builtin import SearchDocumentsTool, SearchMemoryTool
 from agents.core.agent_log import hub_log
 
-DEFAULT_SESSION_ID = "mem:hub_test:default"
+DEFAULT_SESSION_ID = "mem:tester_id:default"
 DEFAULT_MEMORY_DB = "data/memory.db"
 DEFAULT_KB_DIR = "data/knowledge_db"
 
