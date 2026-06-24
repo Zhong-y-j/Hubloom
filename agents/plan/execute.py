@@ -238,9 +238,7 @@ def _plan_user_prompt(intent: StructuredIntent, known: set[str]) -> str:
     if known:
         agents_blurb = "当前可用专业 Agent 类型：" + ", ".join(sorted(known))
     else:
-        agents_blurb = (
-            "（未提供 Registry，agent_type 请使用 programming / legal / general 等常见类型）"
-        )
+        agents_blurb = "（未提供 Registry，agent_type 请使用 programming / legal / general 等常见类型）"
     return (
         f"{agents_blurb}\n\n"
         f"结构化意图：\n{json.dumps(intent.to_dict(), ensure_ascii=False, indent=2)}\n\n"
@@ -529,9 +527,7 @@ class PlanExecuteAgent(Agent):
             )
             return
         if not intent.should_invoke_plan():
-            yield ErrorEvent(
-                error=f"intent={intent.intent!r} 无需进入 PlanExecute"
-            )
+            yield ErrorEvent(error=f"intent={intent.intent!r} 无需进入 PlanExecute")
             return
         if skip_plan_generation and plan is None:
             yield ErrorEvent(error="skip_plan_generation 为 True 时必须传入 plan")
@@ -605,9 +601,7 @@ class PlanExecuteAgent(Agent):
                     )
                     continue
                 blockers = [
-                    dep
-                    for dep in step.dependencies
-                    if dep not in completed_outputs
+                    dep for dep in step.dependencies if dep not in completed_outputs
                 ]
                 if blockers:
                     plan_log(
@@ -630,9 +624,7 @@ class PlanExecuteAgent(Agent):
                     )
                 continue
             blockers = [
-                dep
-                for dep in step.dependencies
-                if dep not in completed_outputs
+                dep for dep in step.dependencies if dep not in completed_outputs
             ]
             if blockers:
                 plan_log(
