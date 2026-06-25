@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from dataclasses import dataclass
+
 
 def _tool_input_schema(tool: Any) -> Dict[str, Any]:
     """兼容 MCP SDK 中 Tool 的 schema 字段命名。"""
