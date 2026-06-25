@@ -1,8 +1,10 @@
 import httpx
 from fastmcp import FastMCP
 
-SWAGGER_URL = "https://petstore3.swagger.io/api/v3/openapi.json"
-BASE_URL = "https://petstore3.swagger.io/api/v3"
+from spec_loader import prepare_openapi
+
+SWAGGER_URL = "https://petstore.swagger.io/v2/swagger.json"
+BASE_URL = ""  # 留空则从 spec 自动推断，例如 https://petstore.swagger.io/v2
 TOKEN = ""
 
 headers = {}
@@ -10,18 +12,15 @@ if TOKEN:
     headers["Authorization"] = f"Bearer {TOKEN}"
 
 
-async def fetch_spec():
-    async with httpx.AsyncClient(trust_env=False, timeout=30.0) as client:
-        return (await client.get(SWAGGER_URL)).json()
-
-
 if __name__ == "__main__":
     import asyncio
 
-    spec = asyncio.run(fetch_spec())  # 只在这里用 asyncio
+    spec, base_url = asyncio.run(
+        prepare_openapi(SWAGGER_URL, base_url=BASE_URL or None)
+    )
 
     api_client = httpx.AsyncClient(
-        base_url=BASE_URL,
+        base_url=base_url,
         headers=headers,
         trust_env=False,
         timeout=30.0,
@@ -31,4 +30,4 @@ if __name__ == "__main__":
         client=api_client,
         name="My Swagger API",
     )
-    mcp.run()  # 在 asyncio.run 外面调用
+    mcp.run()
