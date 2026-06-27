@@ -7,6 +7,8 @@ import json
 import re
 import sys
 
+from pathlib import Path
+
 from agents import ReActAgent
 from agents.core.events import (
     AgentEvent,
@@ -29,28 +31,11 @@ from tools import ToolRegistry
 from tools.builtin import SearchDocumentsTool, SearchMemoryTool
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log
+from mcp_adapter import load_mcp_tools
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 setup_log()
-conversation_store = ConversationSQLitesStore("data/memory.db")
-kb = KnowledgeBase(embedder=OpenAIEmbedder(), persist_dir="data/knowledge_db")
-namespace = "mem:tester_id:default"
-memory_manager = create_memory_manager(namespace=namespace)
-tools = ToolRegistry.from_tools(
-    [
-        SearchDocumentsTool(kb),
-        SearchMemoryTool(memory_manager),
-    ]
-)
-agent = ReActAgent(
-    create_llm(),
-    tools,
-    memory_manager=memory_manager,
-    # conversation_store=conversation_store,
-    session_id=namespace,
-    context_assembler=ContextAssembler(),
-    knowledge_base=kb,
-    consolidate_memory=True,
-)
 
 
 def _compact_tool_result(text: str, max_len: int = 900) -> str:
@@ -191,23 +176,57 @@ class AgentRunPrinter:
 
 
 async def main() -> None:
-    query = """
-    我们团队在跟「合同项目A」和「供应商B公司」谈采购框架协议，（6月15日）前要出一版审查意见。
-我比较在意付款节点和违约责任，希望你之后帮我：回复尽量简洁、列要点时用编号。
-另外不要把我司内部的报价金额写进对外邮件草稿里。
-    """
-    print(f"用户问题: {query}\n")
-    printer = AgentRunPrinter(query=query)
-    async for ev in agent.run_stream(query):
-        printer.handle(ev)
-    intent = agent.get_last_intent()
-    if intent:
-        plan = "进 PlanExecute" if intent.should_invoke_plan() else "不进 Plan"
-        print(
-            f"\n[hub] get_last_intent() → is_clear={intent.is_clear}, "
-            f"intent={intent.intent!r}, {plan}"
+    query = "帮我查一下宠物店的库存可以吗？"
+
+    bindings = await load_mcp_tools(
+        command="uv",
+        args=["run", "python", "mcp_adapter/server.py"],
+        cwd=str(PROJECT_ROOT),
+    )
+    try:
+        kb = KnowledgeBase(embedder=OpenAIEmbedder(), persist_dir="data/knowledge_db")
+        namespace = "mem:tester_id:default"
+        memory_manager = create_memory_manager(namespace=namespace)
+        tools = ToolRegistry.from_tools(
+            [
+                SearchDocumentsTool(kb),
+                SearchMemoryTool(memory_manager),
+                *bindings.tools,
+            ]
         )
-    print()
+        agent = ReActAgent(
+            create_llm(),
+            tools,
+            memory_manager=memory_manager,
+            # conversation_store=ConversationSQLitesStore("data/memory.db"),
+            session_id=namespace,
+            context_assembler=ContextAssembler(),
+            knowledge_base=kb,
+            consolidate_memory=True,
+            allowed_tools={"search_documents", "search_memory"},
+        )
+
+        mcp_names = [t.name for t in bindings.tools]
+        print(f"MCP 已加载 {len(mcp_names)} 个执行能力: {mcp_names[:5]}", end="")
+        if len(mcp_names) > 5:
+            print(f" ... (+{len(mcp_names) - 5})")
+        else:
+            print()
+        print(f"用户问题: {query}\n")
+
+        printer = AgentRunPrinter(query=query)
+        async for ev in agent.run_stream(query):
+            printer.handle(ev)
+        intent = agent.get_last_intent()
+        if intent:
+            plan = "进 PlanExecute" if intent.should_invoke_plan() else "不进 Plan"
+            print(
+                f"\n[hub] get_last_intent() → is_clear={intent.is_clear}, "
+                f"intent={intent.intent!r}, {plan}"
+            )
+        print()
+    finally:
+        await bindings.client.close()
 
 
 if __name__ == "__main__":

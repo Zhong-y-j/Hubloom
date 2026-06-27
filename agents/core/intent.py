@@ -82,6 +82,10 @@ INTENT_OUTPUT_INSTRUCTION = """
 意图已澄清时：
 - `is_clear` 为 true
 - `slots` 填入已确认字段；**不要在 user_reply 里写完整交付物**（如完整合同正文、项目长清单），留给 PlanExecute。
+
+若任务涉及系统执行能力（如外部 API），在 slots 中填写：
+- "suggested_tools": ["getInventory"]   // 建议工具名，供 PlanExecute 参考
+- "action_params": {}                   // 已知参数（可选）
 """
 
 INTENT_TYPE_HINTS = """
