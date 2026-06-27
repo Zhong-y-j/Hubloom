@@ -114,11 +114,13 @@ class HubPhaseEvent(AgentEvent):
 
 @dataclass
 class HubTurnCompleteEvent(AgentEvent):
-    """Hub 一轮结束：对用户最终展示 user_reply +（可选）deliverable。"""
+    """Hub 一轮结束：对用户最终展示 final_user_message。"""
 
     route: str
     user_reply: str
     deliverable: str | None = None
+    delivery_summary: str | None = None
+    final_user_message: str | None = None
     intent: Any = None
     execution_result: Any = None
     reflection_verdict: Any = None

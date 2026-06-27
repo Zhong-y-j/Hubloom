@@ -21,21 +21,25 @@ class StepStatus(str, Enum):
 
 @dataclass
 class ExecutionStep:
-    """计划中的单步任务。"""
+    """计划中的单步任务（MCP 工具直接执行）。"""
 
     step_id: int
-    agent_type: str
     task_description: str
+    tool_name: str = ""
+    tool_args: dict[str, Any] = field(default_factory=dict)
     expected_output: str = ""
     dependencies: list[int] = field(default_factory=list)
+    agent_type: str = "tool"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "step_id": self.step_id,
-            "agent_type": self.agent_type,
+            "tool_name": self.tool_name,
+            "tool_args": dict(self.tool_args),
             "task_description": self.task_description,
             "expected_output": self.expected_output,
             "dependencies": list(self.dependencies),
+            "agent_type": self.agent_type,
         }
 
 
@@ -84,9 +88,10 @@ class ExecutionStepTrace:
     """Execute 阶段单步轨迹。"""
 
     step_id: int
-    agent_type: str
     status: StepStatus
+    tool_name: str = ""
     task_description: str = ""
+    agent_type: str = "tool"
     agent_id: str | None = None
     output: str = ""
     error: str | None = None
@@ -95,6 +100,7 @@ class ExecutionStepTrace:
     def to_dict(self) -> dict[str, Any]:
         return {
             "step_id": self.step_id,
+            "tool_name": self.tool_name,
             "agent_type": self.agent_type,
             "status": self.status.value,
             "task_description": self.task_description,

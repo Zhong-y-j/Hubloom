@@ -36,6 +36,8 @@ from agents.plan.models import (
     StepStatus,
     SubTaskResult,
 )
+from tools.registry import ToolRegistry
+from tools.runner import ToolRunner
 
 
 # ── 可插拔协议 ─────────────────────────────────────────────
@@ -87,9 +89,23 @@ class ResultAggregator(Protocol):
 
 
 class StubPlanGenerator:
-    """占位计划生成器：单步 general 任务（无 LLM）。"""
+    """占位计划生成器：优先按 suggested_tools 生成单步 MCP 计划，否则 legacy 单步。"""
+
+    def __init__(self, tools: ToolRegistry | None = None) -> None:
+        self._tools = tools
 
     async def create_plan(self, intent: StructuredIntent) -> ExecutionPlan:
+        if self._tools is not None:
+            known = {d["name"] for d in self._tools.list_definitions()}
+            plan = plan_from_dict_tools(
+                {}, intent=intent, known_tool_names=known
+            )
+            if plan.steps:
+                plan.rationale = (
+                    "StubPlanGenerator：按 suggested_tools 生成单步工具计划"
+                )
+                return plan
+
         return ExecutionPlan(
             task_type=intent.intent,
             rationale="StubPlanGenerator：无 LLM 的单步占位计划",
@@ -109,6 +125,37 @@ _PLAN_JSON_BLOCK_RE = re.compile(
     r"```(?:json|plan)?\s*\n(.*?)\n```",
     re.DOTALL | re.IGNORECASE,
 )
+
+PLAN_GENERATION_SYSTEM_TOOLS = """你是灵枢 PlanExecute 的规划助手。根据已澄清的结构化意图，制定可执行的多步计划。
+
+规则：
+- 每一步调用一个 MCP 工具，tool_name 必须来自「当前可用工具」列表
+- tool_args 须符合该工具的 parameters JSON Schema；可从 intent.slots 提取参数
+- 无可用工具的任务写入 unfulfillable_steps，不要放进 steps
+- steps 按 step_id 从 1 递增；dependencies 只能引用更小的 step_id
+- 可参考 intent.slots.suggested_tools 作为提示，但最终由你决定调用哪些工具
+- task_description 具体可执行；expected_output 描述该步产出
+- 只输出 JSON，用 ```plan 代码块包裹：
+
+```plan
+{
+  "task_type": "general_task",
+  "rationale": "一句说明为何这样拆步",
+  "steps": [
+    {
+      "step_id": 1,
+      "tool_name": "工具名",
+      "tool_args": {},
+      "task_description": "…",
+      "expected_output": "…",
+      "dependencies": []
+    }
+  ],
+  "unfulfillable_steps": [
+    {"tool_name": "unknownTool", "reason": "无可用工具"}
+  ]
+}
+```"""
 
 PLAN_GENERATION_SYSTEM = """你是灵枢 PlanExecute 的规划助手。根据已澄清的结构化意图，制定可执行的多步计划。
 
@@ -222,6 +269,80 @@ def plan_from_dict(
     )
 
 
+def plan_from_dict_tools(
+    data: dict[str, Any],
+    *,
+    intent: StructuredIntent,
+    known_tool_names: set[str],
+) -> ExecutionPlan:
+    """将解析后的 dict 转为 ExecutionPlan，并校验 tool_name。"""
+    steps: list[ExecutionStep] = []
+    unfulfillable: list[dict[str, Any]] = list(data.get("unfulfillable_steps") or [])
+
+    for raw_step in data.get("steps") or []:
+        if not isinstance(raw_step, dict):
+            continue
+        tool_name = str(raw_step.get("tool_name") or "").strip()
+        if not tool_name:
+            continue
+        if tool_name not in known_tool_names:
+            unfulfillable.append(
+                {
+                    "tool_name": tool_name,
+                    "reason": "Registry 中无此工具",
+                    "task_description": raw_step.get("task_description"),
+                }
+            )
+            continue
+        tool_args = raw_step.get("tool_args") or {}
+        if not isinstance(tool_args, dict):
+            tool_args = {}
+        deps = raw_step.get("dependencies") or []
+        if not isinstance(deps, list):
+            deps = []
+        steps.append(
+            ExecutionStep(
+                step_id=int(raw_step.get("step_id") or len(steps) + 1),
+                tool_name=tool_name,
+                tool_args=tool_args,
+                task_description=str(
+                    raw_step.get("task_description") or intent.summary
+                ).strip(),
+                expected_output=str(raw_step.get("expected_output") or "").strip(),
+                dependencies=[int(d) for d in deps if isinstance(d, (int, float))],
+            )
+        )
+
+    if not steps:
+        suggested = intent.slots.get("suggested_tools")
+        if isinstance(suggested, list):
+            for raw_name in suggested:
+                name = str(raw_name).strip()
+                if name not in known_tool_names:
+                    continue
+                args = intent.slots.get("action_params") or {}
+                if not isinstance(args, dict):
+                    args = {}
+                steps.append(
+                    ExecutionStep(
+                        step_id=1,
+                        tool_name=name,
+                        tool_args=args,
+                        task_description=intent.summary or intent.user_reply,
+                        expected_output="工具调用结果",
+                        dependencies=[],
+                    )
+                )
+                break
+
+    return ExecutionPlan(
+        task_type=str(data.get("task_type") or intent.intent),
+        rationale=str(data.get("rationale") or ""),
+        steps=steps,
+        unfulfillable_steps=unfulfillable,
+    )
+
+
 async def _plan_known_agent_types(registry: AgentRegistry | None) -> set[str]:
     if registry is None:
         return set()
@@ -232,6 +353,40 @@ async def _plan_known_agent_types(registry: AgentRegistry | None) -> set[str]:
         if agent.get("agent_type"):
             types.add(str(agent["agent_type"]))
     return types
+
+
+def _format_tool_catalog(tools: ToolRegistry) -> str:
+    lines: list[str] = []
+    for definition in tools.list_definitions():
+        name = str(definition.get("name") or "")
+        desc = str(definition.get("description") or "").strip()
+        params = json.dumps(definition.get("parameters") or {}, ensure_ascii=False)
+        lines.append(f"- **{name}**：{desc}\n  parameters: {params}")
+    return "\n".join(lines) if lines else "（无可用工具）"
+
+
+def _plan_user_prompt_tools(intent: StructuredIntent, tools: ToolRegistry) -> str:
+    catalog = _format_tool_catalog(tools)
+    suggested = intent.slots.get("suggested_tools")
+    hint = ""
+    if suggested:
+        hint = (
+            f"\nReAct 建议的工具（可参考）："
+            f"{json.dumps(suggested, ensure_ascii=False)}\n"
+        )
+    return (
+        f"当前可用 MCP 工具：\n{catalog}\n"
+        f"{hint}\n"
+        f"结构化意图：\n{json.dumps(intent.to_dict(), ensure_ascii=False, indent=2)}\n\n"
+        "请输出 ```plan``` JSON。"
+    )
+
+
+def _plan_messages_tools(intent: StructuredIntent, tools: ToolRegistry) -> list[Message]:
+    return [
+        Message(role=Role.SYSTEM, content=PLAN_GENERATION_SYSTEM_TOOLS),
+        Message(role=Role.USER, content=_plan_user_prompt_tools(intent, tools)),
+    ]
 
 
 def _plan_user_prompt(intent: StructuredIntent, known: set[str]) -> str:
@@ -260,12 +415,24 @@ class LLMPlanGenerator:
         self,
         llm: LLMProvider,
         registry: AgentRegistry | None = None,
+        tools: ToolRegistry | None = None,
         *,
         fallback: PlanGenerator | None = None,
     ) -> None:
         self._llm = llm
         self._registry = registry
-        self._fallback = fallback or StubPlanGenerator()
+        self._tools = tools
+        self._fallback = fallback or StubPlanGenerator(tools=tools)
+
+    def _uses_tools(self) -> bool:
+        if self._tools is None:
+            return False
+        return bool(self._tools.list_definitions())
+
+    def _known_tool_names(self) -> set[str]:
+        if self._tools is None:
+            return set()
+        return {d["name"] for d in self._tools.list_definitions()}
 
     async def _known_agent_types(self) -> set[str]:
         return await _plan_known_agent_types(self._registry)
@@ -274,14 +441,25 @@ class LLMPlanGenerator:
         self, intent: StructuredIntent
     ) -> AsyncIterator[AgentEvent]:
         """流式生成计划：先产出原始 JSON 增量，最后产出 PlanReadyEvent。"""
-        known = await self._known_agent_types()
-        messages = _plan_messages(intent, known)
+        if self._uses_tools():
+            known_tools = self._known_tool_names()
+            messages = _plan_messages_tools(intent, self._tools)  # type: ignore[arg-type]
+            plan_log(
+                "create_plan_stream start",
+                intent=intent.intent,
+                mode="tools",
+                known_tools=len(known_tools),
+            )
+        else:
+            known = await self._known_agent_types()
+            messages = _plan_messages(intent, known)
+            plan_log(
+                "create_plan_stream start",
+                intent=intent.intent,
+                mode="agents",
+                known_agents=len(known),
+            )
         content_parts: list[str] = []
-        plan_log(
-            "create_plan_stream start",
-            intent=intent.intent,
-            known_agents=len(known),
-        )
         try:
             async for ev in self._llm.generate_stream(messages=messages, tools=None):
                 if isinstance(ev, DeltaEvent):
@@ -317,7 +495,19 @@ class LLMPlanGenerator:
                 raw_len=len(raw),
             )
             plan = await self._fallback.create_plan(intent)
+        elif self._uses_tools():
+            plan = plan_from_dict_tools(
+                data,
+                intent=intent,
+                known_tool_names=self._known_tool_names(),
+            )
+            plan_log(
+                "create_plan_stream ready",
+                steps=len(plan.steps),
+                task_type=plan.task_type,
+            )
         else:
+            known = await self._known_agent_types()
             plan = plan_from_dict(
                 data,
                 intent=intent,
@@ -332,11 +522,17 @@ class LLMPlanGenerator:
         yield PlanReadyEvent(plan=plan)
 
     async def create_plan(self, intent: StructuredIntent) -> ExecutionPlan:
-        known = await self._known_agent_types()
-        plan_log("create_plan start", intent=intent.intent)
+        if self._uses_tools():
+            known_tools = self._known_tool_names()
+            messages = _plan_messages_tools(intent, self._tools)  # type: ignore[arg-type]
+            plan_log("create_plan start", intent=intent.intent, mode="tools")
+        else:
+            known = await self._known_agent_types()
+            messages = _plan_messages(intent, known)
+            plan_log("create_plan start", intent=intent.intent, mode="agents")
         try:
             out = await self._llm.generate(
-                messages=_plan_messages(intent, known),
+                messages=messages,
                 tools=None,
             )
             data = parse_plan_json(out.content or "")
@@ -348,12 +544,20 @@ class LLMPlanGenerator:
             plan_log("create_plan parse empty; fallback")
             return await self._fallback.create_plan(intent)
 
-        plan = plan_from_dict(
-            data,
-            intent=intent,
-            registry=self._registry,
-            known_agent_types=known or None,
-        )
+        if self._uses_tools():
+            plan = plan_from_dict_tools(
+                data,
+                intent=intent,
+                known_tool_names=self._known_tool_names(),
+            )
+        else:
+            known = await self._known_agent_types()
+            plan = plan_from_dict(
+                data,
+                intent=intent,
+                registry=self._registry,
+                known_agent_types=known or None,
+            )
         plan_log("create_plan ready", steps=len(plan.steps))
         return plan
 
@@ -438,13 +642,13 @@ class DefaultResultAggregator:
             return "任务未能完成。失败步骤：" + ", ".join(
                 str(t.step_id) for t in failed
             )
-        return "（暂无执行产出，请接入 StepDelegate 与专业 Agent）"
+        return "（暂无执行产出，请检查工具调用或 StepDelegate 配置）"
 
 
 _DEFAULT_SYSTEM = """你是灵枢（Agent Cortex）PlanExecute 规划执行层。
 
-本阶段职责：根据已澄清的结构化意图制定计划、按步分发专业 Agent、汇总交付物。
-具体 Plan/Execute 能力由可插拔组件实现；默认骨架仅产出占位结果。"""
+本阶段职责：根据已澄清的结构化意图制定计划、按步调用 MCP 工具或分发专业 Agent、汇总交付物。
+具体 Plan/Execute 能力由可插拔组件实现。"""
 
 
 class PlanExecuteAgent(Agent):
@@ -456,7 +660,8 @@ class PlanExecuteAgent(Agent):
         - ``execute_stream(intent)`` → 事件流
 
     可插拔：
-        - ``plan_generator`` / ``registry`` / ``step_delegate``
+        - ``plan_generator`` / ``tool_runner``（MCP 直接执行）
+        - ``registry`` / ``step_delegate``（legacy 专业 Agent 分发）
         - ``aggregator``
     """
 
@@ -467,6 +672,7 @@ class PlanExecuteAgent(Agent):
         system_prompt: str | None = None,
         memory_manager: Any = None,
         plan_generator: PlanGenerator | None = None,
+        tool_runner: ToolRunner | None = None,
         registry: AgentRegistry | None = None,
         step_delegate: StepDelegate | None = None,
         aggregator: ResultAggregator | None = None,
@@ -478,6 +684,7 @@ class PlanExecuteAgent(Agent):
             memory_manager=memory_manager,
         )
         self.plan_generator = plan_generator or StubPlanGenerator()
+        self.tool_runner = tool_runner
         self.registry = registry or InMemoryAgentRegistry()
         self.step_delegate = step_delegate or StubStepDelegate()
         self.aggregator = aggregator or DefaultResultAggregator()
@@ -583,7 +790,8 @@ class PlanExecuteAgent(Agent):
                     )
                     row = ExecutionStepTrace(
                         step_id=step.step_id,
-                        agent_type=step.agent_type,
+                        tool_name=step.tool_name,
+                        agent_type=step.tool_name or step.agent_type,
                         status=StepStatus.SUCCESS,
                         task_description=step.task_description,
                         output=completed_outputs[step.step_id],
@@ -592,8 +800,8 @@ class PlanExecuteAgent(Agent):
                     yield StepStartEvent(
                         step_id=step.step_id,
                         description=f"（沿用上一轮）{step.task_description}",
-                        agent_type=step.agent_type,
-                        agent_id="",
+                        agent_type=step.tool_name or step.agent_type,
+                        agent_id=step.tool_name or "",
                     )
                     yield StepCompleteEvent(
                         step_id=step.step_id,
@@ -612,7 +820,8 @@ class PlanExecuteAgent(Agent):
                     )
                     row = ExecutionStepTrace(
                         step_id=step.step_id,
-                        agent_type=step.agent_type,
+                        tool_name=step.tool_name,
+                        agent_type=step.tool_name or step.agent_type,
                         status=StepStatus.SKIPPED,
                         task_description=step.task_description,
                         error=f"依赖步骤未完成: {blockers}",
@@ -634,7 +843,8 @@ class PlanExecuteAgent(Agent):
                 )
                 row = ExecutionStepTrace(
                     step_id=step.step_id,
-                    agent_type=step.agent_type,
+                    tool_name=step.tool_name,
+                    agent_type=step.tool_name or step.agent_type,
                     status=StepStatus.SKIPPED,
                     task_description=step.task_description,
                     error=f"依赖步骤未完成: {blockers}",
@@ -644,6 +854,111 @@ class PlanExecuteAgent(Agent):
                     step_id=step.step_id,
                     error=row.error or "依赖未满足",
                 )
+                continue
+
+            if self.tool_runner is not None:
+                label = step.tool_name or step.agent_type
+                if not step.tool_name:
+                    plan_log("step no tool", step_id=step.step_id)
+                    row = ExecutionStepTrace(
+                        step_id=step.step_id,
+                        tool_name=step.tool_name,
+                        agent_type=label,
+                        status=StepStatus.SKIPPED,
+                        task_description=step.task_description,
+                        error="计划中未指定 tool_name",
+                    )
+                    trace.append(row)
+                    yield StepErrorEvent(
+                        step_id=step.step_id,
+                        error=row.error or "未指定工具",
+                    )
+                    continue
+                if self.tool_runner.tools.get(step.tool_name) is None:
+                    plan_log(
+                        "step tool missing",
+                        step_id=step.step_id,
+                        tool_name=step.tool_name,
+                    )
+                    row = ExecutionStepTrace(
+                        step_id=step.step_id,
+                        tool_name=step.tool_name,
+                        agent_type=label,
+                        status=StepStatus.SKIPPED,
+                        task_description=step.task_description,
+                        error=f"无可用工具: {step.tool_name}",
+                    )
+                    trace.append(row)
+                    yield StepErrorEvent(
+                        step_id=step.step_id,
+                        error=row.error or "无可用工具",
+                    )
+                    continue
+
+                yield StepStartEvent(
+                    step_id=step.step_id,
+                    description=step.task_description,
+                    agent_type=label,
+                    agent_id=step.tool_name,
+                )
+                plan_log(
+                    "tool step start",
+                    step_id=step.step_id,
+                    tool_name=step.tool_name,
+                )
+                step_start = time.monotonic()
+                output_text, is_err = await self._run_tool_step_with_retry(step)
+                tool_calls += 1
+                if is_err:
+                    tool_errors += 1
+                elapsed = int((time.monotonic() - step_start) * 1000)
+                if not is_err:
+                    plan_log(
+                        "tool step done",
+                        step_id=step.step_id,
+                        success=True,
+                        output_len=len(output_text or ""),
+                        elapsed_ms=elapsed,
+                    )
+                    completed_outputs[step.step_id] = output_text
+                    row = ExecutionStepTrace(
+                        step_id=step.step_id,
+                        tool_name=step.tool_name,
+                        agent_type=label,
+                        status=StepStatus.SUCCESS,
+                        task_description=step.task_description,
+                        agent_id=step.tool_name,
+                        output=output_text,
+                        elapsed_ms=elapsed,
+                    )
+                    trace.append(row)
+                    yield StepCompleteEvent(
+                        step_id=step.step_id,
+                        summary=output_text or "",
+                    )
+                else:
+                    plan_log(
+                        "tool step done",
+                        step_id=step.step_id,
+                        success=False,
+                        error=clip(output_text, 120),
+                        elapsed_ms=elapsed,
+                    )
+                    row = ExecutionStepTrace(
+                        step_id=step.step_id,
+                        tool_name=step.tool_name,
+                        agent_type=label,
+                        status=StepStatus.FAILED,
+                        task_description=step.task_description,
+                        agent_id=step.tool_name,
+                        error=output_text or "工具执行失败",
+                        elapsed_ms=elapsed,
+                    )
+                    trace.append(row)
+                    yield StepErrorEvent(
+                        step_id=step.step_id,
+                        error=row.error or "工具执行失败",
+                    )
                 continue
 
             agent_info = await self.registry.resolve(step.agent_type)
@@ -717,7 +1032,8 @@ class PlanExecuteAgent(Agent):
                 completed_outputs[step.step_id] = sub_result.content
                 row = ExecutionStepTrace(
                     step_id=step.step_id,
-                    agent_type=step.agent_type,
+                    tool_name=step.tool_name,
+                    agent_type=step.tool_name or step.agent_type,
                     status=StepStatus.SUCCESS,
                     task_description=step.task_description,
                     agent_id=sub_result.agent_id or agent_info.get("agent_id"),
@@ -739,7 +1055,8 @@ class PlanExecuteAgent(Agent):
                 )
                 row = ExecutionStepTrace(
                     step_id=step.step_id,
-                    agent_type=step.agent_type,
+                    tool_name=step.tool_name,
+                    agent_type=step.tool_name or step.agent_type,
                     status=StepStatus.FAILED,
                     task_description=step.task_description,
                     agent_id=sub_result.agent_id,
@@ -790,6 +1107,29 @@ class PlanExecuteAgent(Agent):
         )
         yield ExecutionResultEvent(result=result)
         yield FinalAnswerEvent(content=deliverable)
+
+    async def _run_tool_step_with_retry(
+        self, step: ExecutionStep
+    ) -> tuple[str, bool]:
+        """直接调用 MCP 工具，带重试。返回 (output, is_error)。"""
+        if self.tool_runner is None:
+            return "ToolRunner 未配置", True
+        last_text = ""
+        attempts = 1 + self.step_timeout_retry
+        for attempt in range(attempts):
+            last_text, is_err = await self.tool_runner.run(
+                step.tool_name, dict(step.tool_args)
+            )
+            if not is_err:
+                return last_text, False
+            if attempt + 1 < attempts:
+                plan_log(
+                    "tool step retry",
+                    step_id=step.step_id,
+                    attempt=attempt + 1,
+                    error=clip(last_text, 80),
+                )
+        return last_text or "工具执行失败", True
 
     async def _run_step_with_retry(
         self,

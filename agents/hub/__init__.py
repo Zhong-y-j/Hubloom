@@ -12,9 +12,12 @@ from .models import (
 )
 from .registry import build_default_registry
 
+from .reply_composer import ReplyComposer
+
 __all__ = [
     "CortexHub",
     "HubTurnOutcome",
+    "ReplyComposer",
     "ROUTE_CLARIFY_ONLY",
     "ROUTE_DIRECT_REPLY",
     "ROUTE_PLAN_EXECUTE",

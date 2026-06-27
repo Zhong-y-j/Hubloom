@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import AsyncIterator
+from typing import Any
 
 from agents.core.agent_log import clear_turn_id, hub_log, set_turn_id
 from agents.core.events import (
@@ -24,6 +25,7 @@ from agents.hub.models import (
     ROUTE_PLAN_REVISE_REFLECT,
     HubTurnOutcome,
 )
+from agents.hub.reply_composer import ReplyComposer
 from agents.core.intent import StructuredIntent
 from agents.plan.execute import LLMPlanGenerator, PlanExecuteAgent, expand_rerun_step_ids
 from agents.plan.models import ExecutionResult, StepStatus
@@ -40,7 +42,7 @@ class CortexHub:
     2. 若 ``should_invoke_plan()`` → Plan（可先流式 Plan）→ Execute
     3. 若启用 Reflection → 审查 ExecutionResult
     4. 若审查不通过且 ``max_revision_rounds > 0`` → 按 ``related_step_ids`` 修订重跑
-    5. ``HubTurnCompleteEvent`` 汇总 ``user_reply`` + ``deliverable``
+    5. ``HubTurnCompleteEvent`` 汇总 ``final_user_message``（ReAct 确认 + Reflection 总评 + 交付物摘要）
     """
 
     def __init__(
@@ -52,6 +54,8 @@ class CortexHub:
         run_reflection: bool = True,
         stream_plan_separately: bool = True,
         max_revision_rounds: int = 1,
+        mcp_bindings: Any | None = None,
+        reply_composer: ReplyComposer | None = None,
     ) -> None:
         self.react = react
         self.plan_execute = plan_execute
@@ -60,6 +64,52 @@ class CortexHub:
         self.stream_plan_separately = stream_plan_separately
         self.max_revision_rounds = max(0, max_revision_rounds)
         self.last_outcome: HubTurnOutcome | None = None
+        self._mcp_bindings = mcp_bindings
+        self.reply_composer = reply_composer or ReplyComposer(plan_execute.llm)
+
+    async def close(self) -> None:
+        """释放 MCP 连接等资源。"""
+        if self._mcp_bindings is not None:
+            await self._mcp_bindings.client.close()
+            self._mcp_bindings = None
+
+    async def _finalize_plan_outcome(
+        self,
+        *,
+        route: str,
+        user_reply: str,
+        intent: StructuredIntent,
+        result: ExecutionResult | None,
+        verdict: ReflectionVerdict | None,
+        revision_rounds: int,
+    ) -> HubTurnOutcome:
+        """LLM 摘要 deliverable，组合最终用户可见回复。"""
+        deliverable = (result.deliverable or "").strip() if result else None
+        reflection_summary = (verdict.summary or "").strip() if verdict else None
+
+        delivery_summary = ""
+        final_user_message = (user_reply or "").strip()
+        if deliverable:
+            delivery_summary, final_user_message = (
+                await self.reply_composer.build_final_message(
+                    user_reply=user_reply,
+                    deliverable=deliverable,
+                    intent=intent,
+                    reflection_summary=reflection_summary or None,
+                )
+            )
+
+        return HubTurnOutcome(
+            route=route,
+            user_reply=user_reply,
+            deliverable=deliverable or None,
+            delivery_summary=delivery_summary or None,
+            final_user_message=final_user_message or None,
+            intent=intent,
+            execution_result=result,
+            reflection_verdict=verdict,
+            revision_rounds=revision_rounds,
+        )
 
     async def run_turn_stream(
         self, user_message: str
@@ -93,11 +143,13 @@ class CortexHub:
                 outcome = HubTurnOutcome(
                     route=ROUTE_CLARIFY_ONLY,
                     user_reply="",
+                    final_user_message="",
                 )
                 self.last_outcome = outcome
                 yield HubTurnCompleteEvent(
                     route=outcome.route,
                     user_reply=outcome.user_reply,
+                    final_user_message=outcome.final_user_message,
                 )
                 return
 
@@ -114,12 +166,14 @@ class CortexHub:
                 outcome = HubTurnOutcome(
                     route=ROUTE_CLARIFY_ONLY,
                     user_reply=user_reply,
+                    final_user_message=user_reply,
                     intent=intent,
                 )
                 self.last_outcome = outcome
                 yield HubTurnCompleteEvent(
                     route=outcome.route,
                     user_reply=outcome.user_reply,
+                    final_user_message=outcome.final_user_message,
                     intent=intent,
                 )
                 return
@@ -129,12 +183,14 @@ class CortexHub:
                 outcome = HubTurnOutcome(
                     route=ROUTE_DIRECT_REPLY,
                     user_reply=user_reply,
+                    final_user_message=user_reply,
                     intent=intent,
                 )
                 self.last_outcome = outcome
                 yield HubTurnCompleteEvent(
                     route=outcome.route,
                     user_reply=outcome.user_reply,
+                    final_user_message=outcome.final_user_message,
                     intent=intent,
                 )
                 return
@@ -152,24 +208,27 @@ class CortexHub:
                         error=ev.error,
                         plan_ms=int((time.monotonic() - plan_start) * 1000),
                     )
-                    outcome = HubTurnOutcome(
+                    fail_result = ExecutionResult(
+                        deliverable=f"执行失败：{ev.error}",
+                        source_intent=intent,
+                    )
+                    outcome = await self._finalize_plan_outcome(
                         route=ROUTE_PLAN_EXECUTE,
                         user_reply=user_reply,
                         intent=intent,
-                        execution_result=ExecutionResult(
-                            deliverable=f"执行失败：{ev.error}",
-                            source_intent=intent,
-                        ),
+                        result=fail_result,
+                        verdict=None,
+                        revision_rounds=0,
                     )
                     self.last_outcome = outcome
                     yield HubTurnCompleteEvent(
                         route=outcome.route,
                         user_reply=outcome.user_reply,
-                        deliverable=outcome.execution_result.deliverable
-                        if outcome.execution_result
-                        else None,
+                        deliverable=outcome.deliverable,
+                        delivery_summary=outcome.delivery_summary,
+                        final_user_message=outcome.final_user_message,
                         intent=intent,
-                        execution_result=outcome.execution_result,
+                        execution_result=fail_result,
                     )
                     return
 
@@ -257,14 +316,12 @@ class CortexHub:
             if revision_rounds > 0 and route == ROUTE_PLAN_REFLECT:
                 route = ROUTE_PLAN_REVISE
 
-            deliverable = (result.deliverable or "").strip() if result else None
-            outcome = HubTurnOutcome(
+            outcome = await self._finalize_plan_outcome(
                 route=route,
                 user_reply=user_reply,
-                deliverable=deliverable or None,
                 intent=intent,
-                execution_result=result,
-                reflection_verdict=verdict,
+                result=result,
+                verdict=verdict,
                 revision_rounds=revision_rounds,
             )
             self.last_outcome = outcome
@@ -272,13 +329,16 @@ class CortexHub:
                 "turn complete",
                 route=route,
                 revision_rounds=revision_rounds,
-                deliverable_len=len(deliverable or ""),
+                deliverable_len=len(outcome.deliverable or ""),
+                final_len=len(outcome.final_user_message or ""),
                 elapsed_ms=int((time.monotonic() - turn_start) * 1000),
             )
             yield HubTurnCompleteEvent(
                 route=outcome.route,
                 user_reply=outcome.user_reply,
                 deliverable=outcome.deliverable,
+                delivery_summary=outcome.delivery_summary,
+                final_user_message=outcome.final_user_message,
                 intent=intent,
                 execution_result=result,
                 reflection_verdict=verdict,

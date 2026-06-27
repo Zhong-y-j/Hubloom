@@ -25,6 +25,8 @@ class HubTurnOutcome:
     route: str
     user_reply: str = ""
     deliverable: str | None = None
+    delivery_summary: str | None = None
+    final_user_message: str | None = None
     intent: StructuredIntent | None = None
     execution_result: ExecutionResult | None = None
     reflection_verdict: ReflectionVerdict | None = None
@@ -35,6 +37,8 @@ class HubTurnOutcome:
             "route": self.route,
             "user_reply": self.user_reply,
             "deliverable": self.deliverable,
+            "delivery_summary": self.delivery_summary,
+            "final_user_message": self.final_user_message,
             "intent": self.intent.to_dict() if self.intent else None,
             "execution_result": (
                 self.execution_result.to_dict() if self.execution_result else None

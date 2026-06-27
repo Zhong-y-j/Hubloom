@@ -104,20 +104,11 @@ class HubStreamPrinter:
     def _print_turn_complete(self, ev: HubTurnCompleteEvent) -> None:
         print_section("Hub · 本轮结束 · 对用户展示")
         print(f"  路由: {ev.route}")
-        print(f"\n── ① 确认回复（user_reply，来自 ReAct）──\n")
-        print(ev.user_reply or "（空）")
-        if ev.deliverable:
-            print(f"\n── ② 任务交付物（deliverable，来自 PlanExecute）──\n")
-            print(ev.deliverable)
-        else:
-            print("\n── ② 任务交付物 ──\n（本轮无 Plan 产出）")
-        if ev.reflection_verdict is not None:
-            v = ev.reflection_verdict
-            print(f"\n── ③ 质量审查（Reflection）──")
-            print(f"  passed: {v.passed}")
-            print(f"  summary: {v.summary}")
-            if not v.passed:
-                print(f"  recommendation: {v.recommendation or '（无）'}")
+        final = (ev.final_user_message or ev.user_reply or "").strip()
+        print(f"\n{final or '（空）'}")
+        if ev.deliverable and ev.deliverable != ev.delivery_summary:
+            print(f"\n── （调试）原始 deliverable ──\n")
+            print(compact_tool_result(ev.deliverable, max_len=600))
 
     def _handle_react(self, ev: AgentEvent) -> None:
         if isinstance(ev, TextDeltaEvent):
