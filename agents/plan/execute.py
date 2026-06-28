@@ -126,15 +126,21 @@ _PLAN_JSON_BLOCK_RE = re.compile(
     re.DOTALL | re.IGNORECASE,
 )
 
-PLAN_GENERATION_SYSTEM_TOOLS = """你是灵枢 PlanExecute 的规划助手。根据已澄清的结构化意图，制定可执行的多步计划。
+PLAN_GENERATION_SYSTEM_TOOLS = """你是灵枢 PlanExecute 的规划助手。根据已澄清的结构化意图与用户消息中的 **MCP 工具目录**，制定可执行的多步计划。
 
-规则：
-- 每一步调用一个 MCP 工具，tool_name 必须来自「当前可用工具」列表
-- tool_args 须符合该工具的 parameters JSON Schema；可从 intent.slots 提取参数
-- 无可用工具的任务写入 unfulfillable_steps，不要放进 steps
+## 工具来源（必须遵守）
+- 可调用工具由 MCP 从当前接入的 OpenAPI/Swagger **动态加载**；换 API 后工具名、参数、数量都会变。
+- **唯一权威来源**是用户消息里的「当前可用 MCP 工具」列表（含 name / description / parameters）。
+- **禁止**凭训练记忆、历史对话或旧 Swagger 臆造 tool_name；列表里没有的工具只能写入 unfulfillable_steps。
+- 选工具时：对照用户意图 ↔ 各工具的 description 与 parameters，自行判断调用哪些、顺序如何、参数从哪来（intent.slots、用户原话、或依赖前序步骤——前序结果由 Execute 提供，Plan 阶段勿写死响应字段路径）。
+
+## 计划规则
+- 每一步对应一个 MCP 工具；tool_name 必须与目录中某条的 name **完全一致**
+- tool_args 须符合该条 parameters JSON Schema；已知参数从 intent.slots 提取，未知必填项勿瞎填占位值
+- 无目录工具可覆盖的子任务 → unfulfillable_steps（说明原因），不要放进 steps
 - steps 按 step_id 从 1 递增；dependencies 只能引用更小的 step_id
-- 可参考 intent.slots.suggested_tools 作为提示，但最终由你决定调用哪些工具
-- task_description 具体可执行；expected_output 描述该步产出
+- intent.slots.suggested_tools 仅为 ReAct 提示，**必须**在目录中存在才采用；最终以目录 + 意图为准
+- task_description / expected_output 写清本步目标；跨步依赖用 dependencies 表达，勿假设固定 API 响应结构
 - 只输出 JSON，用 ```plan 代码块包裹：
 
 ```plan
@@ -365,20 +371,26 @@ def _format_tool_catalog(tools: ToolRegistry) -> str:
     return "\n".join(lines) if lines else "（无可用工具）"
 
 
+_MCP_CATALOG_PREAMBLE = """\
+下列工具由 MCP 注册表提供（随接入的 Swagger 变化）。规划时只使用此列表中的 name；\
+parameters 即各工具允许的 tool_args 形状。"""
+
+
 def _plan_user_prompt_tools(intent: StructuredIntent, tools: ToolRegistry) -> str:
     catalog = _format_tool_catalog(tools)
     suggested = intent.slots.get("suggested_tools")
     hint = ""
     if suggested:
         hint = (
-            f"\nReAct 建议的工具（可参考）："
+            f"\nReAct 建议的工具（须在下列目录中存在方可采用，否则忽略）："
             f"{json.dumps(suggested, ensure_ascii=False)}\n"
         )
     return (
+        f"{_MCP_CATALOG_PREAMBLE}\n\n"
         f"当前可用 MCP 工具：\n{catalog}\n"
         f"{hint}\n"
         f"结构化意图：\n{json.dumps(intent.to_dict(), ensure_ascii=False, indent=2)}\n\n"
-        "请输出 ```plan``` JSON。"
+        "请仅依据上述目录与意图输出 ```plan``` JSON。"
     )
 
 
@@ -652,8 +664,8 @@ class DefaultResultAggregator:
 
 _DEFAULT_SYSTEM = """你是灵枢（Agent Cortex）PlanExecute 规划执行层。
 
-本阶段职责：根据已澄清的结构化意图制定计划、按步调用 MCP 工具或分发专业 Agent、汇总交付物。
-具体 Plan/Execute 能力由可插拔组件实现。"""
+本阶段根据 StructuredIntent 制定计划并按步执行。MCP 模式下工具来自当前接入的 API 注册表（非固定 Swagger）；\
+Plan 与 Execute 均以运行时工具目录为准，不假设具体业务接口名称。"""
 
 
 class PlanExecuteAgent(Agent):

@@ -16,7 +16,7 @@ _DELIVERABLE_SUMMARY_SYSTEM = """你是灵枢的用户回复助手。将 PlanExe
   - transport_ok=true 且 body 为空：结合 http_status（如 204）与用户问题，给出合理结论（删除类操作 204 通常表示成功）
   - transport_ok=false：说明调用失败原因，不要假装成功
 - 使用清晰、友好的中文，直接回答用户问题
-- 不要提及 PlanExecute、MCP、工具名、JSON、API 等内部实现细节
+- 不要提及 PlanExecute、MCP、具体工具名、JSON、内部 API 路径等实现细节（用业务语言描述结果即可）
 - 不要重复用户已经看到的确认语或寒暄
 - 只输出摘要正文，不要 markdown 代码块、不要字段名前缀"""
 

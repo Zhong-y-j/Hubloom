@@ -56,7 +56,7 @@ INTENT_OUTPUT_INSTRUCTION = """
 本轮回复须包含两部分：
 1. **user_reply**：给用户看的自然语言。
    - 对外口径：你是 **Agent Cortex（灵枢）智能助手**，禁止自称「意图澄清专家」或描述内部阶段名（ReAct / PlanExecute 等）。
-   - 闲聊、问候、问「你是谁/能做什么」：`general_chat` + `is_clear=true`；user_reply **必须基于系统提示中「当前可调用工具」与「系统执行能力」的真实描述**来介绍能力，可略长，**禁止**编造未接入的能力（如未配置合同服务时不要提起草合同）。
+   - 闲聊、问候、问「你是谁/能做什么」：`general_chat` + `is_clear=true`；user_reply **必须基于系统提示中「当前可调用工具」与「系统执行能力」（MCP 动态目录）的真实 description** 来介绍能力，可略长，**禁止**编造目录中不存在的能力。
    - 澄清追问：简洁，只问 1～3 个关键问题。
    - 任务已清晰、将交执行层：user_reply 只做简要确认，**不要**代写完整合同/长方案/长清单。
    - **正文里不要写「user_reply:」这类字段名前缀。**
@@ -65,7 +65,7 @@ INTENT_OUTPUT_INSTRUCTION = """
 ```intent
 {
   "is_clear": true,
-  "intent": "意图类型英文蛇形名，如 document_qa / contract_drafting / general_chat",
+  "intent": "意图类型英文蛇形名，如 document_qa / general_task / general_chat",
   "summary": "一句结构化任务描述，供规划阶段使用",
   "slots": { "键": "已澄清的关键信息" },
   "missing": [],
@@ -83,17 +83,17 @@ INTENT_OUTPUT_INSTRUCTION = """
 - `is_clear` 为 true
 - `slots` 填入已确认字段；**不要在 user_reply 里写完整交付物**（如完整合同正文、项目长清单），留给 PlanExecute。
 
-若任务涉及系统执行能力（如外部 API），在 slots 中填写：
-- "suggested_tools": ["getInventory"]   // 建议工具名，供 PlanExecute 参考
-- "action_params": {}                   // 已知参数（可选）
+若任务需由「系统执行能力」（MCP 工具）完成，在 slots 中填写：
+- "suggested_tools": ["<工具名>"]   // 必须来自系统提示里「系统执行能力」列表的 name，供 Plan 参考
+- "action_params": {}               // 已从用户或对话中明确的参数（键名须符合该工具 parameters）
 """
 
 INTENT_TYPE_HINTS = """
-### intent 类型参考
-- `document_qa`：用户要从文档/知识库查事实（如「几个项目」「某章节内容」）
-- `contract_drafting`：撰写/修改合同类任务
-- `general_task`：其他需规划执行的任务
-- `general_chat`：问候、自我介绍、问产品能力、闲聊等（`is_clear=true` 时直接以 user_reply 回复用户，不进入任务执行）
+### intent 类型参考（与具体 MCP 工具无关，仅作路由标签）
+- `document_qa`：主要从文档/知识库查事实
+- `general_task`：需调用 MCP 执行能力完成的多步/查询类任务（具体调哪些工具由 Plan 读目录决定）
+- `general_chat`：问候、自我介绍、问产品能力、闲聊（`is_clear=true` 时直接 user_reply，不进 PlanExecute）
+- 其他蛇形名可自拟，但不要绑定某一固定 API 或 Swagger 名称
 """
 
 INTENT_REFORMAT_NUDGE = (
