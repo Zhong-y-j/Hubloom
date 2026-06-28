@@ -89,6 +89,45 @@
     if (empty) empty.remove();
   }
 
+  function clearMessages() {
+    els.messages.innerHTML = "";
+  }
+
+  async function loadHistory() {
+    const sessionKey = normalizeSessionKey(els.sessionId.value);
+    if (!sessionKey) {
+      clearMessages();
+      ensureEmptyState();
+      return;
+    }
+
+    clearMessages();
+    setStatus("加载历史…");
+
+    try {
+      const url =
+        "/v1/chat/history?session_id=" + encodeURIComponent(sessionKey);
+      const res = await fetch(url, { headers: buildHeaders(sessionKey) });
+      if (!res.ok) {
+        const errText = await res.text();
+        throw new Error(errText || "HTTP " + res.status);
+      }
+      const data = await res.json();
+      for (const msg of data.messages || []) {
+        const text = (msg.content || "").trim();
+        if (!text) continue;
+        appendMessage(msg.role === "user" ? "user" : "assistant", text);
+      }
+      ensureEmptyState();
+      setStatus("就绪");
+    } catch (err) {
+      ensureEmptyState();
+      setStatus("历史加载失败");
+      console.error(err);
+    }
+    scrollToBottom();
+  }
+
   function appendMessage(role, text, extraClass) {
     removeEmptyState();
     const div = document.createElement("div");
@@ -289,10 +328,16 @@
   els.newSession.addEventListener("click", () => {
     els.sessionId.value = newSessionKey();
     saveSettings();
+    clearMessages();
+    ensureEmptyState();
+    setRoute("");
     setStatus("已创建新会话");
   });
 
-  els.sessionId.addEventListener("change", saveSettings);
+  els.sessionId.addEventListener("change", () => {
+    saveSettings();
+    loadHistory();
+  });
   els.authToken.addEventListener("change", saveSettings);
 
   loadSettings();
@@ -300,6 +345,6 @@
     els.sessionId.value = newSessionKey();
     saveSettings();
   }
-  ensureEmptyState();
+  loadHistory();
   els.input.focus();
 })();

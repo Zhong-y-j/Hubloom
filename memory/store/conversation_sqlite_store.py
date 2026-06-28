@@ -150,6 +150,27 @@ class ConversationSQLitesStore:
 
         return [self._row_to_message(row) for row in rows]
 
+    def get_chat_history(self, session_id: str) -> list[dict[str, str]]:
+        """获取会话中 user/assistant 消息（含时间戳，按时间正序）。"""
+        rows = self.conn.execute(
+            """
+            SELECT role, content, created_at
+            FROM conversation_memory
+            WHERE session_id = ? AND role IN ('user', 'assistant')
+            ORDER BY created_at ASC, rowid ASC
+            """,
+            (session_id,),
+        ).fetchall()
+
+        return [
+            {
+                "role": row["role"],
+                "content": row["content"] or "",
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
     def clear_session(self, session_id: str) -> int:
         """清空指定会话的全部消息，返回删除条数。"""
         cursor = self.conn.execute(

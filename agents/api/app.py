@@ -8,12 +8,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from agents.api.context import clear_request_context, set_request_context
 from agents.api.events import event_to_sse, format_sse
+from agents.api.history import ChatHistoryResponse, messages_for_display
 from agents.api.schemas import ChatRequest, ChatResponse
 from agents.app.bootstrap import (
     DEFAULT_SESSION_ID,
@@ -128,6 +129,29 @@ async def chat(
 
     result = await _run_chat_once(message, session_id=session_id, bearer=bearer)
     return JSONResponse(content=result.model_dump())
+
+
+@app.get("/v1/chat/history", response_model=ChatHistoryResponse)
+async def chat_history(
+    session_id: str | None = Query(default=None, description="裸 user_id 或完整 namespace"),
+    authorization: str | None = Header(default=None),
+    x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+) -> ChatHistoryResponse:
+    if _hub is None:
+        raise HTTPException(status_code=503, detail="Hub 尚未初始化")
+
+    resolved = _resolve_session_id(session_id, x_session_id)
+    store = _hub.react._conversation_store  # noqa: SLF001
+    if store is None:
+        return ChatHistoryResponse(session_id=resolved, messages=[], total=0)
+
+    rows = await asyncio.to_thread(store.get_chat_history, resolved)
+    messages = messages_for_display(rows)
+    return ChatHistoryResponse(
+        session_id=resolved,
+        messages=messages,
+        total=len(messages),
+    )
 
 
 async def _stream_chat(
