@@ -100,6 +100,42 @@ def check_step(
     return gaps
 
 
+def gaps_for_resolved_args(
+    step_id: int,
+    tool_name: str,
+    parameters: dict[str, Any],
+    args: dict[str, Any],
+) -> list[ParamGap]:
+    """组参完成后校验 required（含依赖步骤 LLM 组参结果）。"""
+    missing = missing_required_fields(parameters, args)
+    gaps: list[ParamGap] = []
+    for param_name in missing:
+        label, description = describe_param(parameters, param_name)
+        gaps.append(
+            ParamGap(
+                step_id=step_id,
+                tool_name=tool_name,
+                param_name=param_name,
+                label=label,
+                description=description,
+            )
+        )
+    return gaps
+
+
+def format_missing_args_message(gaps: list[ParamGap]) -> str:
+    """Execute 层缺参时不调 API，直接返回此说明。"""
+    if not gaps:
+        return "缺少必填参数"
+    parts: list[str] = []
+    for gap in gaps:
+        detail = gap.label
+        if gap.description and gap.description != gap.label:
+            detail = f"{gap.label}（{gap.description}）"
+        parts.append(f"{detail}（{gap.param_name}）")
+    return "缺少必填参数：" + "、".join(parts)
+
+
 def build_clarify_message(
     gaps: list[ParamGap],
     *,

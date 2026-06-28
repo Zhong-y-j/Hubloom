@@ -11,17 +11,40 @@ _HTTP_STATUS_RE = re.compile(r"HTTP error (\d{3})", re.IGNORECASE)
 _MESSAGE_RE = re.compile(
     r"""['"]message['"]\s*:\s*['"]([^'"]+)['"]""",
 )
+_DETAILS_RE = re.compile(
+    r"""['"]details['"]\s*:\s*['"]([^'"]+)['"]""",
+)
+_VALIDATION_MSG_RE = re.compile(
+    r"""['"]validationErrors['"]\s*:\s*\[\s*\{[^}]*['"]message['"]\s*:\s*['"]([^'"]+)['"]""",
+)
 
 
 def extract_business_message(error_text: str) -> str | None:
-    """从 MCP/HTTP 错误字符串中提取 API 返回的 message 字段。"""
+    """从 MCP/HTTP 错误字符串中提取用户可读说明（优先 validationErrors / details）。"""
     text = (error_text or "").strip()
     if not text:
         return None
+
+    val_match = _VALIDATION_MSG_RE.search(text)
+    if val_match:
+        msg = val_match.group(1).strip()
+        if msg:
+            return msg
+
+    details_match = _DETAILS_RE.search(text)
+    if details_match:
+        details = details_match.group(1).strip()
+        if details and details.lower() not in ("none", "null"):
+            # 去掉换行，保留校验要点
+            return " ".join(details.split())
+
     match = _MESSAGE_RE.search(text)
     if match:
         msg = match.group(1).strip()
-        return msg or None
+        if msg and msg.lower() not in ("your request is not valid!",):
+            return msg or None
+        if msg:
+            return msg
     return None
 
 

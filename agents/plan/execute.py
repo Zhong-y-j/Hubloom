@@ -38,7 +38,7 @@ from agents.plan.models import (
     SubTaskResult,
 )
 from agents.plan.step_args import resolve_step_tool_args_with_llm
-from tools.param_readiness import check_plan_readiness
+from tools.param_readiness import check_plan_readiness, gaps_for_resolved_args, format_missing_args_message
 from tools.registry import ToolRegistry
 from tools.transport_errors import is_retryable_tool_error
 from tools.runner import ToolRunner
@@ -966,9 +966,28 @@ class PlanExecuteAgent(Agent):
                     intent=intent,
                     completed_outputs=completed_outputs,
                 )
-                output_text, is_err = await self._run_tool_step_with_retry(
-                    step, tool_args=resolved_args
-                )
+                tool_def = self.tool_runner.tools.get(step.tool_name)
+                arg_gaps: list = []
+                if tool_def is not None:
+                    arg_gaps = gaps_for_resolved_args(
+                        step.step_id,
+                        step.tool_name,
+                        tool_def.parameters,
+                        resolved_args,
+                    )
+                if arg_gaps:
+                    output_text = format_missing_args_message(arg_gaps)
+                    is_err = True
+                    plan_log(
+                        "tool step blocked",
+                        step_id=step.step_id,
+                        tool_name=step.tool_name,
+                        missing=[g.param_name for g in arg_gaps],
+                    )
+                else:
+                    output_text, is_err = await self._run_tool_step_with_retry(
+                        step, tool_args=resolved_args
+                    )
                 tool_calls += 1
                 if is_err:
                     tool_errors += 1
