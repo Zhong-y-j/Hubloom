@@ -34,6 +34,24 @@ def _extract_text_content(result: Any) -> str:
     return "\n".join(parts).strip()
 
 
+def _read_http_meta(result: Any) -> tuple[int | None, str | None]:
+    meta = getattr(result, "meta", None)
+    if not isinstance(meta, dict):
+        meta = None
+    status: int | None = None
+    reason: str | None = None
+    if meta:
+        raw_status = meta.get("http_status")
+        if raw_status is not None:
+            try:
+                status = int(raw_status)
+            except (TypeError, ValueError):
+                status = None
+        if isinstance(meta.get("http_reason"), str):
+            reason = meta["http_reason"]
+    return status, reason
+
+
 def _parse_call_tool_result(
     result: Any,
     *,
@@ -49,18 +67,18 @@ def _parse_call_tool_result(
             error=err_text or f"Tool {tool_name!r} returned MCP error",
         )
 
-    http_status: int | None = None
-    http_reason: str | None = None
+    http_status, http_reason = _read_http_meta(result)
     body = ""
 
     structured = getattr(result, "structuredContent", None)
     if isinstance(structured, dict):
-        if "_http_status" in structured:
+        # 兼容旧版：http 元数据曾误写入 structured_content
+        if http_status is None and "_http_status" in structured:
             try:
                 http_status = int(structured["_http_status"])
             except (TypeError, ValueError):
                 http_status = None
-        if isinstance(structured.get("_http_reason"), str):
+        if http_reason is None and isinstance(structured.get("_http_reason"), str):
             http_reason = structured["_http_reason"]
         payload = {
             k: v

@@ -91,16 +91,14 @@ def _patch_openapi_tools_with_http_status() -> None:
             if response is None:
                 return result
 
-            if result.structured_content is not None:
-                structured = dict(result.structured_content)
-            else:
-                structured = {}
-            structured["_http_status"] = status
-            structured["_http_reason"] = reason
+            meta = dict(result.meta or {})
+            meta["http_status"] = status
+            meta["http_reason"] = reason
             return ToolResult(
-                structured_content=structured,
+                structured_content=result.structured_content,
                 content=result.content,
                 is_error=result.is_error,
+                meta=meta,
             )
 
         mcp_log("server tool done", **fields)
