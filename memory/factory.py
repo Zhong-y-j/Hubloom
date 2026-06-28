@@ -17,7 +17,7 @@ from memory.handlers import (
 from memory.manager import MemoryManager
 from memory.store import ConversationSQLitesStore, Neo4jStore, QdrantMemoryStore
 
-VectorBackend = Literal["sqlite", "qdrant"]
+VectorBackend = Literal["sqlite", "qdrant", "none"]
 GraphBackend = Literal["neo4j", "none"]
 
 
@@ -32,12 +32,12 @@ def create_memory_manager(
     graph_backend: GraphBackend = "neo4j",
     neo4j_uri: str | None = None,
 ) -> MemoryManager:
-    """创建带 conversation + 长期记忆 + 联想记忆的 MemoryManager。
+    """创建 MemoryManager（conversation 必选；长期记忆按 backend 可选）。
 
     Args:
         namespace: 长期记忆命名空间；conversation 使用同一字符串作为 session_id
         db_path: SQLite 路径（conversation 必选；sqlite 向量后端时 episodic/semantic 也用）
-        vector_backend: ``qdrant`` 使用 Qdrant 向量库；``sqlite`` 保留旧 SQLite 实现
+        vector_backend: ``qdrant`` / ``sqlite`` 启用 episodic+semantic；``none`` 仅会话
         qdrant_url: Qdrant 地址，默认读环境变量 ``QDRANT_URL``
         qdrant_collection: 集合名，默认读 ``QDRANT_COLLECTION``
         embedder: 向量嵌入器，默认 ``OpenAIEmbedder()``

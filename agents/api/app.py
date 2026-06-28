@@ -18,6 +18,7 @@ from agents.api.history import ChatHistoryResponse, messages_for_display
 from agents.api.schemas import ChatRequest, ChatResponse
 from agents.app.bootstrap import (
     DEFAULT_SESSION_ID,
+    ENABLE_LONG_TERM_MEMORY,
     SESSION_ID_TEMPLATE,
     build_hub_async,
     format_session_id,
@@ -97,6 +98,7 @@ async def client_config() -> dict[str, str]:
     return {
         "default_session_id": DEFAULT_SESSION_ID,
         "session_id_template": SESSION_ID_TEMPLATE,
+        "enable_long_term_memory": ENABLE_LONG_TERM_MEMORY,
     }
 
 

@@ -31,6 +31,16 @@ SESSION_ID_TEMPLATE = os.getenv(
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return default
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")
+
+
+ENABLE_LONG_TERM_MEMORY = _env_flag("CORTEX_ENABLE_LONG_TERM_MEMORY", default=True)
+
+
 def format_session_id(session_key: str) -> str:
     """将短 session 键套入模板；已是 ``mem:...`` 形式则原样返回。"""
     key = session_key.strip()
@@ -54,7 +64,12 @@ async def build_hub_async(
     llm = create_llm()
     conversation_store = ConversationSQLitesStore(memory_db_path)
     kb = KnowledgeBase(embedder=OpenAIEmbedder(), persist_dir=kb_persist_dir)
-    memory_manager = create_memory_manager(namespace=session_id)
+    memory_manager = create_memory_manager(
+        namespace=session_id,
+        db_path=memory_db_path,
+        vector_backend="qdrant" if ENABLE_LONG_TERM_MEMORY else "none",
+        graph_backend="neo4j" if ENABLE_LONG_TERM_MEMORY else "none",
+    )
 
     bindings = None
     mcp_registry = ToolRegistry()
@@ -72,10 +87,9 @@ async def build_hub_async(
         except Exception as exc:
             hub_log("mcp load failed; fallback to agent registry", error=str(exc))
 
-    react_tool_list: list = [
-        SearchDocumentsTool(kb),
-        SearchMemoryTool(memory_manager),
-    ]
+    react_tool_list: list = [SearchDocumentsTool(kb)]
+    if ENABLE_LONG_TERM_MEMORY:
+        react_tool_list.append(SearchMemoryTool(memory_manager))
     if bindings is not None:
         react_tool_list.extend(bindings.tools)
     react_tools = ToolRegistry.from_tools(react_tool_list)
@@ -88,7 +102,7 @@ async def build_hub_async(
         session_id=session_id,
         context_assembler=ContextAssembler(),
         knowledge_base=kb,
-        consolidate_memory=True,
+        consolidate_memory=ENABLE_LONG_TERM_MEMORY,
     )
 
     if bindings is not None:
@@ -120,6 +134,7 @@ async def build_hub_async(
         run_reflection=run_reflection,
         max_revision_rounds=max_revision_rounds,
         mcp_enabled=bindings is not None,
+        long_term_memory=ENABLE_LONG_TERM_MEMORY,
     )
     return CortexHub(
         react,

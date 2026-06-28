@@ -56,35 +56,35 @@ ReAct（默认）────── MCP Server ← OpenAPI / Swagger
 
 ### 1. 安装依赖
 
+**推荐（与 `uv.lock` 一致）：**
+
 ```bash
 uv sync
 ```
 
-### 2. 配置环境变量
-
-在项目根目录创建 `.env`（或通过 shell 导出）：
+**或使用 pip：**
 
 ```bash
-# LLM（OpenAI 兼容）
-OPENAI_API_KEY=sk-...
-OPENAI_BASE_URL=          # 可选，兼容 API 网关
-OPENAI_MODEL=             # 可选
-
-# MCP：指向你的 OpenAPI / Swagger
-MCP_SWAGGER_URL=https://your-api.example.com/swagger/v1/swagger.json
-MCP_BASE_URL=https://your-api.example.com   # spec 未声明 servers 时必填
-MCP_TOKEN=                                  # 可选，作为 Bearer 调用下游 API
-
-# 日志（可选）
-CORTEX_AGENT_LOG=1
-CORTEX_LOG_FILE=logs/debug.log
-
-# 会话与存储（可选）
-CORTEX_DEFAULT_SESSION_ID=mem:tester_id:default
-CORTEX_SESSION_ID_TEMPLATE=mem:{session_id}:default
-CORTEX_MEMORY_DB=data/memory.db
-CORTEX_KB_DIR=data/knowledge_db
+pip install -r requirements.txt
 ```
+
+### 2. 配置环境变量
+
+```bash
+cp .env.example .env
+# 编辑 .env，至少填写 OPENAI_API_KEY；对接业务 API 时填写 MCP_* 
+```
+
+最小可运行配置（无需 Qdrant / Neo4j）：
+
+```bash
+OPENAI_API_KEY=sk-...
+CORTEX_ENABLE_LONG_TERM_MEMORY=0
+MCP_SWAGGER_URL=https://your-api.example.com/swagger/v1/swagger.json
+MCP_BASE_URL=https://your-api.example.com
+```
+
+完整变量说明见 [`.env.example`](.env.example) 与下方配置表。
 
 未配置 `MCP_SWAGGER_URL` 时，MCP 子进程会回退到 Petstore 示例 spec。
 
@@ -183,6 +183,7 @@ main.py           # Hub REPL 入口
 | `CORTEX_SESSION_ID_TEMPLATE` | 短 session 键套入模板（默认 `mem:{session_id}:default`） |
 | `CORTEX_MEMORY_DB` | SQLite 会话库路径（默认 `data/memory.db`） |
 | `CORTEX_KB_DIR` | 知识库持久化目录（默认 `data/knowledge_db`） |
+| `CORTEX_ENABLE_LONG_TERM_MEMORY` | 是否启用长期记忆（Qdrant episodic/semantic + Neo4j associative；默认 `true`） |
 
 后续计划在 env 中补充：`ENABLE_PLAN`、`ENABLE_REFLECTION`、MCP 工具 tag 过滤等，便于上百接口场景下控制暴露给 LLM 的工具集。
 
@@ -203,7 +204,7 @@ main.py           # Hub REPL 入口
 - [x] Hub 多轮会话与 Plan 结果写入历史
 - [ ] env 开关：默认 ReAct-only，Plan/Reflection 可选
 - [ ] MCP 工具过滤（按 tag / 数量限制），适配大型 Swagger
-- [ ] 完善 `.env.example` 与部署文档
+- [x] 完善 `.env.example` 与部署文档
 - [ ] 企业集成：JWT / SSO 透传、多租户、审计日志（插件或扩展层）
 
 ---
