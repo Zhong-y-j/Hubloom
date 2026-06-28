@@ -1,11 +1,19 @@
+import os
+
 import httpx
+from dotenv import load_dotenv
 from fastmcp import FastMCP
 
 from spec_loader import prepare_openapi
 
-SWAGGER_URL = "https://petstore.swagger.io/v2/swagger.json"
-BASE_URL = ""  # 留空则从 spec 自动推断，例如 https://petstore.swagger.io/v2
-TOKEN = ""
+load_dotenv()
+
+SWAGGER_URL = os.getenv(
+    "MCP_SWAGGER_URL",
+    "https://petstore.swagger.io/v2/swagger.json",
+)
+BASE_URL = os.getenv("MCP_BASE_URL", "").strip()
+TOKEN = os.getenv("MCP_TOKEN", "").strip()
 
 headers = {}
 if TOKEN:

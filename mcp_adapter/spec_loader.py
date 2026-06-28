@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from prance import BaseParser
@@ -60,6 +61,16 @@ def infer_base_url(spec: dict[str, Any]) -> str | None:
     return None
 
 
+def infer_base_url_from_source(source: str) -> str | None:
+    """当 spec 未声明 servers/host 时，从 Swagger 文档 URL 推断 API 根地址。"""
+    if not source.startswith(("http://", "https://")):
+        return None
+    parsed = urlparse(source)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+
+
 async def load_spec(source: str) -> dict[str, Any]:
     """从 URL 或本地 JSON/YAML 文件加载原始 spec。"""
     path = Path(source)
@@ -81,9 +92,15 @@ async def prepare_openapi(
     """加载 spec，必要时转换，并解析 base URL。"""
     raw = await load_spec(source)
     openapi = normalize_openapi_spec(raw)
-    resolved_base = (base_url or infer_base_url(raw) or infer_base_url(openapi) or "").rstrip("/")
+    resolved_base = (
+        base_url
+        or infer_base_url(raw)
+        or infer_base_url(openapi)
+        or infer_base_url_from_source(source)
+        or ""
+    ).rstrip("/")
     if not resolved_base:
         raise ValueError(
-            "Cannot infer API base URL; set BASE_URL in mcp/server.py"
+            "Cannot infer API base URL; set MCP_BASE_URL in .env"
         )
     return openapi, resolved_base
