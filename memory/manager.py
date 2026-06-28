@@ -55,6 +55,17 @@ class MemoryManager:
             )
         return handler
 
+    def bind_namespace(self, namespace: str) -> None:
+        """将各 Handler 的 namespace / session_id 绑定到同一请求会话。"""
+        ns = (namespace or "").strip()
+        if not ns:
+            raise ValueError("namespace must not be empty")
+        for handler in self.handlers.values():
+            if hasattr(handler, "namespace"):
+                handler.namespace = ns  # type: ignore[attr-defined]
+            if isinstance(handler, ConversationHandler):
+                handler.session_id = ns
+
     def _conversation_handler(self) -> ConversationHandler:
         handler = self.handlers.get("conversation")
         if not isinstance(handler, ConversationHandler):

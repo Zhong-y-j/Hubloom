@@ -22,10 +22,23 @@ from tools.builtin import SearchDocumentsTool, SearchMemoryTool
 from tools.runner import ToolRunner
 from agents.core.agent_log import hub_log
 
-DEFAULT_SESSION_ID = "mem:tester_id:default"
-DEFAULT_MEMORY_DB = "data/memory.db"
-DEFAULT_KB_DIR = "data/knowledge_db"
+DEFAULT_SESSION_ID = os.getenv("CORTEX_DEFAULT_SESSION_ID", "mem:tester_id:default")
+DEFAULT_MEMORY_DB = os.getenv("CORTEX_MEMORY_DB", "data/memory.db")
+DEFAULT_KB_DIR = os.getenv("CORTEX_KB_DIR", "data/knowledge_db")
+SESSION_ID_TEMPLATE = os.getenv(
+    "CORTEX_SESSION_ID_TEMPLATE", "mem:{session_id}:default"
+)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def format_session_id(session_key: str) -> str:
+    """将短 session 键套入模板；已是 ``mem:...`` 形式则原样返回。"""
+    key = session_key.strip()
+    if not key:
+        return DEFAULT_SESSION_ID
+    if key.startswith("mem:"):
+        return key
+    return SESSION_ID_TEMPLATE.format(session_id=key)
 
 
 async def build_hub_async(

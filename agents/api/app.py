@@ -15,7 +15,12 @@ from fastapi.staticfiles import StaticFiles
 from agents.api.context import clear_request_context, set_request_context
 from agents.api.events import event_to_sse, format_sse
 from agents.api.schemas import ChatRequest, ChatResponse
-from agents.app.bootstrap import DEFAULT_SESSION_ID, build_hub_async
+from agents.app.bootstrap import (
+    DEFAULT_SESSION_ID,
+    SESSION_ID_TEMPLATE,
+    build_hub_async,
+    format_session_id,
+)
 from agents.core.events import ErrorEvent, HubTurnCompleteEvent
 from agents.hub import CortexHub
 from observability import setup_log
@@ -28,7 +33,7 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 def _resolve_session_id(body_session: str | None, header_session: str | None) -> str:
     for value in (body_session, header_session):
         if value and value.strip():
-            return value.strip()
+            return format_session_id(value)
     return DEFAULT_SESSION_ID
 
 
@@ -40,6 +45,13 @@ def _extract_bearer(authorization: str | None) -> str | None:
         token = text[7:].strip()
         return token or None
     return text or None
+
+
+def _bind_hub_session(hub: CortexHub, session_id: str) -> None:
+    """对话与长期记忆 namespace 对齐到同一 session_id，方便记忆召回。"""
+    hub.react._session_id = session_id  # noqa: SLF001 — API 按请求切换会话
+    if hub.react.memory is not None:
+        hub.react.memory.bind_namespace(session_id)
 
 
 @asynccontextmanager
@@ -77,6 +89,14 @@ async def chat_page() -> FileResponse:
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/v1/config")
+async def client_config() -> dict[str, str]:
+    return {
+        "default_session_id": DEFAULT_SESSION_ID,
+        "session_id_template": SESSION_ID_TEMPLATE,
+    }
 
 
 @app.post("/v1/chat")
@@ -120,7 +140,7 @@ async def _stream_chat(
         set_request_context(bearer_token=bearer, session_id=session_id)
         hub = _hub
         assert hub is not None
-        hub.react._session_id = session_id  # noqa: SLF001 — API 按请求切换会话
+        _bind_hub_session(hub, session_id)
         try:
             async for ev in hub.run_turn_stream(message):
                 mapped = event_to_sse(ev)
@@ -145,7 +165,7 @@ async def _run_chat_once(
         set_request_context(bearer_token=bearer, session_id=session_id)
         hub = _hub
         assert hub is not None
-        hub.react._session_id = session_id  # noqa: SLF001
+        _bind_hub_session(hub, session_id)
         try:
             async for ev in hub.run_turn_stream(message):
                 if isinstance(ev, HubTurnCompleteEvent):

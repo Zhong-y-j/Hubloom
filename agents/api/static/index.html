@@ -18,13 +18,14 @@
         </div>
 
         <section class="panel">
-          <label for="session-id">会话 ID</label>
+          <label for="session-id">用户 ID</label>
           <input
             id="session-id"
             type="text"
-            placeholder="留空则使用默认 session"
+            placeholder="web-uuid 或企业 user_id"
             autocomplete="off"
           />
+          <p class="hint">只传裸 ID；服务端自动套 mem:…:default。</p>
           <button type="button" id="new-session" class="btn ghost">
             新会话
           </button>

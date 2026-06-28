@@ -1,6 +1,7 @@
 (function () {
-  const STORAGE_SESSION = "cortex_session_id";
+  const STORAGE_SESSION = "cortex_session_key";
   const STORAGE_TOKEN = "cortex_auth_token";
+  const LEGACY_STORAGE_SESSION = "cortex_session_id";
 
   const els = {
     messages: document.getElementById("messages"),
@@ -23,15 +24,35 @@
     return "sess-" + Date.now().toString(36);
   }
 
+  /** 从旧版 mem:xxx:default 还原为裸 session 键；已是裸键则原样返回。 */
+  function normalizeSessionKey(value) {
+    const trimmed = (value || "").trim();
+    if (!trimmed) return "";
+    if (trimmed.startsWith("mem:") && trimmed.endsWith(":default")) {
+      return trimmed.slice(4, -":default".length);
+    }
+    return trimmed;
+  }
+
+  function newSessionKey() {
+    return "web-" + uuid();
+  }
+
   function loadSettings() {
-    const sid = localStorage.getItem(STORAGE_SESSION);
-    if (sid) els.sessionId.value = sid;
+    let sid =
+      localStorage.getItem(STORAGE_SESSION) ||
+      localStorage.getItem(LEGACY_STORAGE_SESSION);
+    if (sid) els.sessionId.value = normalizeSessionKey(sid);
     const tok = localStorage.getItem(STORAGE_TOKEN);
     if (tok) els.authToken.value = tok;
   }
 
   function saveSettings() {
-    localStorage.setItem(STORAGE_SESSION, els.sessionId.value.trim());
+    localStorage.setItem(
+      STORAGE_SESSION,
+      normalizeSessionKey(els.sessionId.value)
+    );
+    localStorage.removeItem(LEGACY_STORAGE_SESSION);
     localStorage.setItem(STORAGE_TOKEN, els.authToken.value.trim());
   }
 
@@ -94,11 +115,11 @@
     scrollToBottom();
   }
 
-  function buildHeaders(sessionId) {
+  function buildHeaders(sessionKey) {
     const headers = { "Content-Type": "application/json" };
     const token = els.authToken.value.trim();
     if (token) headers["Authorization"] = "Bearer " + token;
-    if (sessionId) headers["X-Session-Id"] = sessionId;
+    if (sessionKey) headers["X-Session-Id"] = sessionKey;
     return headers;
   }
 
@@ -125,13 +146,13 @@
     return { events, rest };
   }
 
-  async function chatStream(message, sessionId, assistantEl) {
+  async function chatStream(message, sessionKey, assistantEl) {
     const res = await fetch("/v1/chat", {
       method: "POST",
-      headers: buildHeaders(sessionId),
+      headers: buildHeaders(sessionKey),
       body: JSON.stringify({
         message,
-        session_id: sessionId || null,
+        session_id: sessionKey || null,
         stream: true,
       }),
     });
@@ -192,13 +213,13 @@
     }
   }
 
-  async function chatOnce(message, sessionId) {
+  async function chatOnce(message, sessionKey) {
     const res = await fetch("/v1/chat", {
       method: "POST",
-      headers: buildHeaders(sessionId),
+      headers: buildHeaders(sessionKey),
       body: JSON.stringify({
         message,
-        session_id: sessionId || null,
+        session_id: sessionKey || null,
         stream: false,
       }),
     });
@@ -221,7 +242,7 @@
     if (!message) return;
 
     saveSettings();
-    const sessionId = els.sessionId.value.trim();
+    const sessionKey = normalizeSessionKey(els.sessionId.value);
 
     busy = true;
     els.sendBtn.disabled = true;
@@ -235,10 +256,10 @@
 
     try {
       if (els.streamMode.checked) {
-        await chatStream(message, sessionId, assistantEl);
+        await chatStream(message, sessionKey, assistantEl);
       } else {
         assistantEl.classList.add("typing");
-        const text = await chatOnce(message, sessionId);
+        const text = await chatOnce(message, sessionKey);
         assistantEl.classList.remove("typing");
         assistantEl.textContent = text;
       }
@@ -266,7 +287,7 @@
   });
 
   els.newSession.addEventListener("click", () => {
-    els.sessionId.value = "web-" + uuid();
+    els.sessionId.value = newSessionKey();
     saveSettings();
     setStatus("已创建新会话");
   });
@@ -276,7 +297,7 @@
 
   loadSettings();
   if (!els.sessionId.value.trim()) {
-    els.sessionId.value = "web-" + uuid();
+    els.sessionId.value = newSessionKey();
     saveSettings();
   }
   ensureEmptyState();
