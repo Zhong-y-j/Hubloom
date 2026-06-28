@@ -1,10 +1,12 @@
 import asyncio
+import time
 from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from mcp_adapter.log import clip_text, dumps_clip, mcp_log
 from tools.tool_result import ToolTransportResult, build_transport_result
 
 
@@ -156,17 +158,44 @@ class MCPToolClient:
         if not self._session:
             raise RuntimeError("MCP client not connected. Call connect() first.")
 
-        result = await asyncio.wait_for(
-            self._session.call_tool(tool_name, arguments),
-            timeout=self.timeout,
-        )
-        return _parse_call_tool_result(
-            result, tool_name=tool_name, arguments=arguments
-        )
+        mcp_log("tool start", tool=tool_name, args=dumps_clip(arguments))
+        start = time.monotonic()
+        try:
+            result = await asyncio.wait_for(
+                self._session.call_tool(tool_name, arguments),
+                timeout=self.timeout,
+            )
+            transport = _parse_call_tool_result(
+                result, tool_name=tool_name, arguments=arguments
+            )
+        except Exception as exc:
+            elapsed_ms = int((time.monotonic() - start) * 1000)
+            mcp_log(
+                "tool failed",
+                tool=tool_name,
+                error=clip_text(str(exc)),
+                elapsed_ms=elapsed_ms,
+            )
+            raise
 
-    async def execute_tool_text(
-        self, tool_name: str, arguments: Dict[str, Any]
-    ) -> str:
+        elapsed_ms = int((time.monotonic() - start) * 1000)
+        fields: dict[str, Any] = {
+            "tool": tool_name,
+            "transport_ok": transport.transport_ok,
+            "elapsed_ms": elapsed_ms,
+        }
+        if transport.http_status is not None:
+            fields["http_status"] = transport.http_status
+        if transport.http_reason:
+            fields["http_reason"] = transport.http_reason
+        if transport.transport_ok:
+            fields["result"] = clip_text(transport.to_llm_text())
+        else:
+            fields["error"] = clip_text(transport.error or transport.to_llm_text())
+        mcp_log("tool done", **fields)
+        return transport
+
+    async def execute_tool_text(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """兼容旧接口：返回供 LLM 解读的 JSON 文本。"""
         return (await self.execute_tool(tool_name, arguments)).to_llm_text()
 

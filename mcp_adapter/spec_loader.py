@@ -73,10 +73,22 @@ def infer_base_url_from_source(source: str) -> str | None:
 
 async def load_spec(source: str) -> dict[str, Any]:
     """从 URL 或本地 JSON/YAML 文件加载原始 spec。"""
+    source = (source or "").strip()
+    if not source:
+        raise ValueError(
+            "MCP_SWAGGER_URL 未配置或为空；请在 .env 中设置有效的 Swagger/OpenAPI 地址，"
+            "或删除 MCP_SWAGGER_URL 以使用默认 Petstore 示例。"
+        )
+
     path = Path(source)
     if path.is_file():
         text = path.read_text(encoding="utf-8")
         return json.loads(text)
+
+    if not source.startswith(("http://", "https://")):
+        raise ValueError(
+            f"MCP_SWAGGER_URL 须为 http(s) URL 或本地文件路径，当前为: {source!r}"
+        )
 
     async with httpx.AsyncClient(trust_env=False, timeout=30.0) as client:
         response = await client.get(source)

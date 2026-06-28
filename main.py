@@ -24,7 +24,7 @@ async def async_main() -> None:
     hub = await build_hub_async()
     try:
         # await run_repl(hub)
-        await run_turn(hub, "查询我当前账户下有所有车辆和车位登记信息呢？")
+        await run_turn(hub, "帮我查询宠物库存")
     finally:
         await hub.close()
 

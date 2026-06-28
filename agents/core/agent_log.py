@@ -60,5 +60,9 @@ def react_log(message: str, /, **fields) -> None:
     _emit("react", "CORTEX_REACT_LOG", message, **fields)
 
 
+def mcp_log(message: str, /, **fields) -> None:
+    _emit("mcp", "CORTEX_MCP_LOG", message, **fields)
+
+
 def memory_log(message: str, /, **fields) -> None:
     _emit("memory", "CORTEX_MEMORY_LOG", message, **fields)
