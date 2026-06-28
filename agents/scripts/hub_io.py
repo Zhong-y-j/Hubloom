@@ -16,6 +16,7 @@ from agents.core.events import (
     IntentOutcomeEvent,
     MemoryConsolidatedEvent,
     PlanCreatedEvent,
+    PlanReadinessBlockedEvent,
     PlanReadyEvent,
     ReflectionCompleteEvent,
     ReflectionStartEvent,
@@ -169,6 +170,11 @@ class HubStreamPrinter:
         if isinstance(ev, PlanCreatedEvent):
             self._end_stream_line()
             print(f"\n  Execute：{len(ev.steps)} 步\n")
+            return
+        if isinstance(ev, PlanReadinessBlockedEvent):
+            self._end_stream_line()
+            print("\n▣ Plan 缺参 · 需澄清（Gate B）")
+            print(f"\n{ev.clarify_message}\n")
             return
         if isinstance(ev, StepStartEvent):
             self._end_stream_line()

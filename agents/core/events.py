@@ -57,6 +57,15 @@ class PlanReadyEvent(AgentEvent):
 
 
 @dataclass
+class PlanReadinessBlockedEvent(AgentEvent):
+    """Gate B：Plan 独立步骤缺必填参数，不进入 Execute。"""
+
+    verdict: Any  # PlanReadinessVerdict
+    clarify_message: str
+    plan: Any  # ExecutionPlan
+
+
+@dataclass
 class PlanCreatedEvent(AgentEvent):
     """计划已生成（供 UI 渲染步骤条等）。"""
 

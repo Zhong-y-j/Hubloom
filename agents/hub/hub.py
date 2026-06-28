@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 from agents.core.agent_log import clear_turn_id, hub_log, set_turn_id
@@ -14,12 +15,14 @@ from agents.core.events import (
     ExecutionResultEvent,
     HubPhaseEvent,
     HubTurnCompleteEvent,
+    PlanReadinessBlockedEvent,
     PlanReadyEvent,
 )
 from agents.hub.models import (
     ROUTE_CLARIFY_ONLY,
     ROUTE_DIRECT_REPLY,
     ROUTE_PLAN_EXECUTE,
+    ROUTE_PLAN_READINESS_CLARIFY,
     ROUTE_PLAN_REFLECT,
     ROUTE_PLAN_REVISE,
     ROUTE_PLAN_REVISE_REFLECT,
@@ -111,6 +114,35 @@ class CortexHub:
             revision_rounds=revision_rounds,
         )
 
+    def _outcome_from_readiness_block(
+        self,
+        intent: StructuredIntent,
+        *,
+        clarify_message: str,
+        verdict: Any,
+    ) -> HubTurnOutcome:
+        missing = list(
+            dict.fromkeys(getattr(g, "param_name", str(g)) for g in verdict.gaps)
+        )
+        clarify = (clarify_message or "").strip()
+        blocked_intent = replace(
+            intent,
+            is_clear=False,
+            missing=missing,
+            user_reply=clarify,
+        )
+        hub_log(
+            "route",
+            route=ROUTE_PLAN_READINESS_CLARIFY,
+            gaps=len(missing),
+        )
+        return HubTurnOutcome(
+            route=ROUTE_PLAN_READINESS_CLARIFY,
+            user_reply=clarify,
+            final_user_message=clarify,
+            intent=blocked_intent,
+        )
+
     async def run_turn_stream(
         self, user_message: str
     ) -> AsyncIterator[AgentEvent]:
@@ -198,8 +230,14 @@ class CortexHub:
             yield HubPhaseEvent(phase="plan")
             result: ExecutionResult | None = None
             plan_start = time.monotonic()
+            blocked_message: str | None = None
+            blocked_verdict: Any | None = None
             async for ev in self._run_plan_pipeline(intent):
                 yield ev
+                if isinstance(ev, PlanReadinessBlockedEvent):
+                    blocked_message = ev.clarify_message
+                    blocked_verdict = ev.verdict
+                    break
                 if isinstance(ev, ExecutionResultEvent):
                     result = ev.result
                 if isinstance(ev, ErrorEvent):
@@ -231,6 +269,23 @@ class CortexHub:
                         execution_result=fail_result,
                     )
                     return
+
+            if blocked_message:
+                plan_ms = int((time.monotonic() - plan_start) * 1000)
+                hub_log("plan pipeline blocked", plan_ms=plan_ms)
+                outcome = self._outcome_from_readiness_block(
+                    intent,
+                    clarify_message=blocked_message,
+                    verdict=blocked_verdict,
+                )
+                self.last_outcome = outcome
+                yield HubTurnCompleteEvent(
+                    route=outcome.route,
+                    user_reply=outcome.user_reply,
+                    final_user_message=outcome.final_user_message,
+                    intent=outcome.intent,
+                )
+                return
 
             if result is None:
                 result = self.plan_execute.get_last_result()
@@ -280,6 +335,20 @@ class CortexHub:
                             intent, result, verdict
                         ):
                             yield ev
+                            if isinstance(ev, PlanReadinessBlockedEvent):
+                                outcome = self._outcome_from_readiness_block(
+                                    intent,
+                                    clarify_message=ev.clarify_message,
+                                    verdict=ev.verdict,
+                                )
+                                self.last_outcome = outcome
+                                yield HubTurnCompleteEvent(
+                                    route=outcome.route,
+                                    user_reply=outcome.user_reply,
+                                    final_user_message=outcome.final_user_message,
+                                    intent=outcome.intent,
+                                )
+                                return
                             if isinstance(ev, ExecutionResultEvent):
                                 revised = ev.result
                             if isinstance(ev, ErrorEvent):

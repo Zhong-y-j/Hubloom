@@ -11,6 +11,7 @@ from agents.reflection.models import ReflectionVerdict
 
 # Hub 路由结果（一轮用户输入）
 ROUTE_CLARIFY_ONLY = "clarify_only"
+ROUTE_PLAN_READINESS_CLARIFY = "plan_readiness_clarify"
 ROUTE_DIRECT_REPLY = "direct_reply"
 ROUTE_PLAN_EXECUTE = "plan_execute"
 ROUTE_PLAN_REFLECT = "plan_reflect"

@@ -18,6 +18,7 @@ from agents.core.events import (
     ExecutionResultEvent,
     FinalAnswerEvent,
     PlanCreatedEvent,
+    PlanReadinessBlockedEvent,
     PlanReadyEvent,
     PlanTextDeltaEvent,
     RunStatsEvent,
@@ -36,6 +37,8 @@ from agents.plan.models import (
     StepStatus,
     SubTaskResult,
 )
+from agents.plan.step_args import resolve_step_tool_args_with_llm
+from tools.param_readiness import check_plan_readiness
 from tools.registry import ToolRegistry
 from tools.runner import ToolRunner
 
@@ -137,6 +140,7 @@ PLAN_GENERATION_SYSTEM_TOOLS = """你是灵枢 PlanExecute 的规划助手。根
 ## 计划规则
 - 每一步对应一个 MCP 工具；tool_name 必须与目录中某条的 name **完全一致**
 - tool_args 须符合该条 parameters JSON Schema；已知参数从 intent.slots 提取，未知必填项勿瞎填占位值
+- 用户给名称/地址/关键词而详情接口需要 ID 时：先调用搜索/列表类工具，再调用详情类工具；后者 dependencies 指向前者，tool_args 可留空由 Execute 从前序输出组装
 - 无目录工具可覆盖的子任务 → unfulfillable_steps（说明原因），不要放进 steps
 - steps 按 step_id 从 1 递增；dependencies 只能引用更小的 step_id
 - intent.slots.suggested_tools 仅为 ReAct 提示，**必须**在目录中存在才采用；最终以目录 + 意图为准
@@ -786,12 +790,32 @@ class PlanExecuteAgent(Agent):
                 yield ErrorEvent(error=f"计划生成失败: {exc}")
                 return
 
-        yield PlanCreatedEvent(steps=[s.to_dict() for s in plan.steps])
-        plan_log("plan created", steps=len(plan.steps), task_type=plan.task_type)
-
         rerun_set: set[int] | None = None
         if rerun_step_ids is not None:
             rerun_set = expand_rerun_step_ids(plan, rerun_step_ids)
+
+        yield PlanCreatedEvent(steps=[s.to_dict() for s in plan.steps])
+        plan_log("plan created", steps=len(plan.steps), task_type=plan.task_type)
+
+        if self.tool_runner is not None and plan.steps:
+            readiness = check_plan_readiness(
+                plan,
+                self.tool_runner.tools,
+                step_filter=rerun_set,
+                task_summary=intent.summary or intent.user_reply,
+            )
+            if not readiness.ready:
+                plan_log(
+                    "gate_b blocked",
+                    gaps=len(readiness.gaps),
+                    tools=sorted({g.tool_name for g in readiness.gaps}),
+                )
+                yield PlanReadinessBlockedEvent(
+                    verdict=readiness,
+                    clarify_message=readiness.clarify_message,
+                    plan=plan,
+                )
+                return
 
         completed_outputs: dict[int, str] = dict(prior_outputs or {})
         trace: list[ExecutionStepTrace] = []
@@ -924,7 +948,14 @@ class PlanExecuteAgent(Agent):
                     tool_name=step.tool_name,
                 )
                 step_start = time.monotonic()
-                output_text, is_err = await self._run_tool_step_with_retry(step)
+                resolved_args = await self._resolve_step_tool_args(
+                    step,
+                    intent=intent,
+                    completed_outputs=completed_outputs,
+                )
+                output_text, is_err = await self._run_tool_step_with_retry(
+                    step, tool_args=resolved_args
+                )
                 tool_calls += 1
                 if is_err:
                     tool_errors += 1
@@ -1125,17 +1156,51 @@ class PlanExecuteAgent(Agent):
         yield ExecutionResultEvent(result=result)
         yield FinalAnswerEvent(content=deliverable)
 
+    async def _resolve_step_tool_args(
+        self,
+        step: ExecutionStep,
+        *,
+        intent: StructuredIntent,
+        completed_outputs: dict[int, str],
+    ) -> dict[str, Any]:
+        plan_args = dict(step.tool_args or {})
+        if self.tool_runner is None:
+            return plan_args
+        tool = self.tool_runner.tools.get(step.tool_name)
+        if tool is None:
+            return plan_args
+        if not step.dependencies:
+            return plan_args
+
+        dependency_outputs = {
+            dep: completed_outputs[dep]
+            for dep in step.dependencies
+            if dep in completed_outputs
+        }
+        return await resolve_step_tool_args_with_llm(
+            self.llm,
+            step=step,
+            parameters=tool.parameters,
+            intent=intent,
+            dependency_outputs=dependency_outputs,
+            plan_hint=plan_args,
+        )
+
     async def _run_tool_step_with_retry(
-        self, step: ExecutionStep
+        self,
+        step: ExecutionStep,
+        *,
+        tool_args: dict[str, Any] | None = None,
     ) -> tuple[str, bool]:
         """直接调用 MCP 工具，带重试。返回 (output, is_error)。"""
         if self.tool_runner is None:
             return "ToolRunner 未配置", True
+        payload = dict(tool_args if tool_args is not None else step.tool_args)
         last_text = ""
         attempts = 1 + self.step_timeout_retry
         for attempt in range(attempts):
             last_text, is_err = await self.tool_runner.run(
-                step.tool_name, dict(step.tool_args)
+                step.tool_name, payload
             )
             if not is_err:
                 return last_text, False
