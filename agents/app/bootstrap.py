@@ -76,7 +76,6 @@ async def build_hub_async(
         context_assembler=ContextAssembler(),
         knowledge_base=kb,
         consolidate_memory=True,
-        allowed_tools={"search_documents", "search_memory"},
     )
 
     if bindings is not None:

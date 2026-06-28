@@ -30,12 +30,26 @@ from agents.hub.models import (
 )
 from agents.hub.reply_composer import ReplyComposer
 from agents.core.intent import StructuredIntent
-from agents.plan.execute import LLMPlanGenerator, PlanExecuteAgent, expand_rerun_step_ids
+from agents.plan.execute import (
+    LLMPlanGenerator,
+    PlanExecuteAgent,
+    expand_rerun_step_ids,
+)
 from agents.plan.models import ExecutionResult, StepStatus
 from agents.react.agent import ReActAgent
 from agents.reflection.agent import ReflectionAgent
 from agents.reflection.models import ReflectionVerdict
+from core.models import Message, Role
 from tools.transport_errors import is_retryable_tool_error
+
+_PLAN_EXECUTION_ROUTES = frozenset(
+    {
+        ROUTE_PLAN_EXECUTE,
+        ROUTE_PLAN_REFLECT,
+        ROUTE_PLAN_REVISE,
+        ROUTE_PLAN_REVISE_REFLECT,
+    }
+)
 
 
 class CortexHub:
@@ -144,9 +158,23 @@ class CortexHub:
             intent=blocked_intent,
         )
 
-    async def run_turn_stream(
-        self, user_message: str
-    ) -> AsyncIterator[AgentEvent]:
+    def _persist_execution_result(self, outcome: HubTurnOutcome) -> None:
+        """将 Plan 执行结果摘要写入会话历史，供下轮 ReAct 读取。"""
+        if outcome.route not in _PLAN_EXECUTION_ROUTES:
+            return
+        if not (outcome.deliverable or outcome.delivery_summary):
+            return
+        text = (outcome.final_user_message or outcome.delivery_summary or "").strip()
+        if not text:
+            return
+        self.react.add_message(Message(role=Role.ASSISTANT, content=text))
+        hub_log(
+            "execution result persisted",
+            route=outcome.route,
+            content_len=len(text),
+        )
+
+    async def run_turn_stream(self, user_message: str) -> AsyncIterator[AgentEvent]:
         """处理用户一条输入，透传各阶段事件，末尾产出 HubTurnCompleteEvent。"""
         message = (user_message or "").strip()
         turn_id = uuid.uuid4().hex[:8]
@@ -260,6 +288,7 @@ class CortexHub:
                         revision_rounds=0,
                     )
                     self.last_outcome = outcome
+                    self._persist_execution_result(outcome)
                     yield HubTurnCompleteEvent(
                         route=outcome.route,
                         user_reply=outcome.user_reply,
@@ -302,7 +331,11 @@ class CortexHub:
             route = ROUTE_PLAN_EXECUTE
             revision_rounds = 0
 
-            if self.run_reflection and self.reflection is not None and result is not None:
+            if (
+                self.run_reflection
+                and self.reflection is not None
+                and result is not None
+            ):
                 yield HubPhaseEvent(phase="reflection")
                 async for ev in self._reflection_events(result):
                     yield ev
@@ -379,9 +412,7 @@ class CortexHub:
                             hub_log(
                                 "revision done",
                                 round=revision_rounds,
-                                elapsed_ms=int(
-                                    (time.monotonic() - rev_start) * 1000
-                                ),
+                                elapsed_ms=int((time.monotonic() - rev_start) * 1000),
                                 deliverable_len=len(
                                     (result.deliverable or "") if result else ""
                                 ),
@@ -418,6 +449,7 @@ class CortexHub:
                 revision_rounds=revision_rounds,
             )
             self.last_outcome = outcome
+            self._persist_execution_result(outcome)
             hub_log(
                 "turn complete",
                 route=route,
@@ -565,11 +597,7 @@ def _prior_outputs_from_result(
 ) -> dict[int, str]:
     outputs: dict[int, str] = {}
     for row in result.trace:
-        if (
-            row.step_id not in rerun
-            and row.status == StepStatus.SUCCESS
-            and row.output
-        ):
+        if row.step_id not in rerun and row.status == StepStatus.SUCCESS and row.output:
             outputs[row.step_id] = row.output
     return outputs
 
@@ -580,10 +608,6 @@ def _build_revision_feedback(verdict: ReflectionVerdict) -> str:
         parts.append(verdict.recommendation.strip())
     for i, issue in enumerate(verdict.issues, 1):
         if issue.severity == "error":
-            sid = (
-                f"（步骤 {issue.related_step_ids}）"
-                if issue.related_step_ids
-                else ""
-            )
+            sid = f"（步骤 {issue.related_step_ids}）" if issue.related_step_ids else ""
             parts.append(f"[问题 {i}]{sid} {issue.message}")
     return "\n".join(parts).strip()

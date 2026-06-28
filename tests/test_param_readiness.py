@@ -1,6 +1,7 @@
 import unittest
 
 from agents.plan.models import ExecutionPlan, ExecutionStep
+from tools.param_hints import format_tool_param_hints, params_for_user_clarification
 from tools.param_readiness import (
     check_plan_readiness,
     is_deferred_arg,
@@ -100,6 +101,47 @@ class ParamReadinessTests(unittest.TestCase):
         self.assertEqual(len(verdict.gaps), 1)
         self.assertIn("宠物 ID", verdict.clarify_message)
         self.assertIn("下单", verdict.clarify_message)
+
+    def test_params_for_user_clarification_openapi_empty_required(self) -> None:
+        """OpenAPI required=[] 时仍应提示非可选 body 字段。"""
+        params = {
+            "type": "object",
+            "properties": {
+                "gatedCommunityId": {
+                    "type": "string",
+                    "description": "小区id",
+                },
+                "productId": {
+                    "type": "string",
+                    "description": "产品ID",
+                },
+                "licensePlate": {
+                    "type": ["string", "null"],
+                    "description": "车牌",
+                },
+                "parkingSpot": {
+                    "type": ["string", "null"],
+                    "description": "车位",
+                },
+                "deviceCode": {
+                    "type": ["string", "null"],
+                    "description": "指定钥匙柜设备编号（可选）",
+                },
+            },
+            "required": [],
+        }
+        names = [p[0] for p in params_for_user_clarification(params)]
+        self.assertEqual(
+            names,
+            ["gatedCommunityId", "productId", "licensePlate", "parkingSpot"],
+        )
+        hints = format_tool_param_hints(params)
+        self.assertIn("小区id", hints)
+        self.assertIn("产品ID", hints)
+        self.assertIn("车牌", hints)
+        self.assertIn("车位", hints)
+        self.assertNotIn("deviceCode", hints)
+        self.assertNotIn("可选", hints)
 
 
 if __name__ == "__main__":

@@ -133,9 +133,9 @@ _PLAN_JSON_BLOCK_RE = re.compile(
 PLAN_GENERATION_SYSTEM_TOOLS = """你是灵枢 PlanExecute 的规划助手。根据已澄清的结构化意图与用户消息中的 **MCP 工具目录**，制定可执行的多步计划。
 
 ## 工具来源（必须遵守）
-- 可调用工具由 MCP 从当前接入的 OpenAPI/Swagger **动态加载**；换 API 后工具名、参数、数量都会变。
+- 可调用工具由 MCP 从**当前接入的 API 目录**动态加载；换接入源后工具名、参数、数量都会变。
 - **唯一权威来源**是用户消息里的「当前可用 MCP 工具」列表（含 name / description / parameters）。
-- **禁止**凭训练记忆、历史对话或旧 Swagger 臆造 tool_name；列表里没有的工具只能写入 unfulfillable_steps。
+- **禁止**凭训练记忆、历史对话或旧工具目录臆造 tool_name；列表里没有的工具只能写入 unfulfillable_steps。
 - 选工具时：对照用户意图 ↔ 各工具的 description 与 parameters，自行判断调用哪些、顺序如何、参数从哪来（intent.slots、用户原话、或依赖前序步骤——前序结果由 Execute 提供，Plan 阶段勿写死响应字段路径）。
 
 ## 计划规则
@@ -377,7 +377,7 @@ def _format_tool_catalog(tools: ToolRegistry) -> str:
 
 
 _MCP_CATALOG_PREAMBLE = """\
-下列工具由 MCP 注册表提供（随接入的 Swagger 变化）。规划时只使用此列表中的 name；\
+下列工具由 MCP 注册表提供（随当前接入的 API 目录变化）。规划时只使用此列表中的 name；\
 parameters 即各工具允许的 tool_args 形状。"""
 
 
@@ -681,8 +681,8 @@ class DefaultResultAggregator:
 
 _DEFAULT_SYSTEM = """你是灵枢（Agent Cortex）PlanExecute 规划执行层。
 
-本阶段根据 StructuredIntent 制定计划并按步执行。MCP 模式下工具来自当前接入的 API 注册表（非固定 Swagger）；\
-Plan 与 Execute 均以运行时工具目录为准，不假设具体业务接口名称。"""
+本阶段根据 StructuredIntent 制定计划并按步执行。MCP 模式下工具来自当前运行时注册表（非固定 API）；\
+Plan 与 Execute 均以运行时工具目录为准，不假设具体接口或业务名称。"""
 
 
 class PlanExecuteAgent(Agent):

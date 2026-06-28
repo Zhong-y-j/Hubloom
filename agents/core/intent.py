@@ -45,8 +45,10 @@ class StructuredIntent:
         }
 
     def should_invoke_plan(self) -> bool:
-        """中枢是否应进入 PlanExecute（闲聊等直接结束）。"""
+        """中枢是否应进入 PlanExecute（闲聊、ReAct 已执行完成等直接结束）。"""
         if not self.is_clear:
+            return False
+        if self.slots.get("react_tool_done"):
             return False
         return self.intent not in _NO_PLAN_INTENTS
 
@@ -56,9 +58,10 @@ INTENT_OUTPUT_INSTRUCTION = """
 本轮回复须包含两部分：
 1. **user_reply**：给用户看的自然语言。
    - 对外口径：你是 **Agent Cortex（灵枢）智能助手**，禁止自称「意图澄清专家」或描述内部阶段名（ReAct / PlanExecute 等）。
-   - 闲聊、问候、问「你是谁/能做什么」：`general_chat` + `is_clear=true`；user_reply **必须基于系统提示中「当前可调用工具」与「系统执行能力」（MCP 动态目录）的真实 description** 来介绍能力，可略长，**禁止**编造目录中不存在的能力。
-   - 澄清追问：简洁，只问 1～3 个关键问题。
-   - 任务已清晰、将交执行层：user_reply 只做简要确认，**不要**代写完整合同/长方案/长清单。
+   - 闲聊、问候、问「你是谁/能做什么」：`general_chat` + `is_clear=true`；user_reply **必须基于系统提示中 MCP 工具列表的真实 description** 来介绍能力，可略长，**禁止**编造目录中不存在的能力。
+   - 澄清追问：若任务对应某 MCP 工具，按该工具「需用户提供」**完整**列举尚缺项；**可先调用查询/列表类工具**拉取可选项再让用户选择。`missing` 须与未获得的参数一致。
+   - 本阶段已通过工具完成用户请求：user_reply 展示结果，`slots.react_tool_done=true`，`is_clear=true`。
+   - 多步任务或本阶段未执行：user_reply 简要确认，填 `suggested_tools` / `action_params`，交 Plan 执行。
    - **正文里不要写「user_reply:」这类字段名前缀。**
 2. **intent JSON**：用 ```intent 代码块包裹，供系统路由与执行，格式如下：
 
@@ -76,15 +79,18 @@ INTENT_OUTPUT_INSTRUCTION = """
 意图未澄清时：
 - `is_clear` 必须为 false
 - `missing` 列出仍缺的信息项
-- `user_reply` 只问 1～3 个关键问题，不要执行任务
-- 若已从 [DOCUMENTS] 或工具结果得知主题/项目名称，写入 `slots`（如 subject、project_name），仅对仍缺项列入 `missing`
+- `user_reply` 须让用户知道还缺哪些具体信息，或展示工具查询/执行结果；对应 MCP 工具时按「需用户提供」逐项追问
+- 可先调用列表/查询类 MCP 工具拉取可选项或标识符，再让用户选择；参数未齐时不要调用写操作类工具
+- 若已从 [DOCUMENTS]、工具结果或 [MEMORY] 得知关键 ID/名称，写入 `slots` 与 `action_params`，仅对仍缺项列入 `missing`
 
 意图已澄清时：
 - `is_clear` 为 true
-- `slots` 填入已确认字段；**不要在 user_reply 里写完整交付物**（如完整合同正文、项目长清单），留给 PlanExecute。
+- `slots` 填入已确认字段
+- 本阶段**已直接调用工具完成**：`slots.react_tool_done=true`，user_reply 展示结果，intent 可用 `general_chat`
+- **仍需 Plan 多步执行**：填 `suggested_tools`、`action_params`，勿设 `react_tool_done`
 
-若任务需由「系统执行能力」（MCP 工具）完成，在 slots 中填写：
-- "suggested_tools": ["<工具名>"]   // 必须来自系统提示里「系统执行能力」列表的 name，供 Plan 参考
+若任务需 Plan 编排，在 slots 中填写：
+- "suggested_tools": ["<工具名>"]   // 必须来自系统提示 MCP 工具列表的 name
 - "action_params": {}               // 已从用户或对话中明确的参数（键名须符合该工具 parameters）
 """
 
@@ -93,7 +99,7 @@ INTENT_TYPE_HINTS = """
 - `document_qa`：主要从文档/知识库查事实
 - `general_task`：需调用 MCP 执行能力完成的多步/查询类任务（具体调哪些工具由 Plan 读目录决定）
 - `general_chat`：问候、自我介绍、问产品能力、闲聊（`is_clear=true` 时直接 user_reply，不进 PlanExecute）
-- 其他蛇形名可自拟，但不要绑定某一固定 API 或 Swagger 名称
+- 其他蛇形名可自拟，但不要绑定某一固定 API 目录或业务域名
 """
 
 INTENT_REFORMAT_NUDGE = (
