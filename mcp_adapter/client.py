@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from dataclasses import dataclass
+from tools.tool_result import ToolTransportResult, build_transport_result
 
 
 def _tool_input_schema(tool: Any) -> Dict[str, Any]:
@@ -20,14 +20,73 @@ def _tool_input_schema(tool: Any) -> Dict[str, Any]:
     return dict(raw)
 
 
-class MCPToolClient:
-    """MCP 客户端，通过子进程 stdio 与 MCP Server 通信。
+def _extract_text_content(result: Any) -> str:
+    parts: List[str] = []
+    content = getattr(result, "content", None) or []
+    for item in content:
+        text = getattr(item, "text", None)
+        if isinstance(text, str):
+            parts.append(text)
+        else:
+            parts.append(str(item))
+    return "\n".join(parts).strip()
 
-    Args:
-        command: 启动服务器的命令，例如 ``"npx"`` 或 ``"python"``
-        args: 命令参数，例如 ``["-y", "@modelcontextprotocol/server-github"]``
-        env: 可选的环境变量字典
-    """
+
+def _parse_call_tool_result(
+    result: Any,
+    *,
+    tool_name: str,
+    arguments: Dict[str, Any],
+) -> ToolTransportResult:
+    if getattr(result, "isError", False):
+        err_text = _extract_text_content(result)
+        return build_transport_result(
+            tool_name=tool_name,
+            arguments=arguments,
+            transport_ok=False,
+            error=err_text or f"Tool {tool_name!r} returned MCP error",
+        )
+
+    http_status: int | None = None
+    http_reason: str | None = None
+    body = ""
+
+    structured = getattr(result, "structuredContent", None)
+    if isinstance(structured, dict):
+        if "_http_status" in structured:
+            try:
+                http_status = int(structured["_http_status"])
+            except (TypeError, ValueError):
+                http_status = None
+        if isinstance(structured.get("_http_reason"), str):
+            http_reason = structured["_http_reason"]
+        payload = {
+            k: v
+            for k, v in structured.items()
+            if k not in {"_http_status", "_http_reason"}
+        }
+        if payload:
+            import json
+
+            body = json.dumps(payload, ensure_ascii=False)
+        elif http_status is not None:
+            body = ""
+
+    if not body:
+        body = _extract_text_content(result)
+
+    return build_transport_result(
+        tool_name=tool_name,
+        arguments=arguments,
+        transport_ok=True,
+        http_status=http_status,
+        http_reason=http_reason,
+        body=body,
+    )
+
+
+class MCPToolClient:
+    """MCP 客户端，通过子进程 stdio 与 MCP Server 通信。"""
 
     def __init__(
         self,
@@ -48,12 +107,6 @@ class MCPToolClient:
         self._exit_stack: Optional[AsyncExitStack] = None
 
     async def connect(self):
-        """启动子进程并建立 MCP 会话。
-
-        必须在**同一个** ``asyncio`` 事件循环里完成后续的 ``list_tools`` / ``execute_tool`` /
-        ``close``（例如包在一次 ``asyncio.run(main())`` 里）。不要多次调用 ``asyncio.run``，
-        否则 AnyIO 的 cancel scope 会报 *different task* / ``ClosedResourceError``。
-        """
         if self._exit_stack is not None:
             raise RuntimeError("MCPToolClient is already connected.")
 
@@ -73,18 +126,12 @@ class MCPToolClient:
         self._session = session
 
     async def close(self):
-        """关闭会话并终止子进程（逆序退出 Session → stdio TaskGroup）。"""
         if self._exit_stack is not None:
             await self._exit_stack.__aexit__(None, None, None)
             self._exit_stack = None
         self._session = None
 
     async def list_tools(self) -> List[Dict[str, Any]]:
-        """获取服务器提供的工具列表。
-
-        Returns:
-            list[dict]: 每个工具包含 ``name``, ``description``, ``parameters`` (JSON Schema)
-        """
         if not self._session:
             raise RuntimeError("MCP client not connected. Call connect() first.")
 
@@ -102,16 +149,10 @@ class MCPToolClient:
             )
         return tools
 
-    async def execute_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """调用服务器上的指定工具。
-
-        Args:
-            tool_name: 工具名称
-            arguments: 工具参数字典
-
-        Returns:
-            工具执行结果（字符串格式）
-        """
+    async def execute_tool(
+        self, tool_name: str, arguments: Dict[str, Any]
+    ) -> ToolTransportResult:
+        """调用 MCP 工具，返回传输层结果（含 HTTP 状态与 body）。"""
         if not self._session:
             raise RuntimeError("MCP client not connected. Call connect() first.")
 
@@ -119,17 +160,15 @@ class MCPToolClient:
             self._session.call_tool(tool_name, arguments),
             timeout=self.timeout,
         )
-        # 将返回内容拼接为字符串（主要为 TextContent）
-        if hasattr(result, "content") and result.content:
-            parts: List[str] = []
-            for item in result.content:
-                text = getattr(item, "text", None)
-                if isinstance(text, str):
-                    parts.append(text)
-                else:
-                    parts.append(str(item))
-            return "\n".join(parts)
-        return str(result)
+        return _parse_call_tool_result(
+            result, tool_name=tool_name, arguments=arguments
+        )
+
+    async def execute_tool_text(
+        self, tool_name: str, arguments: Dict[str, Any]
+    ) -> str:
+        """兼容旧接口：返回供 LLM 解读的 JSON 文本。"""
+        return (await self.execute_tool(tool_name, arguments)).to_llm_text()
 
 
 if __name__ == "__main__":
@@ -149,20 +188,8 @@ if __name__ == "__main__":
             tools = await client.list_tools()
             print(f"发现 {len(tools)} 个工具:", [t["name"] for t in tools])
             print()
-
-            # 1) 无参：日期
-            demo_tool = "getInventory"
-            out = await client.execute_tool(demo_tool, {})
-            print(out)
-
-            # # 2) 换一个接口：列出某城市下所有火车站及 station_code
-            # demo2 = "get-stations-code-in-city"
-            # out2 = await client.execute_tool(demo2, {"city": "杭州"})
-            # print()
-            # print(f"--- call_tool({demo2!r}, {{'city': '杭州'}}) ---")
-            # text2 = out2 if len(out2) <= 3000 else out2[:3000] + "\n... [截断]"
-            # print(text2)
-
+            out = await client.execute_tool("getInventory", {})
+            print(out.to_llm_text())
         finally:
             await client.close()
 

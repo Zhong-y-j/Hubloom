@@ -14,10 +14,7 @@ def _filter_args(parameters: Dict[str, Any], kwargs: Dict[str, Any]) -> Dict[str
 
 
 class MCPTool(BaseTool):
-    """一个代理工具，代表远程 MCP Server 上的一个具体工具。
-
-    对 Agent 而言，它和本地工具完全一样。
-    """
+    """一个代理工具，代表远程 MCP Server 上的一个具体工具。"""
 
     def __init__(
         self,
@@ -32,6 +29,9 @@ class MCPTool(BaseTool):
         self._client = client
 
     async def execute(self, **kwargs: Any) -> str:
-        """执行远程工具调用，将参数传递给 MCP Server。"""
+        """执行远程工具；返回传输层 JSON 文本，业务语义由 LLM 解读。"""
         payload = _filter_args(self.parameters, kwargs)
-        return await self._client.execute_tool(self.name, payload)
+        result = await self._client.execute_tool(self.name, payload)
+        if not result.transport_ok:
+            raise RuntimeError(result.error or "MCP 工具调用失败")
+        return result.to_llm_text()

@@ -11,9 +11,11 @@ from agents.core.intent import StructuredIntent
 _DELIVERABLE_SUMMARY_SYSTEM = """你是灵枢的用户回复助手。将 PlanExecute 的原始交付物改写为**面向终端用户的自然语言摘要**。
 
 规则：
+- 交付物可能是「传输层 JSON」：含 transport_ok、http_status、body、note 等字段
+  - transport_ok=true 且 body 有内容：根据 body 回答用户，并判断业务是否成功（如 success/code/message）
+  - transport_ok=true 且 body 为空：结合 http_status（如 204）与用户问题，给出合理结论（删除类操作 204 通常表示成功）
+  - transport_ok=false：说明调用失败原因，不要假装成功
 - 使用清晰、友好的中文，直接回答用户问题
-- 若交付物是 JSON / API 数据：提取关键数字与结论，忽略明显测试噪音（如 PreConditionStatus XXXX、invalid-status 等）
-- 若交付物是长文档：给出结构化要点摘要，不要全文复述
 - 不要提及 PlanExecute、MCP、工具名、JSON、API 等内部实现细节
 - 不要重复用户已经看到的确认语或寒暄
 - 只输出摘要正文，不要 markdown 代码块、不要字段名前缀"""

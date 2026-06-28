@@ -632,9 +632,14 @@ class DefaultResultAggregator:
         _ = intent, plan
         parts: list[str] = []
         for row in sorted(trace, key=lambda t: t.step_id):
-            if row.status != StepStatus.SUCCESS or not row.output:
+            if row.status != StepStatus.SUCCESS:
                 continue
-            parts.append(f"## 步骤 {row.step_id}\n{row.output}")
+            body = (row.output or "").strip()
+            if not body:
+                body = (row.task_description or "").strip()
+            if not body:
+                body = f"步骤 {row.step_id} 已完成"
+            parts.append(f"## 步骤 {row.step_id}\n{body}")
         if parts:
             return "\n\n".join(parts)
         failed = [t for t in trace if t.status == StepStatus.FAILED]
