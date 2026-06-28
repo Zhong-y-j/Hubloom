@@ -40,6 +40,7 @@ from agents.plan.models import (
 from agents.plan.step_args import resolve_step_tool_args_with_llm
 from tools.param_readiness import check_plan_readiness
 from tools.registry import ToolRegistry
+from tools.transport_errors import is_retryable_tool_error
 from tools.runner import ToolRunner
 
 
@@ -636,7 +637,7 @@ def expand_rerun_step_ids(plan: ExecutionPlan, step_ids: list[int]) -> set[int]:
 
 
 class DefaultResultAggregator:
-    """按步骤顺序拼接成功步骤的 output。"""
+    """按步骤顺序拼接成功与失败步骤产出（部分成功时须包含失败原因）。"""
 
     async def aggregate(
         self,
@@ -646,23 +647,35 @@ class DefaultResultAggregator:
         trace: list[ExecutionStepTrace],
     ) -> str:
         _ = intent, plan
+        from tools.transport_errors import format_step_failure
+
+        if not trace:
+            return "（暂无执行产出，请检查工具调用或 StepDelegate 配置）"
+
         parts: list[str] = []
         for row in sorted(trace, key=lambda t: t.step_id):
-            if row.status != StepStatus.SUCCESS:
-                continue
-            body = (row.output or "").strip()
-            if not body:
-                body = (row.task_description or "").strip()
-            if not body:
-                body = f"步骤 {row.step_id} 已完成"
-            parts.append(f"## 步骤 {row.step_id}\n{body}")
+            if row.status == StepStatus.SUCCESS:
+                body = (row.output or "").strip()
+                if not body:
+                    body = (row.task_description or "").strip()
+                if not body:
+                    body = f"步骤 {row.step_id} 已完成"
+                parts.append(f"## 步骤 {row.step_id} · 成功\n{body}")
+            elif row.status == StepStatus.FAILED:
+                err = format_step_failure(
+                    row.error or "工具执行失败",
+                    tool_name=row.tool_name or "",
+                )
+                parts.append(f"## 步骤 {row.step_id} · 失败\n{err}")
+            elif row.status == StepStatus.SKIPPED:
+                parts.append(
+                    f"## 步骤 {row.step_id} · 跳过\n"
+                    f"{(row.error or '依赖未满足').strip()}"
+                )
+
         if parts:
             return "\n\n".join(parts)
-        failed = [t for t in trace if t.status == StepStatus.FAILED]
-        if failed:
-            return "任务未能完成。失败步骤：" + ", ".join(
-                str(t.step_id) for t in failed
-            )
+
         return "（暂无执行产出，请检查工具调用或 StepDelegate 配置）"
 
 
@@ -1204,6 +1217,14 @@ class PlanExecuteAgent(Agent):
             )
             if not is_err:
                 return last_text, False
+            if not is_retryable_tool_error(last_text):
+                plan_log(
+                    "tool step no retry",
+                    step_id=step.step_id,
+                    reason="non_retryable",
+                    error=clip(last_text, 120),
+                )
+                return last_text, True
             if attempt + 1 < attempts:
                 plan_log(
                     "tool step retry",

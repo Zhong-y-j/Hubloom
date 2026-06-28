@@ -15,6 +15,7 @@ _DELIVERABLE_SUMMARY_SYSTEM = """你是灵枢的用户回复助手。将 PlanExe
   - transport_ok=true 且 body 有内容：根据 body 回答用户，并判断业务是否成功（如 success/code/message）
   - transport_ok=true 且 body 为空：结合 http_status（如 204）与用户问题，给出合理结论（删除类操作 204 通常表示成功）
   - transport_ok=false：说明调用失败原因，不要假装成功
+- 多步任务若部分成功、部分失败：必须分别说明成功项与失败项；失败项优先引用 API 返回的 message，不要建议用户继续执行已失败的操作
 - 使用清晰、友好的中文，直接回答用户问题
 - 不要提及 PlanExecute、MCP、具体工具名、JSON、内部 API 路径等实现细节（用业务语言描述结果即可）
 - 不要重复用户已经看到的确认语或寒暄
@@ -74,12 +75,12 @@ class ReplyComposer:
         deliverable_summary: str = "",
         reflection_summary: str | None = None,
     ) -> str:
-        """组合 ReAct 确认语、Reflection 总评、交付物自然语言摘要。"""
+        """组合最终用户可见回复（当前仅输出交付物摘要）。"""
         parts: list[str] = []
-        if (user_reply or "").strip():
-            parts.append(user_reply.strip())
-        if (reflection_summary or "").strip():
-            parts.append(reflection_summary.strip())
+        # if (user_reply or "").strip():
+        #     parts.append(user_reply.strip())
+        # if (reflection_summary or "").strip():
+        #     parts.append(reflection_summary.strip())
         if (deliverable_summary or "").strip():
             parts.append(deliverable_summary.strip())
         return "\n\n".join(parts)
@@ -103,4 +104,6 @@ class ReplyComposer:
             deliverable_summary=delivery_summary,
             reflection_summary=reflection_summary,
         )
+        if not final.strip():
+            final = (user_reply or "").strip()
         return delivery_summary, final

@@ -21,6 +21,7 @@ from agents.core.events import (
 from agents.plan.models import ExecutionResult, ExecutionStepTrace, StepStatus
 from agents.core.agent_log import clip, reflection_log
 from agents.reflection.models import ReflectionIssue, ReflectionVerdict
+from tools.transport_errors import extract_business_message, is_retryable_tool_error
 
 _REFLECTION_JSON_BLOCK_RE = re.compile(
     r"```(?:json|reflection)?\s*\n(.*?)\n```",
@@ -160,10 +161,29 @@ def _rule_based_verdict(result: ExecutionResult) -> ReflectionVerdict | None:
         )
 
     if result.partial_success or issues:
-        rec = "建议 Hub 重跑失败/跳过的步骤，或整段 PlanExecute 后再审查。"
+        non_retryable = [
+            row
+            for row in result.trace
+            if row.status == StepStatus.FAILED
+            and not is_retryable_tool_error(row.error or "")
+        ]
+        if non_retryable:
+            msgs = []
+            for row in non_retryable:
+                biz = extract_business_message(row.error or "")
+                if biz:
+                    msgs.append(biz)
+            detail = "；".join(dict.fromkeys(msgs)) if msgs else ""
+            rec = "失败步骤为 API 明确拒绝（业务规则/权限等），请向用户如实说明原因，勿重试相同工具调用。"
+            summary = "执行部分成功，但存在不可通过重试修复的失败步骤。"
+            if detail:
+                summary = f"{summary} {detail}"
+        else:
+            rec = "建议 Hub 重跑失败/跳过的步骤，或整段 PlanExecute 后再审查。"
+            summary = "执行未完全成功，未进入 LLM 深度审查。"
         return ReflectionVerdict(
             passed=False,
-            summary="执行未完全成功，未进入 LLM 深度审查。",
+            summary=summary,
             issues=issues,
             recommendation=rec,
             review_report="",

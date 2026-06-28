@@ -35,6 +35,7 @@ from agents.plan.models import ExecutionResult, StepStatus
 from agents.react.agent import ReActAgent
 from agents.reflection.agent import ReflectionAgent
 from agents.reflection.models import ReflectionVerdict
+from tools.transport_errors import is_retryable_tool_error
 
 
 class CortexHub:
@@ -319,68 +320,91 @@ class CortexHub:
                     and self.max_revision_rounds > 0
                     and result.plan is not None
                 ):
-                    for _ in range(self.max_revision_rounds):
-                        revision_rounds += 1
-                        step_ids = _collect_rerun_step_ids(verdict, result)
-                        rerun_set = expand_rerun_step_ids(result.plan, step_ids)
+                    step_ids = _collect_rerun_step_ids(verdict, result)
+                    retryable_ids = _filter_retryable_rerun_ids(result, step_ids)
+                    if not retryable_ids:
                         hub_log(
-                            "revision start",
-                            round=revision_rounds,
-                            rerun_step_ids=sorted(rerun_set),
+                            "revision skipped",
+                            reason="non_retryable_failures",
+                            step_ids=step_ids,
                         )
-                        yield HubPhaseEvent(phase="revision")
-                        revised: ExecutionResult | None = None
-                        rev_start = time.monotonic()
-                        async for ev in self._run_revision_pipeline(
-                            intent, result, verdict
-                        ):
-                            yield ev
-                            if isinstance(ev, PlanReadinessBlockedEvent):
-                                outcome = self._outcome_from_readiness_block(
-                                    intent,
-                                    clarify_message=ev.clarify_message,
-                                    verdict=ev.verdict,
-                                )
-                                self.last_outcome = outcome
-                                yield HubTurnCompleteEvent(
-                                    route=outcome.route,
-                                    user_reply=outcome.user_reply,
-                                    final_user_message=outcome.final_user_message,
-                                    intent=outcome.intent,
-                                )
-                                return
-                            if isinstance(ev, ExecutionResultEvent):
-                                revised = ev.result
-                            if isinstance(ev, ErrorEvent):
-                                hub_log(
-                                    "revision error",
-                                    round=revision_rounds,
-                                    error=ev.error,
-                                )
+                    else:
+                        for _ in range(self.max_revision_rounds):
+                            revision_rounds += 1
+                            rerun_set = expand_rerun_step_ids(
+                                result.plan, retryable_ids
+                            )
+                            hub_log(
+                                "revision start",
+                                round=revision_rounds,
+                                rerun_step_ids=sorted(rerun_set),
+                            )
+                            yield HubPhaseEvent(phase="revision")
+                            revised: ExecutionResult | None = None
+                            rev_start = time.monotonic()
+                            async for ev in self._run_revision_pipeline(
+                                intent,
+                                result,
+                                verdict,
+                                rerun_step_ids=sorted(rerun_set),
+                            ):
+                                yield ev
+                                if isinstance(ev, PlanReadinessBlockedEvent):
+                                    outcome = self._outcome_from_readiness_block(
+                                        intent,
+                                        clarify_message=ev.clarify_message,
+                                        verdict=ev.verdict,
+                                    )
+                                    self.last_outcome = outcome
+                                    yield HubTurnCompleteEvent(
+                                        route=outcome.route,
+                                        user_reply=outcome.user_reply,
+                                        final_user_message=outcome.final_user_message,
+                                        intent=outcome.intent,
+                                    )
+                                    return
+                                if isinstance(ev, ExecutionResultEvent):
+                                    revised = ev.result
+                                if isinstance(ev, ErrorEvent):
+                                    hub_log(
+                                        "revision error",
+                                        round=revision_rounds,
+                                        error=ev.error,
+                                    )
+                                    break
+                            if revised is None:
+                                revised = self.plan_execute.get_last_result()
+                            if revised is not None:
+                                result = revised
+                            hub_log(
+                                "revision done",
+                                round=revision_rounds,
+                                elapsed_ms=int(
+                                    (time.monotonic() - rev_start) * 1000
+                                ),
+                                deliverable_len=len(
+                                    (result.deliverable or "") if result else ""
+                                ),
+                            )
+                            yield HubPhaseEvent(phase="reflection")
+                            async for ev in self._reflection_events(result):
+                                yield ev
+                            verdict = self.reflection.get_last_verdict()
+                            hub_log(
+                                "reflection after revision",
+                                round=revision_rounds,
+                                passed=verdict.passed if verdict else None,
+                            )
+                            if verdict is not None and verdict.passed:
+                                route = ROUTE_PLAN_REVISE_REFLECT
                                 break
-                        if revised is None:
-                            revised = self.plan_execute.get_last_result()
-                        if revised is not None:
-                            result = revised
-                        hub_log(
-                            "revision done",
-                            round=revision_rounds,
-                            elapsed_ms=int((time.monotonic() - rev_start) * 1000),
-                            deliverable_len=len((result.deliverable or "") if result else ""),
-                        )
-
-                        yield HubPhaseEvent(phase="reflection")
-                        async for ev in self._reflection_events(result):
-                            yield ev
-                        verdict = self.reflection.get_last_verdict()
-                        route = ROUTE_PLAN_REVISE_REFLECT
-                        hub_log(
-                            "reflection after revision",
-                            round=revision_rounds,
-                            passed=verdict.passed if verdict else None,
-                        )
-                        if verdict is not None and verdict.passed:
-                            break
+                            route = ROUTE_PLAN_REVISE_REFLECT
+                            step_ids = _collect_rerun_step_ids(verdict, result)
+                            retryable_ids = _filter_retryable_rerun_ids(
+                                result, step_ids
+                            )
+                            if not retryable_ids:
+                                break
 
             if revision_rounds > 0 and route == ROUTE_PLAN_REFLECT:
                 route = ROUTE_PLAN_REVISE
@@ -465,6 +489,8 @@ class CortexHub:
         intent: StructuredIntent,
         prior: ExecutionResult,
         verdict: ReflectionVerdict,
+        *,
+        rerun_step_ids: list[int] | None = None,
     ) -> AsyncIterator[AgentEvent]:
         """按 Reflection 结论修订重跑部分步骤。"""
         plan = prior.plan
@@ -472,9 +498,13 @@ class CortexHub:
             yield ErrorEvent(error="修订重跑需要 ExecutionResult.plan")
             return
 
-        step_ids = _collect_rerun_step_ids(verdict, prior)
+        if rerun_step_ids is not None:
+            step_ids = list(rerun_step_ids)
+        else:
+            step_ids = _collect_rerun_step_ids(verdict, prior)
+            step_ids = _filter_retryable_rerun_ids(prior, step_ids)
         if not step_ids:
-            yield ErrorEvent(error="无法确定需重跑的步骤")
+            yield ErrorEvent(error="无可重跑的步骤（失败原因不可通过重试修复）")
             return
 
         rerun_set = expand_rerun_step_ids(plan, step_ids)
@@ -512,6 +542,22 @@ def _collect_rerun_step_ids(
     if not ids and result.plan and result.plan.steps:
         ids.add(max(s.step_id for s in result.plan.steps))
     return sorted(ids)
+
+
+def _filter_retryable_rerun_ids(
+    result: ExecutionResult, step_ids: list[int]
+) -> list[int]:
+    """剔除 API 明确拒绝（403/404 等）的失败步骤，避免无意义重试。"""
+    trace_by_id = {row.step_id: row for row in result.trace}
+    filtered: list[int] = []
+    for sid in step_ids:
+        row = trace_by_id.get(sid)
+        if row is None or row.status != StepStatus.FAILED:
+            filtered.append(sid)
+            continue
+        if is_retryable_tool_error(row.error or ""):
+            filtered.append(sid)
+    return filtered
 
 
 def _prior_outputs_from_result(
