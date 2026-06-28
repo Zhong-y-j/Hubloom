@@ -1,177 +1,176 @@
-# Agent Cortex (灵枢) 开发设计文档
+# Agent Cortex（灵枢）
 
-## 一、项目背景与定位
+**OpenAPI 驱动的 MCP 智能体中枢** — 传入 Swagger/OpenAPI，启动 MCP 服务，通过对话调用后端 API，为用户提供自然语言智能服务。
 
-**Agent Cortex**，中文名**灵枢**，是一个承上启下的智能体中枢调度系统。它并非一个具体的数字人或单一Agent，而是位于用户与众多专业Agent之间的“大脑皮层”，承担着理解意图、拆解任务、调度Agent、审查结果的核心职责。
+中文名 **灵枢**：位于用户与业务 API 之间的调度层，负责理解意图、调用工具、汇总结果。默认以 **ReAct + MCP** 为主路径；复杂多步编排（Plan / Reflection）作为可选进阶能力保留在仓库中。
 
-在未来，每个人都会拥有自己的个人Agent，每个App也会开放自己的专属Agent。然而，当多个Agent共存时，用户将面临一个关键问题：**由谁来协调它们？** 灵枢正是为了解决这一核心矛盾而生。
-
-**核心定位**：
-
-- **向上**：对接用户，理解模糊的自然语言需求，统一汇报结果。
-- **向下**：管理并调度多个专业Agent，动态插拔，按需分配任务。
-- **对外**：通过标准协议（A2A/ANP）接入外部系统与第三方Agent，构建开放生态。
+> 详细设计与演进路线见 [`设计思路.md`](设计思路.md)。
 
 ---
 
-## 二、总体架构设计
+## 特性
 
-灵枢采用三层架构，职责分明：
+- **Swagger → MCP**：基于 [FastMCP](https://github.com/PrefectHQ/fastmcp) 从 OpenAPI/Swagger 动态生成 MCP 工具，换 API 只需改环境变量
+- **ReAct 主路径**：澄清需求、查询列表、调用写接口、解释业务错误（403/400 等），均在 ReAct 工具循环内完成
+- **Hub 轻量编排**：路由、多轮会话、执行结果写入对话历史
+- **通用 MCP 设计**：工具目录、参数提示、Plan 提示词均来自运行时 schema，不绑定某一固定业务或 Swagger
+- **可选能力**：PlanExecute（多步计划与 Gate B 校验）、Reflection（审查与修订重跑）、Memory / RAG（env 配置启用）
+
+---
+
+## 架构概览
 
 ```
-用户交互层
-    │
-    ▼
-灵枢中枢（Agent Cortex）
-  ├─ 意图澄清 (ReAct)
-  ├─ 任务规划与分发 (PlanExecute)
-  └─ 质量审查 (Reflection)
-    │
-    ▼
-专业Agent层（编程、法律、金融、设计...）
-    │
-    ▼
-外部系统与第三方Agent
+用户
+  │
+  ▼
+Hub（路由 · 会话 · 回复汇总）
+  │
+  ▼
+ReAct（默认）────── MCP Server ← OpenAPI / Swagger
+  │                      │
+  │                      ▼
+  │                 业务 REST API
+  │
+  └─► [可选] Plan → Execute → Reflection
 ```
 
-- **用户交互层**：接收用户的自然语言、API调用或其他集成入口。
-- **灵枢中枢**：核心调度层，内置三个范式，分别负责理解、执行、审查。
-- **专业Agent层**：遵循统一接口的可插拔Agent，可以是本地服务，也可以通过A2A协议接入的远程服务。
-- **外部系统**：企业后台CRM、ERP等，通过标准化协议接入。
+| 模块 | 默认 | 说明 |
+|------|------|------|
+| **ReAct** | ✅ 启用 | 流式 LLM + MCP 工具循环，日常对话与 API 调用 |
+| **Hub** | ✅ 启用 | `clarify_only` / `direct_reply` /（可选）`plan_execute` |
+| **Plan + Execute** | 按需 | 显式多步编排、步骤依赖、组参、执行前缺参拦截 |
+| **Reflection** | 按需 | 审查 deliverable，支持修订重跑 |
+| **Memory / RAG** | 按需 | 长期记忆、知识库检索（需配置 Neo4j / Qdrant 等） |
+
+**推荐用法**：开源快速体验与多数业务场景使用 **ReAct + Hub + MCP** 即可；当任务固定为多步流水线、需要 step trace 或自动补跑时，再启用 Plan / Reflection。
 
 ---
 
-## 三、中枢内部业务逻辑详解
+## 快速开始
 
-中枢是灵枢的大脑，其工作流程严格遵循 **ReAct → PlanExecute → Reflection** 的顺序，并在必要时形成反馈闭环。
+### 环境要求
 
-### 3.1 第一阶段：ReAct（意图澄清）— 当前实现
+- Python 3.12+
+- [uv](https://github.com/astral-sh/uv)（推荐）或 pip
 
-**业务场景**：用户的初始输入往往是模糊、不完整的。中枢不能直接跳转到任务分发，而必须先澄清真实需求。
+### 1. 安装依赖
 
-**当前实现**（`agents/ReActAgent`）：
+```bash
+uv sync
+```
 
-- **定位**：意图澄清专家，**不**在本阶段完成完整交付（合同正文、长方案等）
-- **输入**：用户本轮 query + 预取的 `[MEMORY]` / `[GRAPH]` / `[DOCUMENTS]` + 会话历史
-- **过程**：流式 ReAct；仅允许只读 Tool（`search_documents`、`search_memory`）
-- **输出**：`StructuredIntent`（`` ```intent` JSON ``）+ 简短 `user_reply`
-- **记忆**：回合结束 `MemoryConsolidator` 提炼写入 episodic/semantic/associative + `link_memory`
-- **Handoff**：`agent.get_last_intent()` → Hub 决定继续澄清 / 直接回复 / PlanExecute
+### 2. 配置环境变量
 
-详细设计见 [`设计思路.md`](设计思路.md) **第五篇**。
+在项目根目录创建 `.env`（或通过 shell 导出）：
 
-**输入**：用户原始输入（可能包含歧义、缺失信息）。  
-**输出**：结构化意图，例如 `{ "is_clear": true, "intent": "contract_drafting", "slots": {...}, "summary": "..." }`。
+```bash
+# LLM（OpenAI 兼容）
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=          # 可选，兼容 API 网关
+OPENAI_MODEL=             # 可选
 
-### 3.2 第二阶段：PlanExecute（任务规划与分发）
+# MCP：指向你的 OpenAPI / Swagger
+MCP_SWAGGER_URL=https://your-api.example.com/swagger/v1/swagger.json
+MCP_BASE_URL=https://your-api.example.com   # spec 未声明 servers 时必填
+MCP_TOKEN=                                  # 可选，作为 Bearer 调用下游 API
 
-**业务场景**：意图明确后，中枢需要将复杂任务拆解为多个子任务，并匹配合适的专业Agent来执行。例如，一份软件开发合同可能需要编程Agent撰写技术规格，法律Agent负责法律条款。
+# 日志（可选）
+CORTEX_AGENT_LOG=1
+CORTEX_LOG_FILE=logs/debug.log
+```
 
-**核心职责**：
+未配置 `MCP_SWAGGER_URL` 时，MCP 子进程会回退到 Petstore 示例 spec。
 
-- 分析结构化意图，制定执行计划（先做什么，后做什么，哪些可以并行）。
-- 从Agent注册表中查找具备相应能力的专业Agent。
-- 按计划顺序或并行地分发任务，并收集各Agent的执行结果。
-- 汇总所有结果，形成完整的交付物。
+### 3. 启动对话 REPL
 
-**工作模式**：
-PlanExecute（先计划后执行）是该阶段的最佳范式。它先一次性生成完整的执行步骤（计划），然后严格按计划逐步执行，确保流程有序、结果可追溯。
+```bash
+PYTHONPATH=. uv run python main.py
+```
 
-**Agent匹配机制**：中枢维护一个Agent注册表，每个专业Agent注册时会声明自己的“能力标签”和“自然语言描述”。PlanExecute通过语义理解或规则匹配，找到最适合处理当前子任务的Agent。
+同一 `session_id` 下 ReAct 会加载上一轮对话历史；Plan 执行完成的摘要也会写入会话存储（若已配置 `data/memory.db`）。
 
-**输入**：ReAct阶段输出的明确意图。
-**输出**：汇总后的任务执行结果（例如，一份完整的合同草案）。
+### 4. 运行测试
 
-### 3.3 第三阶段：Reflection（质量审查）
-
-**业务场景**：PlanExecute汇总的结果可能存在错误或矛盾。例如，编程Agent写的交付时间与技术规格中不符，法律条款与用户需求不一致。直接返回给用户会降低信任度，甚至造成损失。
-
-**核心职责**：
-
-- 检查汇总结果内部的一致性、完整性和逻辑漏洞。
-- 验证结果是否符合原始意图和用户要求。
-- 若发现问题，输出具体的修改意见，并触发反馈闭环。
-
-**工作模式**：
-Reflection（反思-修正）是该阶段的理想范式。它会对PlanExecute的输出进行“批判性审查”，生成审查报告。如果审查通过，结果直接返回用户；如果不通过，则指出问题，交由PlanExecute重新分发修正（例如，退回给对应的专业Agent修改）。
-
-**输入**：PlanExecute汇总的执行结果。
-**输出**：`{“通过”: true}` 或 `{“通过”: false, “问题”: [“付款条款与交付时间不一致”]}`。
-
-### 3.4 反馈闭环
-
-当Reflection发现问题时，中枢不会简单地向用户报告错误，而是启动反馈闭环：
-
-1. Reflection将问题列表反馈给PlanExecute。
-2. PlanExecute分析问题，决定是退回给哪个专业Agent修改，还是需要补充新的Agent。
-3. 修正后再次进入Reflection审查，直至通过。
-
-这个闭环确保了中枢输出的高质量和可靠性。
+```bash
+uv run python -m unittest tests.test_param_readiness tests.test_transport_errors -v
+```
 
 ---
 
-## 四、Agent注册与发现
+## 工作流程（默认 ReAct 路径）
 
-**业务需求**：灵枢需要管理多种专业Agent，并能动态添加或移除Agent。Agent可能来自本地，也可能来自远程（通过A2A）。
+1. 用户输入自然语言需求
+2. **ReAct** 结合 MCP 工具目录（name / description / parameters）澄清或调用 API
+3. 读操作（列表、详情）优先用于补全 ID 与可选项；写操作在参数齐备且用户确认后调用
+4. **Hub** 输出 `direct_reply` 或 `clarify_only`，将结果展示给用户
+5. 多轮对话从 SQLite 会话历史继续
 
-**设计思路**：
-
-- **统一接口**：所有专业Agent必须实现标准接口，包含唯一标识、能力标签、自然语言描述、执行方法和健康检查。
-- **注册中心**：中枢内部维护一个Agent注册表（Agent Registry），记录所有在线Agent的信息。
-- **动态插拔**：Agent启动时向中枢注册，注销时从中枢移除。中枢实时感知Agent的在线/离线状态。
-- **能力匹配**：PlanExecute阶段根据任务的语义，从注册表中选择最匹配的Agent。匹配方式支持基于标签的精确匹配和基于自然语言描述的语义匹配。
-
-**未来扩展**：当Agent生态扩大，需要跨平台协作时，可引入A2A协议。此时，Agent Registry不仅管理本地Agent，还能通过Agent Card发现远程Agent，实现更广泛的协作网络。
+当 ReAct 输出 `general_task` 且未标记 `react_tool_done` 时，Hub 会进入 **Plan → Execute →（可选）Reflection** 管线（当前实测中多数任务在 ReAct 内即可完成）。
 
 ---
 
-## 五、上下文与记忆系统在中枢的应用
+## 项目结构（摘要）
 
-**业务需求**：用户与灵枢的交互往往是多轮、跨任务的。中枢需要记住之前的对话上下文、用户的偏好和历史的决策，才能提供连贯、个性化的服务。
-
-**设计思路**：
-灵枢将深度集成你已有的记忆与上下文工程模块：
-
-- **短期记忆（ConversationStore）**：存储当前会话的对话历史，使中枢能够理解多轮交互的上下文。
-- **长期记忆（MemoryManager）**：记录用户的偏好、历史任务、专业Agent的表现等，形成持续积累的知识库。
-- **上下文组装（ContextAssembler）**：在每次调用LLM（大语言模型）前，自动从记忆系统中检索相关信息，注入到提示词中。这确保了中枢在意图澄清、任务规划和结果审查时，都能基于完整的背景信息做出决策。
-
-**应用场景**：
-
-- 用户说“继续上次的合同”，中枢能从长期记忆中调取上次的任务状态，无缝衔接。
-- PlanExecute在匹配Agent时，可参考该Agent的历史执行成功率，优化调度策略。
-- Reflection审查时，可对比历史相似任务的审查记录，提高问题发现的准确性。
-
----
-
-## 六、与外部Agent的通信
-
-**业务需求**：专业Agent可能不是中枢的本地组件，而是部署在远程、甚至由第三方开发的服务。中枢需要一种标准化的方式与它们交互。
-
-**设计思路**：
-
-- **MVP阶段**：专业Agent以本地服务的形式运行，通过统一的API接口（如HTTP）与中枢通信。中枢通过Agent Registry直接调用。
-- **V2阶段（A2A）**：引入Agent-to-Agent协议。每个专业Agent作为一个独立服务，对外暴露标准的Agent Card（能力名片）。中枢通过A2A Client发现并调用这些服务，实现去中心化的协作。
-- **V3阶段（ANP）**：对外开放，允许第三方Agent通过ANP协议接入灵枢生态，真正实现“万物互联”。
-
-**当前重点**：在MVP阶段，我们聚焦于中枢内部逻辑的验证，专业Agent以本地直连方式运行即可。A2A的标准化接入将在核心链路跑通后逐步集成。
+```
+agents/
+  react/          # ReAct 意图澄清 + MCP 工具循环（默认执行引擎）
+  hub/            # 中枢路由与回复组合
+  plan/           # [可选] PlanExecute、组参、Gate B
+  reflection/     # [可选] 质量审查与修订建议
+  app/bootstrap.py
+mcp_adapter/      # OpenAPI → MCP 子进程（FastMCP）
+tools/            # ToolRegistry、param_hints、transport_errors
+memory/           # 会话存储、长期记忆（可选）
+retrieval/        # 知识库 RAG（可选）
+main.py           # Hub REPL 入口
+```
 
 ---
 
-## 七、MVP实施计划
+## 配置说明
 
-**目标**：跑通“用户 → 灵枢中枢 → 单个专业Agent”的完整闭环，验证中枢三范式协作的有效性。
+| 变量 | 说明 |
+|------|------|
+| `MCP_SWAGGER_URL` | OpenAPI / Swagger 文档 URL 或本地路径 |
+| `MCP_BASE_URL` | 下游 API 根地址（spec 无法推断时必填） |
+| `MCP_TOKEN` | 调用下游 API 的 Bearer Token |
+| `OPENAI_API_KEY` | LLM API Key |
+| `OPENAI_BASE_URL` / `OPENAI_MODEL` | 兼容网关与模型名 |
+| `HUB_MAX_REVISION_ROUNDS` | Reflection 修订重跑轮数（默认 `1`） |
+| `NEO4J_*` / `QDRANT_*` | 长期记忆与向量库（可选，未配置时可仅用 SQLite 会话） |
+| `CORTEX_AGENT_LOG` | 开启 Agent / MCP 调试日志 |
 
-| 阶段                 | 核心内容                                                                    | 关键交付                          |
-| -------------------- | --------------------------------------------------------------------------- | --------------------------------- |
-| 1. 中枢骨架搭建      | 实现 Agent Registry、**意图澄清（ReAct，已实现）**、任务规划（PlanExecute）骨架。 | ReAct 可运行；PlanExecute 待接 |
-| 2. 接入首个专业Agent | 实现一个简单的编程Agent，遵循统一接口，注册到中枢。                         | 中枢能根据用户需求路由到编程Agent |
-| 3. 质量审查闭环      | 实现Reflection审查，验证汇总结果的正确性，并实现反馈修正。                  | 中枢能自我纠错，输出高质量结果    |
-| 4. 多Agent协作       | 接入第二个专业Agent（如法律Agent），验证任务拆解、多Agent调度和上下文贯通。 | 中枢能协调多个Agent完成复杂任务   |
-| 5. 记忆与上下文集成  | ConversationStore、MemoryManager、ContextAssembler 集成到 ReAct。      | **ReAct 已集成**；Hub 路由待接 |
+后续计划在 env 中补充：`ENABLE_PLAN`、`ENABLE_REFLECTION`、MCP 工具 tag 过滤等，便于上百接口场景下控制暴露给 LLM 的工具集。
 
 ---
 
-## 八、总结
+## 与同类项目的关系
 
-Agent Cortex（灵枢）是你Agent框架能力的集大成者。它利用 **ReAct** 理解模糊需求，**PlanExecute** 拆解并分发任务，**Reflection** 保证输出质量，并整合 **记忆系统** 和 **上下文工程**，实现持续学习和个性化服务。通过标准化的Agent接口和逐步引入的A2A协议，灵枢最终将成为连接用户、专业Agent和外部生态的智能中枢。
+- **Swagger → MCP**：与 FastMCP、openapi-mcp、openapi-to-mcp 等同类；本项目使用 FastMCP 并针对 HTTP 状态、业务错误做了适配
+- **MCP + Agent**：与 mcp-agent、IDE + MCP 类似；差异在于提供 Hub、可选 Plan/Reflection、会话与记忆集成
+- **定位**：不是「又一个 OpenAPI 转 MCP 工具」，而是 **可对接任意 OpenAPI 的对话式 API 智能服务框架**
+
+---
+
+## 路线图
+
+- [x] OpenAPI → MCP（FastMCP）
+- [x] ReAct 全 MCP 工具调用 + 参数澄清提示
+- [x] Hub 多轮会话与 Plan 结果写入历史
+- [ ] env 开关：默认 ReAct-only，Plan/Reflection 可选
+- [ ] MCP 工具过滤（按 tag / 数量限制），适配大型 Swagger
+- [ ] 完善 `.env.example` 与部署文档
+- [ ] 企业集成：JWT / SSO 透传、多租户、审计日志（插件或扩展层）
+
+---
+
+## 开源与贡献
+
+欢迎 Issue 与 PR。企业级鉴权、工作流持久化等能力将按「核心开源 + 扩展可选」方式演进，避免把 JWT、SSO 等强绑定逻辑塞进默认路径。
+
+---
+
+## 许可证
+
+见仓库根目录 `LICENSE`（若尚未添加，开源发布前请补充）。
