@@ -90,10 +90,42 @@ PYTHONPATH=. uv run python main.py
 
 同一 `session_id` 下 ReAct 会加载上一轮对话历史；Plan 执行完成的摘要也会写入会话存储（若已配置 `data/memory.db`）。
 
-### 4. 运行测试
+### 4. 启动 HTTP API（企业后端 / 前端 BFF 对接）
 
 ```bash
-uv run python -m unittest tests.test_param_readiness tests.test_transport_errors -v
+PYTHONPATH=. uv run python server.py
+# 或
+PYTHONPATH=. uv run uvicorn agents.api.app:app --host 0.0.0.0 --port 8000
+```
+
+可选环境变量：`CORTEX_API_HOST`、`CORTEX_API_PORT`（默认 `0.0.0.0:8000`）。
+
+**健康检查**
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+**非流式对话**
+
+```bash
+curl -s http://127.0.0.1:8000/v1/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <用户或网关 Token>" \
+  -H "X-Session-Id: user-001-conv-abc" \
+  -d '{"message":"帮我查最近订单","stream":false}'
+```
+
+**SSE 流式**（`stream: true` 默认）：响应 `text/event-stream`，事件类型包括 `text_delta`、`tool_call`、`tool_result`、`phase`、`turn_complete`、`error`。
+
+企业接入建议：**前端 → 企业后端（验 JWT）→ 本 API**，Header 透传 `Authorization`；`session_id` 可通过 body 或 `X-Session-Id` 指定。当前 MCP 下游仍使用 `.env` 的 `MCP_TOKEN`（按请求 Token 透传至 MCP 为后续扩展）。
+
+交互式文档：启动后访问 `http://127.0.0.1:8000/docs`。**对话页面**：`http://127.0.0.1:8000/`。
+
+### 5. 运行测试
+
+```bash
+uv run python -m unittest tests.test_param_readiness tests.test_transport_errors tests.test_api_events -v
 ```
 
 ---
@@ -140,6 +172,7 @@ main.py           # Hub REPL 入口
 | `HUB_MAX_REVISION_ROUNDS` | Reflection 修订重跑轮数（默认 `1`） |
 | `NEO4J_*` / `QDRANT_*` | 长期记忆与向量库（可选，未配置时可仅用 SQLite 会话） |
 | `CORTEX_AGENT_LOG` | 开启 Agent / MCP 调试日志 |
+| `CORTEX_API_HOST` / `CORTEX_API_PORT` | HTTP 服务监听地址（默认 `0.0.0.0:8000`） |
 
 后续计划在 env 中补充：`ENABLE_PLAN`、`ENABLE_REFLECTION`、MCP 工具 tag 过滤等，便于上百接口场景下控制暴露给 LLM 的工具集。
 

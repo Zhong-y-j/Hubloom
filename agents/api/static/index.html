@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Cortex · 灵枢</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">◈</span>
+          <div>
+            <h1>Agent Cortex</h1>
+            <p>灵枢 · MCP 对话</p>
+          </div>
+        </div>
+
+        <section class="panel">
+          <label for="session-id">会话 ID</label>
+          <input
+            id="session-id"
+            type="text"
+            placeholder="留空则使用默认 session"
+            autocomplete="off"
+          />
+          <button type="button" id="new-session" class="btn ghost">
+            新会话
+          </button>
+        </section>
+
+        <section class="panel">
+          <label for="auth-token">Bearer Token（可选）</label>
+          <input
+            id="auth-token"
+            type="password"
+            placeholder="企业 JWT，透传至 API"
+            autocomplete="off"
+          />
+          <p class="hint">本地调试可留空；生产由企业后端转发 Token。</p>
+        </section>
+
+        <section class="panel">
+          <label class="checkbox">
+            <input id="stream-mode" type="checkbox" checked />
+            流式输出（SSE）
+          </label>
+          <label class="checkbox">
+            <input id="show-tools" type="checkbox" checked />
+            显示工具调用
+          </label>
+        </section>
+
+        <div class="status" id="status">就绪</div>
+      </aside>
+
+      <main class="chat">
+        <header class="chat-header">
+          <h2>对话</h2>
+          <span id="route-badge" class="badge hidden"></span>
+        </header>
+
+        <div id="messages" class="messages" aria-live="polite"></div>
+
+        <form id="chat-form" class="composer">
+          <textarea
+            id="message-input"
+            rows="2"
+            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
+            required
+          ></textarea>
+          <button type="submit" id="send-btn" class="btn primary">发送</button>
+        </form>
+      </main>
+    </div>
+
+    <script src="/static/chat.js"></script>
+  </body>
+</html>
