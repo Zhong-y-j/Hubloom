@@ -10,3 +10,9 @@ data/
 # 运行时日志（保留 logs/.gitkeep）
 logs/*.log
 logs/*.log.*
+
+# 内部设计文档（仅本地保留，不纳入版本库）
+设计思路.md
+RAG设计.md
+LLM 封装.md
+记忆封装.md
