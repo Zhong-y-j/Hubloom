@@ -45,7 +45,7 @@ def _env_flag(name: str, *, default: bool = False) -> bool:
     return str(raw).strip().lower() in ("1", "true", "yes", "on")
 
 
-ENABLE_LONG_TERM_MEMORY = _env_flag("CORTEX_ENABLE_LONG_TERM_MEMORY", default=True)
+ENABLE_LONG_TERM_MEMORY = _env_flag("CORTEX_ENABLE_LONG_TERM_MEMORY", default=False)
 
 
 def format_session_id(session_key: str) -> str:

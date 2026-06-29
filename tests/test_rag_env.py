@@ -16,6 +16,11 @@ class RagEnvTests(unittest.TestCase):
         paths = parse_rag_doc_paths("docs/a.md, data/b", project_root=root)
         self.assertEqual(paths, [root / "docs/a.md", root / "data/b"])
 
+    @patch.dict(
+        os.environ,
+        {"CORTEX_ENABLE_RAG": "", "CORTEX_RAG_DOCS": ""},
+        clear=False,
+    )
     def test_auto_enable_when_docs_configured(self) -> None:
         self.assertTrue(is_rag_enabled("docs/knowledge"))
         self.assertFalse(is_rag_enabled(""))

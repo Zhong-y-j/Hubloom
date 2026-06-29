@@ -254,7 +254,7 @@ def main() -> None:
     import uvicorn
 
     host = os.getenv("CORTEX_API_HOST", "0.0.0.0")
-    port = int(os.getenv("CORTEX_API_PORT", "8080"))
+    port = int(os.getenv("CORTEX_API_PORT", "8000"))
     uvicorn.run(
         "agents.api.app:app",
         host=host,

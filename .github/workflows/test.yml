@@ -1,0 +1,27 @@
+name: test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run unit tests
+        env:
+          CORTEX_ENABLE_RAG: ""
+          CORTEX_RAG_DOCS: ""
+          CORTEX_ENABLE_LONG_TERM_MEMORY: "0"
+        run: uv run python -m unittest discover -s tests -v
