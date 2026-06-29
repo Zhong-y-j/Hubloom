@@ -78,8 +78,12 @@
       const empty = document.createElement("div");
       empty.className = "empty-state";
       empty.id = "empty-state";
-      empty.textContent =
-        "向 Agent Cortex 提问。支持 MCP 工具调用，可查询业务 API、预约、订单等。";
+      empty.innerHTML =
+        '<p class="empty-title">开始对话</p>' +
+        '<p class="empty-desc">用自然语言与已接入的 REST API 交互。Agent Cortex 会理解意图、' +
+        "按需调用 MCP 工具，并支持多轮澄清与流式回复。</p>" +
+        '<p class="empty-hint">例如：「你能帮我做什么？」「查询某条记录」' +
+        "「帮我完成一个需要填参数的操作」</p>";
       els.messages.appendChild(empty);
     }
   }

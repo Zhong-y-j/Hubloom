@@ -186,9 +186,27 @@ body {
   margin: auto;
   text-align: center;
   color: var(--muted);
-  max-width: 360px;
+  max-width: 420px;
   line-height: 1.6;
   font-size: 0.9rem;
+}
+
+.empty-state .empty-title {
+  margin: 0 0 0.65rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}
+
+.empty-state .empty-desc {
+  margin: 0 0 0.85rem;
+}
+
+.empty-state .empty-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  opacity: 0.85;
 }
 
 .msg {
