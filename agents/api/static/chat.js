@@ -138,6 +138,54 @@
     return div;
   }
 
+  function appendThinkingBubble() {
+    removeEmptyState();
+    const div = document.createElement("div");
+    div.className = "msg assistant thinking";
+    div.setAttribute("aria-busy", "true");
+    div.setAttribute("aria-label", "Agent 思考中");
+
+    const label = document.createElement("span");
+    label.className = "thinking-text";
+    label.textContent = "思考中";
+
+    const dots = document.createElement("span");
+    dots.className = "thinking-dots";
+    dots.setAttribute("aria-hidden", "true");
+    dots.innerHTML =
+      '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+
+    div.appendChild(label);
+    div.appendChild(dots);
+    els.messages.appendChild(div);
+    scrollToBottom();
+    return div;
+  }
+
+  function clearThinkingState(assistantEl) {
+    if (!assistantEl.classList.contains("thinking")) return;
+    assistantEl.classList.remove("thinking");
+    assistantEl.removeAttribute("aria-busy");
+    assistantEl.removeAttribute("aria-label");
+    assistantEl.textContent = "";
+  }
+
+  function setThinkingLabel(assistantEl, text) {
+    if (!assistantEl.classList.contains("thinking")) return;
+    const label = assistantEl.querySelector(".thinking-text");
+    if (label && text) label.textContent = text;
+  }
+
+  function phaseStatusText(phase) {
+    const map = {
+      react: "思考中…",
+      plan: "规划中…",
+      reflection: "审查中…",
+      revision: "修订中…",
+    };
+    return map[phase] || "思考中…";
+  }
+
   function appendToolBlock(title, body) {
     if (!els.showTools.checked) return;
     removeEmptyState();
@@ -152,6 +200,14 @@
     details.appendChild(pre);
     els.messages.appendChild(details);
     scrollToBottom();
+  }
+
+  function waitForPaint() {
+    return new Promise(function (resolve) {
+      requestAnimationFrame(function () {
+        requestAnimationFrame(resolve);
+      });
+    });
   }
 
   function buildHeaders(sessionKey) {
@@ -205,8 +261,7 @@
     const decoder = new TextDecoder();
     let buffer = "";
     let streamText = "";
-
-    assistantEl.classList.add("typing");
+    let started = false;
 
     while (true) {
       const { done, value } = await reader.read();
@@ -217,27 +272,42 @@
 
       for (const { event, data } of parsed.events) {
         if (event === "text_delta" && data.delta) {
+          if (!started) {
+            clearThinkingState(assistantEl);
+            assistantEl.classList.add("typing");
+            started = true;
+          }
           streamText += data.delta;
           assistantEl.textContent = streamText;
           scrollToBottom();
         } else if (event === "tool_call") {
+          const toolName = data.tool_name || "tool";
+          setThinkingLabel(assistantEl, "调用工具 · " + toolName);
           appendToolBlock(
-            "调用 · " + (data.tool_name || "tool"),
+            "调用 · " + toolName,
             JSON.stringify(data.args || {}, null, 2)
           );
         } else if (event === "tool_result") {
+          const toolName = data.tool_name || "tool";
+          setThinkingLabel(
+            assistantEl,
+            data.is_error ? "工具失败 · " + toolName : "整理回复中"
+          );
           appendToolBlock(
-            (data.is_error ? "失败 · " : "返回 · ") + (data.tool_name || "tool"),
+            (data.is_error ? "失败 · " : "返回 · ") + toolName,
             data.result || ""
           );
         } else if (event === "phase") {
-          setStatus("阶段: " + (data.phase || ""));
+          const phase = (data.phase || "").trim();
+          setStatus(phaseStatusText(phase));
         } else if (event === "turn_complete") {
+          clearThinkingState(assistantEl);
           assistantEl.classList.remove("typing");
           const final = (data.final_message || "").trim();
           if (final) {
             assistantEl.textContent = final;
             streamText = final;
+            started = true;
           }
           setRoute(data.route || "");
         } else if (event === "error") {
@@ -247,7 +317,10 @@
     }
 
     assistantEl.classList.remove("typing");
-    if (!streamText.trim()) {
+    if (assistantEl.classList.contains("thinking")) {
+      clearThinkingState(assistantEl);
+    }
+    if (!streamText.trim() && !assistantEl.textContent.trim()) {
       assistantEl.textContent = "（无文本回复）";
     }
   }
@@ -291,20 +364,20 @@
     appendMessage("user", message);
     els.input.value = "";
 
-    const assistantEl = appendMessage("assistant", "", "typing");
+    const assistantEl = appendThinkingBubble();
+    await waitForPaint();
 
     try {
       if (els.streamMode.checked) {
         await chatStream(message, sessionKey, assistantEl);
       } else {
-        assistantEl.classList.add("typing");
         const text = await chatOnce(message, sessionKey);
-        assistantEl.classList.remove("typing");
+        clearThinkingState(assistantEl);
         assistantEl.textContent = text;
       }
       setStatus("就绪");
     } catch (err) {
-      assistantEl.classList.remove("typing");
+      assistantEl.classList.remove("typing", "thinking");
       assistantEl.remove();
       appendMessage("error", String(err.message || err), "error");
       setStatus("出错");

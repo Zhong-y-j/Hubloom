@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Header, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from starlette.staticfiles import StaticFiles
 
 from agents.api.context import clear_request_context, set_request_context
 from agents.api.events import event_to_sse, format_sse
@@ -30,6 +30,17 @@ from observability import setup_log
 _hub: CortexHub | None = None
 _hub_lock = asyncio.Lock()
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+_NO_CACHE = "no-cache, no-store, must-revalidate"
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """开发态静态资源禁用强缓存，避免前端改动不生效。"""
+
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        response: Response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = _NO_CACHE
+        response.headers["Pragma"] = "no-cache"
+        return response
 
 
 def _resolve_session_id(body_session: str | None, header_session: str | None) -> str:
@@ -77,7 +88,7 @@ app = FastAPI(
 )
 
 if _STATIC_DIR.is_dir():
-    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+    app.mount("/static", NoCacheStaticFiles(directory=_STATIC_DIR), name="static")
 
 
 @app.get("/")
@@ -85,7 +96,10 @@ async def chat_page() -> FileResponse:
     index = _STATIC_DIR / "index.html"
     if not index.is_file():
         raise HTTPException(status_code=404, detail="前端页面未找到")
-    return FileResponse(index)
+    return FileResponse(
+        index,
+        headers={"Cache-Control": _NO_CACHE, "Pragma": "no-cache"},
+    )
 
 
 @app.get("/health")
@@ -135,7 +149,9 @@ async def chat(
 
 @app.get("/v1/chat/history", response_model=ChatHistoryResponse)
 async def chat_history(
-    session_id: str | None = Query(default=None, description="裸 user_id 或完整 namespace"),
+    session_id: str | None = Query(
+        default=None, description="裸 user_id 或完整 namespace"
+    ),
     authorization: str | None = Header(default=None),
     x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ) -> ChatHistoryResponse:
@@ -201,9 +217,7 @@ async def _run_chat_once(
                         final_message=text,
                         user_reply=ev.user_reply,
                         session_id=session_id,
-                        intent=(
-                            ev.intent.to_dict() if ev.intent is not None else None
-                        ),
+                        intent=(ev.intent.to_dict() if ev.intent is not None else None),
                         deliverable=ev.deliverable,
                         delivery_summary=ev.delivery_summary,
                     )
@@ -236,7 +250,7 @@ def main() -> None:
     import uvicorn
 
     host = os.getenv("CORTEX_API_HOST", "0.0.0.0")
-    port = int(os.getenv("CORTEX_API_PORT", "8000"))
+    port = int(os.getenv("CORTEX_API_PORT", "8080"))
     uvicorn.run(
         "agents.api.app:app",
         host=host,
