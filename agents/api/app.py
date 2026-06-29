@@ -19,6 +19,8 @@ from agents.api.schemas import ChatRequest, ChatResponse
 from agents.app.bootstrap import (
     DEFAULT_SESSION_ID,
     ENABLE_LONG_TERM_MEMORY,
+    ENABLE_RAG,
+    RAG_DOCS_RAW,
     SESSION_ID_TEMPLATE,
     build_hub_async,
     format_session_id,
@@ -108,11 +110,13 @@ async def health() -> dict[str, str]:
 
 
 @app.get("/v1/config")
-async def client_config() -> dict[str, str]:
+async def client_config() -> dict[str, str | bool]:
     return {
         "default_session_id": DEFAULT_SESSION_ID,
         "session_id_template": SESSION_ID_TEMPLATE,
         "enable_long_term_memory": ENABLE_LONG_TERM_MEMORY,
+        "enable_rag": ENABLE_RAG,
+        "rag_docs": RAG_DOCS_RAW,
     }
 
 

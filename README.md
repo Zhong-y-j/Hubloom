@@ -182,7 +182,9 @@ main.py           # Hub REPL 入口
 | `CORTEX_DEFAULT_SESSION_ID` | 未传 session 时的默认 namespace（默认 `mem:tester_id:default`） |
 | `CORTEX_SESSION_ID_TEMPLATE` | 短 session 键套入模板（默认 `mem:{session_id}:default`） |
 | `CORTEX_MEMORY_DB` | SQLite 会话库路径（默认 `data/memory.db`） |
-| `CORTEX_KB_DIR` | 知识库持久化目录（默认 `data/knowledge_db`） |
+| `CORTEX_KB_DIR` | 知识库向量索引持久化目录（Chroma；默认 `data/knowledge_db`） |
+| `CORTEX_RAG_DOCS` | RAG 源文档路径（逗号分隔文件或目录）；配置后自动开启 RAG 并在 Hub 启动时入库 |
+| `CORTEX_ENABLE_RAG` | 可选：`0` 强制关闭 RAG；`1` 在无文档路径时仅启用已有索引检索 |
 | `CORTEX_ENABLE_LONG_TERM_MEMORY` | 是否启用长期记忆（Qdrant episodic/semantic + Neo4j associative；默认 `true`） |
 
 后续计划在 env 中补充：`ENABLE_PLAN`、`ENABLE_REFLECTION`、MCP 工具 tag 过滤等，便于上百接口场景下控制暴露给 LLM 的工具集。

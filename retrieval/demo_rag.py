@@ -11,11 +11,6 @@ from retrieval.query_optimizer import QueryOptimizer
 from tools.builtin import SearchDocumentsTool
 from observability import setup_log
 
-# 测试用文档路径（可按需改）
-_DEFAULT_DOC = (
-    "/Users/zhong/Desktop/Git-store/CODE/面试/AI项目个人工作内容及实现思路.docx"
-)
-
 
 async def main() -> None:
     setup_log()
@@ -32,9 +27,7 @@ async def main() -> None:
 
     # kb.clear()
     # # 3. 添加文档（只需执行一次）
-    # doc_id = await kb.add_document(
-    #     "/Users/zhong/Desktop/Git-store/CODE/面试/AI项目个人工作内容及实现思路.docx"
-    # )
+    # doc_id = await kb.add_document()
     # print(f"文档已索引: {doc_id}")
 
     # # # 4. 搜索文档

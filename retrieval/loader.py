@@ -91,7 +91,5 @@ class DocumentLoader:
 
 if __name__ == "__main__":
     loader = DocumentLoader()
-    text = loader.load(
-        "/Users/zhong/Desktop/Git-store/CODE/面试/AI项目个人工作内容及实现思路.docx"
-    )
-    print(text)
+    # text = loader.load()
+    # print(text)

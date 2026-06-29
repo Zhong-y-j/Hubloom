@@ -13,10 +13,14 @@ from agents.reflection import ReflectionAgent
 from agents.specialists import RegistryStepDelegate
 from memory.context import ContextAssembler
 from core import create_llm
-from embedders.openai_embedder import OpenAIEmbedder
 from memory.factory import create_memory_manager
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
-from retrieval.knowledge_base import KnowledgeBase
+from retrieval.rag_bootstrap import (
+    create_knowledge_base,
+    ingest_rag_sources,
+    is_rag_enabled,
+    parse_rag_doc_paths,
+)
 from tools import ToolRegistry
 from tools.builtin import SearchDocumentsTool, SearchMemoryTool
 from tools.runner import ToolRunner
@@ -25,10 +29,13 @@ from agents.core.agent_log import hub_log
 DEFAULT_SESSION_ID = os.getenv("CORTEX_DEFAULT_SESSION_ID", "mem:tester_id:default")
 DEFAULT_MEMORY_DB = os.getenv("CORTEX_MEMORY_DB", "data/memory.db")
 DEFAULT_KB_DIR = os.getenv("CORTEX_KB_DIR", "data/knowledge_db")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+RAG_DOCS_RAW = os.getenv("CORTEX_RAG_DOCS", "").strip()
+RAG_DOC_PATHS = parse_rag_doc_paths(RAG_DOCS_RAW, project_root=PROJECT_ROOT)
+ENABLE_RAG = is_rag_enabled(RAG_DOCS_RAW)
 SESSION_ID_TEMPLATE = os.getenv(
     "CORTEX_SESSION_ID_TEMPLATE", "mem:{session_id}:default"
 )
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _env_flag(name: str, *, default: bool = False) -> bool:
@@ -63,7 +70,19 @@ async def build_hub_async(
     """构造可运行的 CortexHub 实例（异步加载 MCP 工具）。"""
     llm = create_llm()
     conversation_store = ConversationSQLitesStore(memory_db_path)
-    kb = KnowledgeBase(embedder=OpenAIEmbedder(), persist_dir=kb_persist_dir)
+    kb = None
+    if ENABLE_RAG:
+        kb = create_knowledge_base(persist_dir=kb_persist_dir)
+        try:
+            indexed = await ingest_rag_sources(kb, RAG_DOC_PATHS)
+            hub_log(
+                "rag ready",
+                indexed=indexed,
+                doc_paths=len(RAG_DOC_PATHS),
+                kb_dir=kb_persist_dir,
+            )
+        except Exception as exc:
+            hub_log("rag ingest failed", error=str(exc))
     memory_manager = create_memory_manager(
         namespace=session_id,
         db_path=memory_db_path,
@@ -87,7 +106,9 @@ async def build_hub_async(
         except Exception as exc:
             hub_log("mcp load failed; fallback to agent registry", error=str(exc))
 
-    react_tool_list: list = [SearchDocumentsTool(kb)]
+    react_tool_list: list = []
+    if ENABLE_RAG and kb is not None:
+        react_tool_list.append(SearchDocumentsTool(kb))
     if ENABLE_LONG_TERM_MEMORY:
         react_tool_list.append(SearchMemoryTool(memory_manager))
     if bindings is not None:
@@ -135,6 +156,8 @@ async def build_hub_async(
         max_revision_rounds=max_revision_rounds,
         mcp_enabled=bindings is not None,
         long_term_memory=ENABLE_LONG_TERM_MEMORY,
+        rag_enabled=ENABLE_RAG,
+        rag_doc_paths=len(RAG_DOC_PATHS),
     )
     return CortexHub(
         react,

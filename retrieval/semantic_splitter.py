@@ -374,13 +374,11 @@ if __name__ == "__main__":
     from loader import DocumentLoader
 
     loader = DocumentLoader()
-    text = loader.load(
-        "/Users/zhong/Desktop/Git-store/CODE/面试/AI项目个人工作内容及实现思路.docx"
-    )
-    splitter = SemanticSplitter()
-    chunks = splitter.split(text)
-    print(len(chunks))
-    for chunk in chunks:
-        print(chunk["content"])
-        print(chunk["metadata"])
-        print("-" * 100)
+    # text = loader.load()
+    # splitter = SemanticSplitter()
+    # chunks = splitter.split(text)
+    # print(len(chunks))
+    # for chunk in chunks:
+    #     print(chunk["content"])
+    #     print(chunk["metadata"])
+    #     print("-" * 100)
