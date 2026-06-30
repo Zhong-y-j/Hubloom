@@ -121,11 +121,9 @@ class AgentRunPrinter:
             intent: StructuredIntent = ev.intent
             print(f"\n{'═' * 56}")
             if not ev.is_clear:
-                route = "→ 继续澄清（不进 Plan）"
-            elif ev.should_invoke_plan:
-                route = "→ PlanExecute"
+                route = "→ 继续澄清"
             else:
-                route = "→ 直接回复（不进 Plan）"
+                route = "→ 完成本轮"
             print(
                 f"▣ 结构化意图  is_clear={ev.is_clear}  "
                 f"intent={intent.intent!r}  {route}"
@@ -219,10 +217,9 @@ async def main() -> None:
             printer.handle(ev)
         intent = agent.get_last_intent()
         if intent:
-            plan = "进 PlanExecute" if intent.should_invoke_plan() else "不进 Plan"
             print(
                 f"\n[hub] get_last_intent() → is_clear={intent.is_clear}, "
-                f"intent={intent.intent!r}, {plan}"
+                f"intent={intent.intent!r}"
             )
         print()
     finally:

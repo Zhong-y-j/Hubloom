@@ -1,41 +1,7 @@
 import unittest
 
-from agents.plan.models import ExecutionPlan, ExecutionStep
 from tools.param_hints import format_tool_param_hints, params_for_user_clarification
-from tools.param_readiness import (
-    check_plan_readiness,
-    is_deferred_arg,
-    is_present,
-    missing_required_fields,
-)
-from tools.base import BaseTool
-from tools.registry import ToolRegistry
-
-
-class _DetailTool(BaseTool):
-    name = "getDetail"
-    description = "detail"
-    parameters = {
-        "type": "object",
-        "required": ["communityId"],
-        "properties": {"communityId": {"type": "string"}},
-    }
-
-    async def execute(self, **kwargs):
-        return "ok"
-
-
-class _OrderTool(BaseTool):
-    name = "placeOrder"
-    description = "order"
-    parameters = {
-        "type": "object",
-        "required": ["petId"],
-        "properties": {"petId": {"type": "integer", "title": "宠物 ID"}},
-    }
-
-    async def execute(self, **kwargs):
-        return "ok"
+from tools.param_readiness import is_deferred_arg, is_present, missing_required_fields
 
 
 class ParamReadinessTests(unittest.TestCase):
@@ -64,43 +30,6 @@ class ParamReadinessTests(unittest.TestCase):
             missing_required_fields(params, {"petId": "{{steps.1.id}}"}),
             [],
         )
-
-    def test_skip_dependent_step(self) -> None:
-        registry = ToolRegistry.from_tools([_DetailTool()])
-        plan = ExecutionPlan(
-            task_type="general_task",
-            steps=[
-                ExecutionStep(
-                    step_id=2,
-                    tool_name="getDetail",
-                    tool_args={},
-                    task_description="detail",
-                    dependencies=[1],
-                )
-            ],
-        )
-        verdict = check_plan_readiness(plan, registry)
-        self.assertTrue(verdict.ready)
-
-    def test_block_independent_step(self) -> None:
-        registry = ToolRegistry.from_tools([_OrderTool()])
-        plan = ExecutionPlan(
-            task_type="general_task",
-            steps=[
-                ExecutionStep(
-                    step_id=1,
-                    tool_name="placeOrder",
-                    tool_args={},
-                    task_description="order",
-                    dependencies=[],
-                )
-            ],
-        )
-        verdict = check_plan_readiness(plan, registry, task_summary="下单")
-        self.assertFalse(verdict.ready)
-        self.assertEqual(len(verdict.gaps), 1)
-        self.assertIn("宠物 ID", verdict.clarify_message)
-        self.assertIn("下单", verdict.clarify_message)
 
     def test_params_for_user_clarification_openapi_empty_required(self) -> None:
         """OpenAPI required=[] 时仍应提示非可选 body 字段。"""

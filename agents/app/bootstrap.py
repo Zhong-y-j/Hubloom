@@ -1,4 +1,4 @@
-"""组装 ReAct / PlanExecute / Reflection / Hub（CLI 与 main 共用）。"""
+"""组装 ReAct / Hub（CLI 与 HTTP 共用）。"""
 
 from __future__ import annotations
 
@@ -6,11 +6,8 @@ import asyncio
 import os
 from pathlib import Path
 
-from agents.hub import CortexHub, build_default_registry
-from agents.plan import LLMPlanGenerator, PlanExecuteAgent, StubPlanGenerator
+from agents.hub import CortexHub
 from agents.react import ReActAgent
-from agents.reflection import ReflectionAgent
-from agents.specialists import RegistryStepDelegate
 from memory.context import ContextAssembler
 from core import create_llm
 from memory.factory import create_memory_manager
@@ -23,7 +20,6 @@ from retrieval.rag_bootstrap import (
 )
 from tools import ToolRegistry
 from tools.builtin import SearchDocumentsTool, SearchMemoryTool
-from tools.runner import ToolRunner
 from agents.core.agent_log import hub_log
 
 DEFAULT_SESSION_ID = os.getenv("CORTEX_DEFAULT_SESSION_ID", "mem:tester_id:default")
@@ -60,11 +56,9 @@ def format_session_id(session_key: str) -> str:
 
 async def build_hub_async(
     *,
-    run_reflection: bool = True,
     session_id: str = DEFAULT_SESSION_ID,
     memory_db_path: str = DEFAULT_MEMORY_DB,
     kb_persist_dir: str = DEFAULT_KB_DIR,
-    max_revision_rounds: int | None = None,
     enable_mcp: bool = True,
 ) -> CortexHub:
     """构造可运行的 CortexHub 实例（异步加载 MCP 工具）。"""
@@ -91,7 +85,6 @@ async def build_hub_async(
     )
 
     bindings = None
-    mcp_registry = ToolRegistry()
     if enable_mcp:
         try:
             from mcp_adapter import load_mcp_tools
@@ -101,10 +94,9 @@ async def build_hub_async(
                 args=["run", "python", "mcp_adapter/server.py"],
                 cwd=str(PROJECT_ROOT),
             )
-            mcp_registry = ToolRegistry.from_tools(bindings.tools)
             hub_log("mcp loaded", tool_count=len(bindings.tools))
         except Exception as exc:
-            hub_log("mcp load failed; fallback to agent registry", error=str(exc))
+            hub_log("mcp load failed", error=str(exc))
 
     react_tool_list: list = []
     if ENABLE_RAG and kb is not None:
@@ -126,67 +118,32 @@ async def build_hub_async(
         consolidate_memory=ENABLE_LONG_TERM_MEMORY,
     )
 
-    if bindings is not None:
-        fallback = StubPlanGenerator(tools=mcp_registry)
-        plan_execute = PlanExecuteAgent(
-            llm,
-            plan_generator=LLMPlanGenerator(
-                llm, tools=mcp_registry, fallback=fallback
-            ),
-            tool_runner=ToolRunner(mcp_registry),
-        )
-    else:
-        registry = build_default_registry()
-        plan_execute = PlanExecuteAgent(
-            llm,
-            plan_generator=LLMPlanGenerator(llm, registry=registry),
-            registry=registry,
-            step_delegate=RegistryStepDelegate(llm),
-        )
-
-    reflection = ReflectionAgent(llm) if run_reflection else None
-    if max_revision_rounds is None:
-        max_revision_rounds = int(os.getenv("HUB_MAX_REVISION_ROUNDS", "1"))
     hub_log(
         "build_hub",
         session_id=session_id,
         memory_db=memory_db_path,
         kb_dir=kb_persist_dir,
-        run_reflection=run_reflection,
-        max_revision_rounds=max_revision_rounds,
         mcp_enabled=bindings is not None,
         long_term_memory=ENABLE_LONG_TERM_MEMORY,
         rag_enabled=ENABLE_RAG,
         rag_doc_paths=len(RAG_DOC_PATHS),
     )
-    return CortexHub(
-        react,
-        plan_execute,
-        reflection,
-        run_reflection=run_reflection,
-        stream_plan_separately=True,
-        max_revision_rounds=max_revision_rounds,
-        mcp_bindings=bindings,
-    )
+    return CortexHub(react, mcp_bindings=bindings)
 
 
 def build_hub(
     *,
-    run_reflection: bool = True,
     session_id: str = DEFAULT_SESSION_ID,
     memory_db_path: str = DEFAULT_MEMORY_DB,
     kb_persist_dir: str = DEFAULT_KB_DIR,
-    max_revision_rounds: int | None = None,
     enable_mcp: bool = True,
 ) -> CortexHub:
     """同步构造 CortexHub（内部 asyncio.run 加载 MCP）。"""
     return asyncio.run(
         build_hub_async(
-            run_reflection=run_reflection,
             session_id=session_id,
             memory_db_path=memory_db_path,
             kb_persist_dir=kb_persist_dir,
-            max_revision_rounds=max_revision_rounds,
             enable_mcp=enable_mcp,
         )
     )

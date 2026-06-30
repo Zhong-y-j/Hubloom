@@ -58,7 +58,7 @@ _DEFAULT_FORCED_FINALIZE_NUDGE = (
 )
 
 
-# 澄清阶段允许的只读工具（执行型工具留给 PlanExecute）
+# 澄清阶段允许的只读工具（未使用；保留供后续工具分组）
 _READONLY_TOOL_NAMES = frozenset({"search_documents", "search_memory"})
 
 
@@ -66,38 +66,33 @@ def _react_log(message: str, /, **fields) -> None:
     react_log(message, **fields)
 
 
-_SYSTEM_INTRO = """你是 **Agent Cortex（灵枢）** 面向用户的智能助手：先弄清需求，再在任务明确后由系统完成检索与多步执行。
+_SYSTEM_INTRO = """你是 **Agent Cortex（灵枢）** 面向用户的智能助手：先弄清需求，再通过 MCP 工具完成查询与操作。
 
 ## 对用户说话（user_reply）——必须遵守
 - 语气自然、专业、可执行，像正式产品助手，**不要**暴露内部架构或岗位名称。
-- **禁止**在 user_reply 中出现：意图澄清专家、ReAct、PlanExecute、Reflection、中枢、后续流程/模块、结构化 intent、交给下一阶段 等表述。
-- **自我介绍**（如「你是谁」）：可说「我是 Agent Cortex（灵枢），你的智能助手」，并**基于下方工具列表**简要说明能帮你做什么；**不要**说「我是意图澄清专家」「我只负责澄清、不负责交付」。
-- **能力介绍**（如「你能帮我做什么」）：**必须**根据下方 **MCP 工具列表** 各条 **description** 归纳成 2～5 条用户可发起的任务示例；用自然中文，不要照搬工具英文名。复杂任务说明你会先确认关键信息再动手，但**不要**强调内部流水线。
-- **禁止编造能力**：未出现在 MCP 工具列表中的服务**不要**写入 user_reply；若某类需求暂无对应工具，说明当前目录支持的范围并邀请用户换具体任务。
+- **禁止**在 user_reply 中出现：ReAct、结构化 intent、内部模块 等表述。
+- **自我介绍**（如「你是谁」）：可说「我是 Agent Cortex（灵枢），你的智能助手」，并**基于下方工具列表**简要说明能帮你做什么。
+- **能力介绍**（如「你能帮我做什么」）：**必须**根据下方 **MCP 工具列表** 各条 **description** 归纳成 2～5 条用户可发起的任务示例。
+- **禁止编造能力**：未出现在 MCP 工具列表中的服务**不要**写入 user_reply。
 - 用户只是闲聊、问候、问产品能力时：intent 用 `general_chat`，`is_clear=true`，user_reply 直接给出完整友好答复。
 
 ## 内部职责（仅指导你的判断，勿写入 user_reply）
 1. 理解用户真实需求；信息不足时**追问**或**先调查询类工具**拉列表，不要猜测 ID。
 2. 结合对话、[MEMORY]、[DOCUMENTS] 与 **MCP 工具**补全背景。
-3. 单步且参数齐备的变更可直接在本阶段调用工具完成；多步编排写入 intent 交 Plan。
+3. 参数齐备时直接调用工具；多步任务在本阶段多轮调用直至完成或明确仍缺信息。
 4. 任务需求已足够清晰时，输出结构化 `intent` JSON（用户看不到该块）。
 
 ## 工具（MCP 动态目录）
-- 下方「MCP 工具」为本阶段**可直接调用**的完整目录（含 parameters），以列表为唯一依据；换接入 API 后列表会变，**只认当前列表**。
-- **读操作**（GET/列表/详情/搜索）：优先调用，用返回结果帮助用户从候选项中选择，或补全后续步骤所需的 ID/键值。
-- **写操作**（POST/PUT/PATCH/DELETE 等变更）：对应工具的必填/需用户提供参数齐全且用户已确认后再调用；勿编造 identifier。
-- 若本阶段工具调用**已完成**用户需求，intent.slots 填 `react_tool_done: true`，user_reply 展示结果，**不要**再交 Plan 重复执行。
-- 多步任务或本阶段未执行完：写入 `suggested_tools` / `action_params`，由 Plan 编排。
-- **禁止**凭记忆或旧对话臆造工具名、参数名；列表中没有的能力不要承诺。
+- 下方「MCP 工具」为**可调用**的完整目录（含 parameters），以列表为唯一依据。
+- **读操作**（GET/列表/详情/搜索）：优先调用，用返回结果帮助用户选择或补全 ID。
+- **写操作**（POST/PUT/PATCH/DELETE）：必填参数齐全且用户已确认后再调用。
+- 若本阶段工具调用**已完成**用户需求，intent.slots 填 `react_tool_done: true`，user_reply 展示结果。
+- **禁止**凭记忆臆造工具名、参数名；列表中没有的能力不要承诺。
 """
 
 
 def _callable_tool_defs(tools: ToolRegistry, allowed: set[str]) -> list[dict]:
     return [d for d in tools.list_definitions() if d["name"] in allowed]
-
-
-def _execution_capability_defs(tools: ToolRegistry, allowed: set[str]) -> list[dict]:
-    return [d for d in tools.list_definitions() if d["name"] not in allowed]
 
 
 def _format_tool_line(d: dict) -> str:
@@ -112,42 +107,18 @@ def _format_tool_line(d: dict) -> str:
 def _build_default_system(tools: ToolRegistry, allowed_tools: set[str]) -> str:
     parts = [_SYSTEM_INTRO, INTENT_TYPE_HINTS, INTENT_OUTPUT_INSTRUCTION]
 
-    callable_defs = _callable_tool_defs(tools, allowed_tools)
-    cap_defs = _execution_capability_defs(tools, allowed_tools)
-
-    if callable_defs or cap_defs:
+    tool_defs = _callable_tool_defs(tools, allowed_tools)
+    if tool_defs:
         parts.extend(
             [
                 "",
                 "## 对外能力介绍（general_chat / 你是谁 / 能做什么 时参考）",
-                "- 根据下方 MCP 工具各条 **description** 归纳 2～5 条用户可发起的任务示例；用自然中文，勿照搬工具英文名。",
-                "- 只介绍列表中有的能力；工具 name 不要原样暴露给用户。",
-            ]
-        )
-
-    if cap_defs:
-        if callable_defs:
-            parts.extend(["", "## 当前可调用工具（本阶段）"])
-            for d in callable_defs:
-                parts.append(f"- **{d['name']}**：{d.get('description', '').strip()}")
-
-        parts.extend(
-            [
+                "- 根据下方 MCP 工具各条 **description** 归纳 2～5 条用户可发起的任务示例。",
                 "",
-                "## 系统执行能力（本阶段不可直接调用）",
-                "澄清意图时可将用户任务与下列 MCP 工具对应，并写入 intent.slots.suggested_tools（值为下列 name，须完全一致），由 Plan/Execute 调用：",
+                "## MCP 工具（可调用）",
             ]
         )
-        for d in cap_defs:
-            parts.append(_format_tool_line(d))
-        parts.append(
-            "澄清时若用户任务对应上列某一工具，须按该工具「需用户提供」及 parameters 逐项追问，"
-            "勿用与 schema 无关的泛化问题代替，避免遗漏仍缺的字段。"
-        )
-        parts.append("禁止在本阶段直接调用上述工具。")
-    elif callable_defs:
-        parts.extend(["", "## MCP 工具（本阶段可调用）"])
-        for d in callable_defs:
+        for d in tool_defs:
             parts.append(_format_tool_line(d))
 
     return "\n".join(parts)
@@ -161,8 +132,7 @@ class ReActAgent(Agent):
     """
     ReActAgent（意图澄清）：流式 LLM + MCP 工具 + 结构化 intent 输出。
 
-    输出 ``IntentOutcomeEvent`` + ``FinalAnswerEvent``（含 ``intent`` 字段），
-    供后续 PlanExecute 消费。
+    输出 ``IntentOutcomeEvent`` + ``FinalAnswerEvent``（含 ``intent`` 字段）。
 
     Args:
         llm:
@@ -527,7 +497,7 @@ class ReActAgent(Agent):
         return last_final or ErrorEvent(error="No final answer produced")
 
     def get_last_intent(self) -> StructuredIntent | None:
-        """上一轮 run 解析出的结构化意图（供 PlanExecute 读取）。"""
+        """上一轮 run 解析出的结构化意图。"""
         return self.last_intent
 
     async def run_stream(self, task: str) -> AsyncIterator[AgentEvent]:

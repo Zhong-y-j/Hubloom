@@ -204,18 +204,14 @@ class RunStatsEvent(AgentEvent):
 
 @dataclass
 class IntentOutcomeEvent(AgentEvent):
-    """ReAct 阶段结构化意图结果（供 PlanExecute 读取）。"""
+    """ReAct 阶段结构化意图结果。"""
 
     intent: Any  # StructuredIntent
     is_clear: bool
 
     @property
     def should_invoke_plan(self) -> bool:
-        """是否应进入 PlanExecute（委托 intent.should_invoke_plan）。"""
-        fn = getattr(self.intent, "should_invoke_plan", None)
-        if callable(fn):
-            return bool(fn())
-        return self.is_clear
+        return False
 
 
 @dataclass

@@ -1,4 +1,4 @@
-"""ReAct 阶段结构化意图：供 PlanExecute 消费。"""
+"""ReAct 阶段结构化意图。"""
 
 from __future__ import annotations
 
@@ -6,9 +6,6 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
-
-# 澄清完成且无需进入 PlanExecute 的 intent 类型
-_NO_PLAN_INTENTS = frozenset({"general_chat"})
 
 _USER_REPLY_PREFIX_RE = re.compile(
     r"^user_reply\s*[:：]\s*",
@@ -25,7 +22,7 @@ _INTENT_FENCE_MARKERS = ("```intent", "```json")
 
 @dataclass
 class StructuredIntent:
-    """意图澄清结果（ReAct → PlanExecute handoff）。"""
+    """意图澄清与路由元数据。"""
 
     is_clear: bool
     intent: str
@@ -44,32 +41,24 @@ class StructuredIntent:
             "user_reply": self.user_reply,
         }
 
-    def should_invoke_plan(self) -> bool:
-        """中枢是否应进入 PlanExecute（闲聊、ReAct 已执行完成等直接结束）。"""
-        if not self.is_clear:
-            return False
-        if self.slots.get("react_tool_done"):
-            return False
-        return self.intent not in _NO_PLAN_INTENTS
-
 
 INTENT_OUTPUT_INSTRUCTION = """
 ## 输出格式（必须遵守）
 本轮回复须包含两部分：
 1. **user_reply**：给用户看的自然语言。
-   - 对外口径：你是 **Agent Cortex（灵枢）智能助手**，禁止自称「意图澄清专家」或描述内部阶段名（ReAct / PlanExecute 等）。
-   - 闲聊、问候、问「你是谁/能做什么」：`general_chat` + `is_clear=true`；user_reply **必须基于系统提示中 MCP 工具列表的真实 description** 来介绍能力，可略长，**禁止**编造目录中不存在的能力。
+   - 对外口径：你是 **Agent Cortex（灵枢）智能助手**。
+   - 闲聊、问候、问「你是谁/能做什么」：`general_chat` + `is_clear=true`；user_reply **必须基于系统提示中 MCP 工具列表的真实 description** 来介绍能力。
    - 澄清追问：若任务对应某 MCP 工具，按该工具「需用户提供」**完整**列举尚缺项；**可先调用查询/列表类工具**拉取可选项再让用户选择。`missing` 须与未获得的参数一致。
-   - 本阶段已通过工具完成用户请求：user_reply 展示结果，`slots.react_tool_done=true`，`is_clear=true`。
-   - 多步任务或本阶段未执行：user_reply 简要确认，填 `suggested_tools` / `action_params`，交 Plan 执行。
+   - 已通过工具完成用户请求：user_reply 展示结果，`slots.react_tool_done=true`，`is_clear=true`。
+   - 多步任务：在本阶段继续调用工具直至完成，或说明仍缺信息；`is_clear=false` 时列出 `missing`。
    - **正文里不要写「user_reply:」这类字段名前缀。**
-2. **intent JSON**：用 ```intent 代码块包裹，供系统路由与执行，格式如下：
+2. **intent JSON**：用 ```intent 代码块包裹，供系统路由，格式如下：
 
 ```intent
 {
   "is_clear": true,
   "intent": "意图类型英文蛇形名，如 document_qa / general_task / general_chat",
-  "summary": "一句结构化任务描述，供规划阶段使用",
+  "summary": "一句结构化任务描述",
   "slots": { "键": "已澄清的关键信息" },
   "missing": [],
   "user_reply": "与上文一致的用户可见短回复"
@@ -79,27 +68,19 @@ INTENT_OUTPUT_INSTRUCTION = """
 意图未澄清时：
 - `is_clear` 必须为 false
 - `missing` 列出仍缺的信息项
-- `user_reply` 须让用户知道还缺哪些具体信息，或展示工具查询/执行结果；对应 MCP 工具时按「需用户提供」逐项追问
-- 可先调用列表/查询类 MCP 工具拉取可选项或标识符，再让用户选择；参数未齐时不要调用写操作类工具
-- 若已从 [DOCUMENTS]、工具结果或 [MEMORY] 得知关键 ID/名称，写入 `slots` 与 `action_params`，仅对仍缺项列入 `missing`
+- 可先调用列表/查询类 MCP 工具拉取可选项或标识符，再让用户选择
 
 意图已澄清时：
 - `is_clear` 为 true
 - `slots` 填入已确认字段
-- 本阶段**已直接调用工具完成**：`slots.react_tool_done=true`，user_reply 展示结果，intent 可用 `general_chat`
-- **仍需 Plan 多步执行**：填 `suggested_tools`、`action_params`，勿设 `react_tool_done`
-
-若任务需 Plan 编排，在 slots 中填写：
-- "suggested_tools": ["<工具名>"]   // 必须来自系统提示 MCP 工具列表的 name
-- "action_params": {}               // 已从用户或对话中明确的参数（键名须符合该工具 parameters）
+- 本阶段**已直接调用工具完成**：`slots.react_tool_done=true`，user_reply 展示结果
 """
 
 INTENT_TYPE_HINTS = """
-### intent 类型参考（与具体 MCP 工具无关，仅作路由标签）
+### intent 类型参考
 - `document_qa`：主要从文档/知识库查事实
-- `general_task`：需调用 MCP 执行能力完成的多步/查询类任务（具体调哪些工具由 Plan 读目录决定）
-- `general_chat`：问候、自我介绍、问产品能力、闲聊（`is_clear=true` 时直接 user_reply，不进 PlanExecute）
-- 其他蛇形名可自拟，但不要绑定某一固定 API 目录或业务域名
+- `general_task`：需调用 MCP 工具完成的查询/变更类任务
+- `general_chat`：问候、自我介绍、问产品能力、闲聊
 """
 
 INTENT_REFORMAT_NUDGE = (
