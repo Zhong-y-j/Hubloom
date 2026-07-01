@@ -81,6 +81,27 @@ def _llm_retry(max_attempts=3, min_wait=1, max_wait=30):
     )
 
 
+def _delta_thinking(delta) -> str | None:
+    """从流式 delta 取 thinking 片段（兼容 reasoning_content / reasoning / thinking）。"""
+    if delta is None:
+        return None
+    for key in ("reasoning_content", "reasoning", "thinking"):
+        piece = getattr(delta, key, None)
+        if piece:
+            return str(piece)
+    return None
+
+
+def _message_thinking(message) -> str:
+    if message is None:
+        return ""
+    for key in ("reasoning_content", "reasoning", "thinking"):
+        text = getattr(message, key, None)
+        if text:
+            return str(text)
+    return ""
+
+
 class LLM(LLMProvider):
 
     def __init__(
@@ -121,6 +142,7 @@ class LLM(LLMProvider):
 
         # 流式状态变量
         content = ""
+        thinking = ""
         # 工具调用聚合缓存：{ index: {id, name, arguments_buffer} }
         tool_buffers: dict[int, dict] = {}
         finish_reason = None
@@ -132,7 +154,12 @@ class LLM(LLMProvider):
                     continue
 
                 delta = chunk.choices[0].delta
-                # 文本增量
+                piece = _delta_thinking(delta)
+                if piece:
+                    thinking += piece
+                    yield ReasoningDeltaEvent(piece)
+
+                # 正文增量
                 if delta and delta.content:
                     content += delta.content
                     yield DeltaEvent(delta.content)
@@ -210,6 +237,7 @@ class LLM(LLMProvider):
 
         final_output = LLMOutput(
             content=content,
+            thinking=thinking,
             tool_calls=tool_calls,
             stop_reason=stop_reason,
             usage=usage,
@@ -286,6 +314,7 @@ class LLM(LLMProvider):
 
         output = LLMOutput(
             content=message.content or "",
+            thinking=_message_thinking(message),
             tool_calls=tool_calls,
             stop_reason=stop_reason,
             usage=usage,

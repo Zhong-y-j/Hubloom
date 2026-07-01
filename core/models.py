@@ -155,6 +155,7 @@ class LLMOutput:
 
     字段说明：
         - content: 助手可见的文本正文。
+        - thinking: 模型思考过程。
         - tool_calls: 若模型请求工具：解析后的调用列表（可能为空列表）。
         - stop_reason: 结束原因，见 `StopReason`。
         - usage: 若响应含 usage；否则 None。
@@ -162,6 +163,7 @@ class LLMOutput:
     """
 
     content: str = ""
+    thinking: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     stop_reason: StopReason = StopReason.STOP
     usage: Optional[TokenUsage] = None

@@ -9,12 +9,24 @@ from .provider import LLMProvider
 load_dotenv()
 
 
+def _with_thinking_params(params: dict | None, *, enable_thinking: bool) -> dict:
+    merged = dict(params or {})
+    if not enable_thinking:
+        return merged
+    extra = dict(merged.get("extra_body") or {})
+    extra.setdefault("enable_thinking", True)
+    merged["extra_body"] = extra
+    return merged
+
+
 def create_llm(
     provider: str = "openai",
     api_key: str | None = None,
     base_url: str | None = None,
     model: str | None = None,
     params: dict | None = None,
+    *,
+    enable_thinking: bool = False,
 ) -> LLMProvider:
 
     provider = provider.lower()
@@ -24,19 +36,20 @@ def create_llm(
         raise ValueError("OPENAI_API_KEY is not set")
     base_url = base_url or os.getenv("OPENAI_BASE_URL")
     model = model or os.getenv("OPENAI_MODEL")
-    params = params or {}
+    merged_params = _with_thinking_params(params, enable_thinking=enable_thinking)
     if provider == "openai":
         llm = LLM(
             api_key=api_key,
             base_url=base_url,
             model=model,
-            params=params,
+            params=merged_params,
         )
         log(
             "create_llm ok",
             provider=provider,
             model=model,
             base_url=base_url or "(default)",
+            enable_thinking=enable_thinking,
         )
         return llm
     # 未来可在此扩展其他 provider
@@ -52,6 +65,7 @@ if __name__ == "__main__":
     from .models import Message, Role
     from .provider import (
         DeltaEvent,
+        ReasoningDeltaEvent,
         StreamEndEvent,
         StreamErrorEvent,
         ToolCallArgsEvent,
@@ -65,8 +79,18 @@ if __name__ == "__main__":
             Message(role=Role.USER, content="你好啊?"),
         ]
         print("--- 流式输出 ---")
+        thinking_started = False
+        content_started = False
         async for event in llm.generate_stream(messages):
-            if isinstance(event, DeltaEvent):
+            if isinstance(event, ReasoningDeltaEvent):
+                if not thinking_started:
+                    print("\n[thinking] ", end="", flush=True)
+                    thinking_started = True
+                print(event.delta, end="", flush=True)
+            elif isinstance(event, DeltaEvent):
+                if not content_started:
+                    print("\n[content] ", end="", flush=True)
+                    content_started = True
                 print(event.delta, end="", flush=True)
             elif isinstance(event, ToolCallStartEvent):
                 print(f"\n[tool_start] id={event.call_id} name={event.name}")
@@ -75,6 +99,8 @@ if __name__ == "__main__":
             elif isinstance(event, StreamEndEvent):
                 out = event.output
                 print("\n--- 流结束 ---")
+                if out.thinking:
+                    print(f"thinking: {out.thinking!r}")
                 print(f"content: {out.content!r}")
                 print(f"stop_reason: {out.stop_reason}")
                 if out.tool_calls:

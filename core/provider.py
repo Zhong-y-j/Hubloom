@@ -25,6 +25,19 @@ class DeltaEvent(LLMStreamEvent):
         self.delta = delta
 
 
+class ReasoningDeltaEvent(LLMStreamEvent):
+    """思考过程增量事件
+
+    使用处：显示实时思考过程、优化用户体验。
+
+    字段说明：
+        - delta: 思考过程增量，通常是单个字符或词组。
+    """
+
+    def __init__(self, delta: str):
+        self.delta = delta
+
+
 class ToolCallStartEvent(LLMStreamEvent):
     """工具调用开始事件
 
