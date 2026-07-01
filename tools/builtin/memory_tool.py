@@ -1,6 +1,6 @@
 from typing import Any
 
-from agents.core.agent_log import clip
+from agents.agent_log import clip
 from memory.memory_context import MemoryContextProvider
 from memory.manager import MemoryManager
 from observability import log

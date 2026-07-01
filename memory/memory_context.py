@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from agents.core.agent_log import clip, memory_log
+from agents.agent_log import clip, memory_log
 
 from .manager import MemoryManager, RecallResult
 from .models import AssociativeRecallResult, EpisodicItem, SemanticItem

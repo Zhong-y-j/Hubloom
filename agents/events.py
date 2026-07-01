@@ -20,6 +20,14 @@ class TextDeltaEvent(AgentEvent):
 
 
 @dataclass
+class ThoughtDeltaEvent(AgentEvent):
+    """深度思考过程区流式文本。"""
+
+    phase: str
+    delta: str
+
+
+@dataclass
 class FinalAnswerEvent(AgentEvent):
     """本轮最终回复。
 
