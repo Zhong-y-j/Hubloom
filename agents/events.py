@@ -14,14 +14,14 @@ class AgentEvent:
 
 @dataclass
 class TextDeltaEvent(AgentEvent):
-    """回复文本增量（流式输出用）。"""
+    """回复文本增量（流式输出用，简单路径直答等场景）。"""
 
     delta: str
 
 
 @dataclass
 class ThoughtDeltaEvent(AgentEvent):
-    """深度思考过程区流式文本。"""
+    """思考过程区流式文本（deliberate / execute / replan 阶段）。"""
 
     phase: str
     delta: str
@@ -29,15 +29,22 @@ class ThoughtDeltaEvent(AgentEvent):
 
 @dataclass
 class FinalAnswerEvent(AgentEvent):
-    """本轮最终回复。
+    """本轮最终回复（结果区结束信号）。
 
     约定：
-    - `content`：回复内容
+    - `content`：完整回复内容
     - `usage`：Token 使用情况
     """
 
     content: str
     usage: Optional[TokenUsage] = None
+
+
+@dataclass
+class FinalAnswerDeltaEvent(AgentEvent):
+    """最终结果区流式文本增量（仅 respond 阶段）。"""
+
+    delta: str
 
 
 @dataclass
@@ -49,13 +56,7 @@ class ErrorEvent(AgentEvent):
 
 @dataclass
 class ToolCallEvent(AgentEvent):
-    """即将调用工具。
-
-    约定：
-    - `call_id`：调用 ID
-    - `tool_name`：工具名称
-    - `args`：工具参数
-    """
+    """即将调用工具（思考过程区）。"""
 
     call_id: str
     tool_name: str
@@ -64,14 +65,7 @@ class ToolCallEvent(AgentEvent):
 
 @dataclass
 class ToolResultEvent(AgentEvent):
-    """工具执行结果。
-
-    约定：
-    - `call_id`：调用 ID
-    - `tool_name`：工具名称
-    - `result`：工具执行结果
-    - `is_error`：是否出错
-    """
+    """工具执行结果（思考过程区）。"""
 
     call_id: str
     tool_name: str
