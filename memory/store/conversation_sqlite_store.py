@@ -167,6 +167,102 @@ class ConversationSQLitesStore:
         ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
+    def get_records_after(
+        self,
+        session_id: str,
+        after_message_id: str | None,
+    ) -> list[ConversationMessageRecord]:
+        """获取某条消息之后的新消息（不含 checkpoint 本身，按时间正序）。"""
+        if not after_message_id:
+            return self.get_all_records(session_id)
+
+        anchor = self.conn.execute(
+            """
+            SELECT created_at, rowid
+            FROM conversation_memory
+            WHERE session_id = ? AND id = ?
+            """,
+            (session_id, after_message_id),
+        ).fetchone()
+        if anchor is None:
+            return self.get_all_records(session_id)
+
+        rows = self.conn.execute(
+            """
+            SELECT id, role, content, tool_calls, tool_call_id, name, metadata_json
+            FROM conversation_memory
+            WHERE session_id = ?
+              AND (
+                    created_at > ?
+                 OR (created_at = ? AND rowid > ?)
+              )
+            ORDER BY created_at ASC, rowid ASC
+            """,
+            (
+                session_id,
+                anchor["created_at"],
+                anchor["created_at"],
+                anchor["rowid"],
+            ),
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def count_user_messages(
+        self,
+        session_id: str,
+        after_message_id: str | None = None,
+    ) -> int:
+        """统计待处理 USER 消息数（用于定量触发）。"""
+        if not after_message_id:
+            row = self.conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM conversation_memory
+                WHERE session_id = ? AND role = 'user'
+                """,
+                (session_id,),
+            ).fetchone()
+            return int(row["cnt"]) if row else 0
+
+        anchor = self.conn.execute(
+            """
+            SELECT created_at, rowid
+            FROM conversation_memory
+            WHERE session_id = ? AND id = ?
+            """,
+            (session_id, after_message_id),
+        ).fetchone()
+        if anchor is None:
+            row = self.conn.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM conversation_memory
+                WHERE session_id = ? AND role = 'user'
+                """,
+                (session_id,),
+            ).fetchone()
+            return int(row["cnt"]) if row else 0
+
+        row = self.conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM conversation_memory
+            WHERE session_id = ?
+              AND role = 'user'
+              AND (
+                    created_at > ?
+                 OR (created_at = ? AND rowid > ?)
+              )
+            """,
+            (
+                session_id,
+                anchor["created_at"],
+                anchor["created_at"],
+                anchor["rowid"],
+            ),
+        ).fetchone()
+        return int(row["cnt"]) if row else 0
+
     def get_chat_history(self, session_id: str) -> list[dict[str, str]]:
         """获取会话中 user/assistant 消息（含时间戳，按时间正序）。"""
         rows = self.conn.execute(

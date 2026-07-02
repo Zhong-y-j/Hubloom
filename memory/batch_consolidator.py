@@ -279,6 +279,28 @@ class MemoryBatchConsolidator:
             result.skipped = True
         return result
 
+    async def consolidate_pending_turns(
+        self,
+        session_id: str,
+        turns: list[list[ConversationMessageRecord]],
+        *,
+        route: AgentRoute | None = None,
+    ) -> BatchConsolidationWriteResult:
+        """提炼多个待处理 turn，合并写入结果。"""
+        merged = BatchConsolidationWriteResult()
+        for turn in turns:
+            if not any(r.message.role == Role.USER for r in turn):
+                continue
+            part = await self.consolidate_segment(session_id, turn, route=route)
+            merged.turns_processed += 1
+            merged.cases_written.extend(part.cases_written)
+            merged.semantic_rules_written.extend(part.semantic_rules_written)
+            if part.error and not merged.error:
+                merged.error = part.error
+        if merged.total_written == 0 and merged.turns_processed == 0:
+            merged.skipped = True
+        return merged
+
     async def _load_records(
         self,
         session_id: str,
