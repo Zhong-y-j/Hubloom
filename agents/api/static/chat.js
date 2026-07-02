@@ -125,9 +125,12 @@
       }
       const data = await res.json();
       for (const msg of data.messages || []) {
-        const text = (msg.content || "").trim();
-        if (!text) continue;
-        appendMessage(msg.role === "user" ? "user" : "assistant", text);
+        if (msg.role === "user") {
+          const text = (msg.content || "").trim();
+          if (text) appendMessage("user", text);
+          continue;
+        }
+        renderAssistantHistory(msg);
       }
       ensureEmptyState();
       setStatus("就绪");
@@ -147,6 +150,68 @@
     els.messages.appendChild(div);
     scrollToBottom();
     return div;
+  }
+
+  function buildToolInline(title, body) {
+    const details = document.createElement("details");
+    details.className = "tool-inline";
+    details.open = false;
+    const summary = document.createElement("summary");
+    summary.textContent = title;
+    const pre = document.createElement("pre");
+    pre.textContent = body;
+    details.appendChild(summary);
+    details.appendChild(pre);
+    return details;
+  }
+
+  /** 从历史记录渲染助手消息（含可折叠思考区） */
+  function renderAssistantHistory(msg) {
+    const content = (msg.content || "").trim();
+    const thought = (msg.thought || "").trim();
+    const tools = Array.isArray(msg.tools) ? msg.tools : [];
+
+    if (!thought && !tools.length) {
+      if (content) appendMessage("assistant", content);
+      return;
+    }
+
+    removeEmptyState();
+    const root = document.createElement("div");
+    root.className = "msg assistant turn history";
+
+    const thoughtPanel = document.createElement("details");
+    thoughtPanel.className = "thought-panel";
+    thoughtPanel.open = false;
+    const thoughtSummary = document.createElement("summary");
+    thoughtSummary.className = "thought-summary";
+    const thoughtLen = thought.length;
+    thoughtSummary.textContent =
+      thoughtLen > 0 ? "思考过程（" + thoughtLen + " 字）" : "思考过程";
+    const thoughtBody = document.createElement("div");
+    thoughtBody.className = "thought-body";
+    if (thought) thoughtBody.textContent = thought;
+    const toolHost = document.createElement("div");
+    toolHost.className = "thought-tools";
+    if (els.showTools.checked) {
+      for (const item of tools) {
+        const title = (item.title || "").trim();
+        if (!title) continue;
+        toolHost.appendChild(buildToolInline(title, item.body || ""));
+      }
+    }
+    thoughtPanel.appendChild(thoughtSummary);
+    thoughtPanel.appendChild(thoughtBody);
+    if (toolHost.childElementCount > 0) thoughtPanel.appendChild(toolHost);
+
+    const answerEl = document.createElement("div");
+    answerEl.className = "answer-body";
+    answerEl.textContent = content || "（无文本回复）";
+
+    root.appendChild(thoughtPanel);
+    root.appendChild(answerEl);
+    els.messages.appendChild(root);
+    scrollToBottom();
   }
 
   /** 创建一轮助手回复容器：状态条 + 可折叠思考区 + 正式回复区 */
@@ -242,16 +307,7 @@
       if (!els.showTools.checked) return;
       showThoughtPanel();
       if (currentState !== "replying") setAgentState("thinking");
-      const details = document.createElement("details");
-      details.className = "tool-inline";
-      details.open = false;
-      const summary = document.createElement("summary");
-      summary.textContent = title;
-      const pre = document.createElement("pre");
-      pre.textContent = body;
-      details.appendChild(summary);
-      details.appendChild(pre);
-      toolHost.appendChild(details);
+      toolHost.appendChild(buildToolInline(title, body));
       scrollToBottom();
     }
 

@@ -264,10 +264,10 @@ class ConversationSQLitesStore:
         return int(row["cnt"]) if row else 0
 
     def get_chat_history(self, session_id: str) -> list[dict[str, str]]:
-        """获取会话中 user/assistant 消息（含时间戳，按时间正序）。"""
+        """获取会话中 user/assistant 消息（含时间戳与 metadata，按时间正序）。"""
         rows = self.conn.execute(
             """
-            SELECT role, content, created_at
+            SELECT role, content, created_at, metadata_json
             FROM conversation_memory
             WHERE session_id = ? AND role IN ('user', 'assistant')
             ORDER BY created_at ASC, rowid ASC
@@ -280,6 +280,7 @@ class ConversationSQLitesStore:
                 "role": row["role"],
                 "content": row["content"] or "",
                 "created_at": row["created_at"],
+                "metadata_json": row["metadata_json"] or "{}",
             }
             for row in rows
         ]

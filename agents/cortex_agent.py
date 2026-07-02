@@ -15,7 +15,14 @@ from core.models import Message, Role
 
 from agents.assessor import AssessResult, Assessor
 from agents.chat import Chat, build_chat_system_prompt
-from agents.events import AgentEvent, FinalAnswerEvent, PhaseEvent
+from agents.events import (
+    AgentEvent,
+    FinalAnswerEvent,
+    PhaseEvent,
+    ThoughtDeltaEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+)
 from agents.agent_log import clip, cortex_log, memory_log, clear_turn_id, set_turn_id
 from memory.memory_context import MemoryContextProvider, MemoryRecallContext
 
@@ -246,20 +253,61 @@ class CortexAgent:
         )
         cortex_log("persist user", session_id=self.namespace, content_len=len(text))
 
-    async def _persist_assistant(self, content: str) -> None:
-        """落库本轮 ASSISTANT（最终回复）。"""
+    async def _persist_assistant(
+        self,
+        content: str,
+        *,
+        metadata: dict | None = None,
+    ) -> None:
+        """落库本轮 ASSISTANT（最终回复）；思考过程等写入 metadata_json。"""
         text = (content or "").strip()
         if not text:
             return
         await self._memory_manager.remember(
             memory_type="conversation",
             message=Message(role=Role.ASSISTANT, content=text),
+            metadata=metadata,
         )
         cortex_log(
             "persist assistant",
             session_id=self.namespace,
             content_len=len(text),
+            has_thought=bool((metadata or {}).get("thought")),
         )
+
+    @staticmethod
+    def _compact_tool_result(result: str, max_len: int = 4000) -> str:
+        body = (result or "").strip()
+        if len(body) <= max_len:
+            return body
+        return body[: max_len - 3] + "..."
+
+    def _collect_turn_extra(
+        self,
+        ev: AgentEvent,
+        thought_parts: list[str],
+        tool_log: list[dict[str, str]],
+    ) -> None:
+        """从流式事件中累积思考文本与工具摘要，供历史回放。"""
+        if isinstance(ev, ThoughtDeltaEvent) and ev.delta:
+            thought_parts.append(ev.delta)
+        elif isinstance(ev, ToolCallEvent):
+            import json
+
+            tool_log.append(
+                {
+                    "title": f"调用 · {ev.tool_name}",
+                    "body": json.dumps(ev.args or {}, ensure_ascii=False, indent=2),
+                }
+            )
+        elif isinstance(ev, ToolResultEvent):
+            prefix = "失败 · " if ev.is_error else "返回 · "
+            tool_log.append(
+                {
+                    "title": f"{prefix}{ev.tool_name}",
+                    "body": self._compact_tool_result(ev.result),
+                }
+            )
 
     async def _persist_conversation_message(self, message: Message) -> None:
         """供 Thought 落库执行期消息（ASSISTANT+tool_calls / TOOL）。"""
@@ -402,20 +450,30 @@ class CortexAgent:
                 route=route.value,
             )
             final_answer = ""
+            thought_parts: list[str] = []
+            tool_log: list[dict[str, str]] = []
 
             if route == Route.CHAT:
                 async for ev in self._run_chat(messages):
+                    self._collect_turn_extra(ev, thought_parts, tool_log)
                     if isinstance(ev, FinalAnswerEvent) and ev.content:
                         final_answer = ev.content
                     yield ev
             else:
                 async for ev in self._run_thought(messages):
+                    self._collect_turn_extra(ev, thought_parts, tool_log)
                     if isinstance(ev, FinalAnswerEvent) and ev.content:
                         final_answer = ev.content
                     yield ev
 
             if final_answer:
-                await self._persist_assistant(final_answer)
+                turn_meta: dict = {"route": route.value}
+                thought_text = "".join(thought_parts).strip()
+                if thought_text:
+                    turn_meta["thought"] = thought_text
+                if tool_log:
+                    turn_meta["tools"] = tool_log
+                await self._persist_assistant(final_answer, metadata=turn_meta)
 
             self._last_outcome = TurnOutcome(
                 route=route,

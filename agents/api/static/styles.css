@@ -240,6 +240,14 @@ body {
   padding: 0.75rem 0.9rem;
 }
 
+.msg.assistant.turn.history {
+  padding: 0.75rem 0.9rem;
+}
+
+.msg.assistant.turn.history .thought-panel {
+  margin-bottom: 0.35rem;
+}
+
 .agent-status {
   display: flex;
   flex-wrap: wrap;
