@@ -32,6 +32,43 @@ from memory.factory import GraphBackend, VectorBackend
 from agents.prompts import ASSESSOR_SYSTEM, THOUGHT_CONTEXT_SYSTEM
 
 
+async def load_knowledge_base_from_env():
+    """按环境变量初始化 RAG 知识库（可选入库）。"""
+    import os
+    from pathlib import Path
+
+    from retrieval.rag_bootstrap import (
+        create_knowledge_base,
+        ingest_rag_sources,
+        is_rag_enabled,
+        parse_rag_doc_paths,
+    )
+
+    project_root = Path(__file__).resolve().parent.parent
+    rag_docs_raw = os.getenv("CORTEX_RAG_DOCS", "").strip()
+    if not is_rag_enabled(rag_docs_raw):
+        return None
+
+    kb_dir = os.getenv("CORTEX_KB_DIR", "data/knowledge_db")
+    kb = create_knowledge_base(persist_dir=kb_dir)
+    doc_paths = parse_rag_doc_paths(rag_docs_raw, project_root=project_root)
+    try:
+        indexed = await ingest_rag_sources(kb, doc_paths)
+        memory_log(
+            "cortex rag ready",
+            indexed=indexed,
+            doc_paths=len(doc_paths),
+            kb_dir=kb_dir,
+        )
+    except Exception as exc:
+        memory_log(
+            "cortex rag ingest failed",
+            error=type(exc).__name__,
+            detail=clip(str(exc), 120),
+        )
+    return kb
+
+
 class Route(str, Enum):
     """本轮走路径。"""
 
@@ -102,6 +139,33 @@ class CortexAgent:
             include_associative=include_graph_memory and resolved_graph == "neo4j",
         )
         self._context_assembler = ContextAssembler(max_tokens=5000, min_relevance=0.3)
+
+    def attach_readonly_tools(self, *, knowledge_base=None) -> None:
+        """注册只读内置工具：长期记忆检索、文档 RAG（供 Thought 执行阶段调用）。"""
+        from tools.builtin import SearchDocumentsTool, SearchMemoryTool
+        from tools.registry import ToolRegistry
+
+        if self.tools is None:
+            self.tools = ToolRegistry()
+
+        if self._enable_long_term_memory:
+            self.tools.register(
+                SearchMemoryTool(
+                    self._memory_manager,
+                    top_k=self._long_term_top_k,
+                    include_graph=self._include_graph_memory,
+                )
+            )
+
+        if knowledge_base is not None:
+            self.tools.register(SearchDocumentsTool(knowledge_base))
+
+        memory_log(
+            "cortex readonly tools attached",
+            search_memory=self._enable_long_term_memory,
+            search_documents=knowledge_base is not None,
+            total=len(self.tools.list_definitions()),
+        )
 
     def get_last_outcome(self) -> TurnOutcome | None:
         """返回上一轮编排结果。"""
@@ -328,6 +392,7 @@ async def main():
     )
 
     root = Path(__file__).resolve().parent.parent
+    kb = await load_knowledge_base_from_env()
     bindings = await load_mcp_tools(
         command="uv",
         args=["run", "python", "mcp_adapter/server.py"],
@@ -338,8 +403,9 @@ async def main():
         cortex_agent = CortexAgent(
             create_llm(), tools=tools, assessor=Assessor(create_llm())
         )
+        cortex_agent.attach_readonly_tools(knowledge_base=kb)
         query = "查询下我当前库存"
-        print(f"已加载 {len(tools.list_definitions())} 个工具\n")
+        print(f"已加载 {len(cortex_agent.tools.list_definitions())} 个工具\n")
         print(f"--- 用户：{query} ---\n")
         printed_thinking = False
         printed_final = False
