@@ -257,6 +257,33 @@ class QdrantMemoryStore:
         )
         return len(ids)
 
+    async def clear_collection(self) -> int:
+        """删除当前 collection 内全部向量点（所有 namespace）；返回删除条数。"""
+        all_points: list[Any] = []
+        offset = None
+        while True:
+            records, offset = await self._client.scroll(
+                collection_name=self.collection_name,
+                limit=256,
+                offset=offset,
+                with_payload=False,
+                with_vectors=False,
+            )
+            all_points.extend(records)
+            if offset is None:
+                break
+        if not all_points:
+            return 0
+        ids = [p.id for p in all_points]
+        batch_size = 256
+        for i in range(0, len(ids), batch_size):
+            batch = ids[i : i + batch_size]
+            await self._client.delete(
+                collection_name=self.collection_name,
+                points_selector=batch,
+            )
+        return len(ids)
+
     # ── 生命周期（供 TTLBasedPolicy 调用）────────────────
 
     async def ttl_evict(

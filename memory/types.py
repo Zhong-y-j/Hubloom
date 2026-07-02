@@ -28,3 +28,9 @@ RecallMode: TypeAlias = Literal["keyword", "semantic", "hybrid", "graph"]
 
 # 记忆来源
 MemorySource: TypeAlias = Literal["memory", "document", "knowledge"]
+
+# Experience Case（批量提炼）· 结果与评价
+CaseOutcome: TypeAlias = Literal["success", "partial", "failed", "unknown"]
+CaseSatisfaction: TypeAlias = Literal["yes", "no", "unknown"]
+RuleConfidence: TypeAlias = Literal["low", "medium", "high"]
+AgentRoute: TypeAlias = Literal["chat", "thought"]

@@ -1,4 +1,8 @@
-"""MemoryManager 统一接口验证。运行：uv run python -m memory.test_memory_manager
+"""MemoryManager 统一接口验证。
+
+运行::
+
+    PYTHONPATH=. uv run python -m memory.tests.test_memory_manager
 
 需要：
 - Qdrant（``QDRANT_URL`` / ``QDRANT_API_KEY``）
@@ -21,11 +25,9 @@ async def main() -> None:
 
     mem = create_memory_manager(namespace=namespace)
     await mem.clear_all()
-    # ── 向量长期记忆 ──
     await mem.remember(memory_type="episodic", content="用户在上海")
     await mem.remember(memory_type="semantic", content="喜欢唱歌跳舞打篮球")
 
-    # ── 联想记忆：实体关系 ──
     await mem.remember(
         memory_type="associative",
         content="居住",
@@ -38,7 +40,6 @@ async def main() -> None:
         },
     )
 
-    # ── 对话 ──
     await mem.remember(
         memory_type="conversation",
         message=Message(role=Role.USER, content="你好"),

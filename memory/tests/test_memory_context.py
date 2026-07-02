@@ -2,23 +2,13 @@
 
 运行（需 Qdrant + 嵌入；Neo4j 可选）::
 
-    PYTHONPATH=. uv run python -m memory.test_memory_context
-
-无图记忆::
-
-    PYTHONPATH=. uv run python -m memory.test_memory_context --no-graph
-
-打印每条 message 全文（不截断）::
-
-    PYTHONPATH=. uv run python -m memory.test_memory_context --full
+    PYTHONPATH=. uv run python -m memory.tests.test_memory_context
 """
 
 from __future__ import annotations
 
-import argparse
 import asyncio
 
-from core.models import Message, Role
 from memory.context import ContextAssembler
 from memory.factory import create_memory_manager
 from memory.memory_context import MemoryContextProvider

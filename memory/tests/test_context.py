@@ -2,7 +2,7 @@
 
 运行::
 
-    PYTHONPATH=. uv run python -m memory.test_context
+    PYTHONPATH=. uv run python -m memory.tests.test_context
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 运行（需 .env：OPENAI_API_KEY、Qdrant、Neo4j）::
 
-    PYTHONPATH=. uv run python -m memory.test_consolidator
+    PYTHONPATH=. uv run python -m memory.tests.test_consolidator
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from memory.consolidator import MemoryConsolidator
 from memory.factory import create_memory_manager
 from observability import setup_log
 
-# 模拟 ReAct 澄清/闲聊后一轮结束：信息多、实体多，便于观察提炼效果
 USER_MESSAGE = """\
 我叫陈艳，是法务部的，现在在上海总部办公。
 我们团队在跟「合同项目A」和「供应商B公司」谈采购框架协议，下周三（3月15日）前要出一版审查意见。
@@ -22,16 +21,7 @@ USER_MESSAGE = """\
 另外不要把我司内部的报价金额写进对外邮件草稿里。"""
 
 ASSISTANT_MESSAGE = """ """
-# ASSISTANT_MESSAGE = """\
-# 好的陈艳，已了解你的角色与场景，我按你的偏好来配合：
 
-# 1. 你在上海总部、法务部，当前主线是「合同项目A」与供应商B公司的采购框架协议，截止日期是 3月15日（下周三）。
-# 2. 你重点关注付款节点与违约责任；后续我会用简洁表述，并用编号列要点。
-# 3. 涉及内部报价金额的内容，我不会写进对外邮件草稿。
-
-# 接下来你可以把合同条款或草稿发我，我们从付款与违约章节开始审查。"""
-
-# 抽查 recall 用的查询（可与对话主题不同，用于测向量/图检索）
 RECALL_QUERY_HYBRID = "陈艳 合同项目A 付款 违约"
 RECALL_QUERY_SEMANTIC = "回复风格 简洁 要点"
 RECALL_QUERY_GRAPH = "陈艳"

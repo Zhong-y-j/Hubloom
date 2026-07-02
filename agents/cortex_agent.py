@@ -1,6 +1,7 @@
 """ADP 编排入口：Assessor 路由 → Chat（快答）或 Thought（慢思考）。
 
-本文件为骨架：构造器 + 方法占位；具体实现后续补齐。
+编排层职责：会话 recall、长期记忆 recall（只读）、ContextAssembler 装配、落库 conversation。
+长期记忆写入由离线 ``MemoryBatchConsolidator`` 负责，不在此模块执行。
 """
 
 from __future__ import annotations
@@ -15,17 +16,18 @@ from core.models import Message, Role
 from agents.assessor import AssessResult, Assessor
 from agents.chat import Chat, build_chat_system_prompt
 from agents.events import AgentEvent, FinalAnswerEvent
+from agents.agent_log import memory_log, clip
 from memory.memory_context import MemoryContextProvider, MemoryRecallContext
 
 if TYPE_CHECKING:
     from core.provider import LLMProvider
-    from memory.store.conversation_sqlite_store import ConversationSQLitesStore
     from tools.registry import ToolRegistry
 
     from agents.thought import Thought
 
 
 from memory import create_memory_manager, ContextAssembler
+from memory.factory import GraphBackend, VectorBackend
 
 from agents.prompts import ASSESSOR_SYSTEM, THOUGHT_CONTEXT_SYSTEM
 
@@ -60,6 +62,11 @@ class CortexAgent:
         session_id: str = "tester_id",
         history_limit: int = 20,
         router_history_limit: int = 5,
+        enable_long_term_memory: bool = True,
+        long_term_top_k: int = 5,
+        include_graph_memory: bool = False,
+        vector_backend: VectorBackend = "qdrant",
+        graph_backend: GraphBackend | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -69,21 +76,72 @@ class CortexAgent:
         self.session_id = session_id
         self.history_limit = history_limit
         self.router_history_limit = router_history_limit
+        self._enable_long_term_memory = enable_long_term_memory
+        self._long_term_top_k = long_term_top_k
+        self._include_graph_memory = include_graph_memory
         self._last_outcome: TurnOutcome | None = None
 
         self.namespace = f"mem:{session_id}:default"
 
+        resolved_graph: GraphBackend = (
+            graph_backend if graph_backend is not None
+            else ("neo4j" if include_graph_memory else "none")
+        )
+        resolved_vector: VectorBackend = (
+            vector_backend if enable_long_term_memory else "none"
+        )
+
         self._memory_manager = create_memory_manager(
-            namespace=self.namespace, graph_backend="none"
+            namespace=self.namespace,
+            vector_backend=resolved_vector,
+            graph_backend=resolved_graph,
         )
         self._memory_context = MemoryContextProvider(
-            self._memory_manager, hybrid_top_k=5, include_associative=True
+            self._memory_manager,
+            hybrid_top_k=long_term_top_k,
+            include_associative=include_graph_memory and resolved_graph == "neo4j",
         )
         self._context_assembler = ContextAssembler(max_tokens=5000, min_relevance=0.3)
 
     def get_last_outcome(self) -> TurnOutcome | None:
         """返回上一轮编排结果。"""
         return self._last_outcome
+
+    async def _recall_conversation(self) -> list[Message]:
+        """读取本会话近期对话（不含本轮尚未落库的 USER）。"""
+        conv = await self._memory_manager.recall(
+            memory_type="conversation", top_k=self.history_limit
+        )
+        return conv.messages or []
+
+    async def _recall_long_term_context(self, task: str) -> MemoryRecallContext:
+        """只读：hybrid 召回 episodic + semantic，可选图摘要 → 供 Assembler 消费。"""
+        if not self._enable_long_term_memory:
+            return MemoryRecallContext()
+        ctx = await self._memory_context.recall_for_context(task)
+        memory_log(
+            "cortex long_term recall",
+            task=clip(task, 80),
+            hits=len(ctx.memories or []),
+            has_graph=bool((ctx.graph_summary or "").strip()),
+        )
+        return ctx
+
+    def _assemble_agent_messages(
+        self,
+        route: Route,
+        task: str,
+        histories: list[Message],
+        memory_ctx: MemoryRecallContext,
+    ) -> list[Message]:
+        """按路由装配 Chat / Thought 可直接消费的 messages。"""
+        if route == Route.CHAT:
+            return self._assemble_chat_messages(
+                task, histories, memory_ctx=memory_ctx
+            )
+        return self._assemble_thought_messages(
+            task, histories, memory_ctx=memory_ctx
+        )
 
     def _router_histories(
         self, task: str, system_prompt: str, conv_messages: list[Message]
@@ -218,31 +276,26 @@ class CortexAgent:
             yield FinalAnswerEvent(content="请输入有效内容。")
             return
 
-        conv_messages = await self._memory_manager.recall(
-            memory_type="conversation", top_k=self.history_limit
-        )
-        histories = conv_messages.messages or []
+        conv_messages = await self._recall_conversation()
+        histories = conv_messages
 
         assess_result = await self._assess(text, histories)
         route = Route.THOUGHT if assess_result.need_deep_think else Route.CHAT
 
         await self._persist_user(text)
 
-        memory_ctx = await self._memory_context.recall_for_context(text)
+        memory_ctx = await self._recall_long_term_context(text)
+        messages = self._assemble_agent_messages(
+            route, text, histories, memory_ctx
+        )
         final_answer = ""
 
         if route == Route.CHAT:
-            messages = self._assemble_chat_messages(
-                text, histories, memory_ctx=memory_ctx
-            )
             async for ev in self._run_chat(messages):
                 if isinstance(ev, FinalAnswerEvent) and ev.content:
                     final_answer = ev.content
                 yield ev
         else:
-            messages = self._assemble_thought_messages(
-                text, histories, memory_ctx=memory_ctx
-            )
             async for ev in self._run_thought(messages):
                 if isinstance(ev, FinalAnswerEvent) and ev.content:
                     final_answer = ev.content

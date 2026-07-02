@@ -8,10 +8,19 @@ import json
 import os
 import sqlite3
 import uuid
+from dataclasses import dataclass
 from typing import Any, Optional
 
 from core.models import Message, Role, ToolCall
 from memory.store.schema_migrate import ensure_columns
+
+
+@dataclass(frozen=True)
+class ConversationMessageRecord:
+    """带数据库 id 的会话消息（供批量提炼定位 turn 范围）。"""
+
+    id: str
+    message: Message
 
 
 class ConversationSQLitesStore:
@@ -123,6 +132,12 @@ class ConversationSQLitesStore:
 
     def get_recent(self, session_id: str, limit: int = 20) -> list[Message]:
         """获取最近 N 条消息（按时间正序返回）。"""
+        return [r.message for r in self.get_recent_records(session_id, limit)]
+
+    def get_recent_records(
+        self, session_id: str, limit: int = 20
+    ) -> list[ConversationMessageRecord]:
+        """获取最近 N 条消息（含 id，按时间正序）。"""
         rows = self.conn.execute(
             """
             SELECT id, role, content, tool_calls, tool_call_id, name, metadata_json
@@ -133,11 +148,14 @@ class ConversationSQLitesStore:
             """,
             (session_id, limit),
         ).fetchall()
-
-        return [self._row_to_message(row) for row in reversed(rows)]
+        return [self._row_to_record(row) for row in reversed(rows)]
 
     def get_all(self, session_id: str) -> list[Message]:
         """获取会话的完整历史。"""
+        return [r.message for r in self.get_all_records(session_id)]
+
+    def get_all_records(self, session_id: str) -> list[ConversationMessageRecord]:
+        """获取会话完整历史（含 id，按时间正序）。"""
         rows = self.conn.execute(
             """
             SELECT id, role, content, tool_calls, tool_call_id, name, metadata_json
@@ -147,8 +165,7 @@ class ConversationSQLitesStore:
             """,
             (session_id,),
         ).fetchall()
-
-        return [self._row_to_message(row) for row in rows]
+        return [self._row_to_record(row) for row in rows]
 
     def get_chat_history(self, session_id: str) -> list[dict[str, str]]:
         """获取会话中 user/assistant 消息（含时间戳，按时间正序）。"""
@@ -209,6 +226,13 @@ class ConversationSQLitesStore:
             (session_id,),
         ).fetchone()
         return row["cnt"] if row else 0
+
+    @staticmethod
+    def _row_to_record(row: sqlite3.Row) -> ConversationMessageRecord:
+        return ConversationMessageRecord(
+            id=str(row["id"]),
+            message=ConversationSQLitesStore._row_to_message(row),
+        )
 
     @staticmethod
     def _row_to_message(row: sqlite3.Row) -> Message:
