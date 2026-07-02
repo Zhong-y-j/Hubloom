@@ -210,7 +210,7 @@ body {
 }
 
 .msg {
-  max-width: 85%;
+  max-width: 72%;
   padding: 0.85rem 1rem;
   border-radius: var(--radius);
   line-height: 1.55;
@@ -236,11 +236,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
-  max-width: 92%;
+  max-width: 72%;
   padding: 0.75rem 0.9rem;
 }
 
 .msg.assistant.turn.history {
+  max-width: 72%;
   padding: 0.75rem 0.9rem;
 }
 
@@ -599,5 +600,11 @@ body {
     border-bottom: 1px solid var(--border);
     max-height: 36vh;
     overflow-y: auto;
+  }
+
+  .msg,
+  .msg.assistant.turn,
+  .msg.assistant.turn.history {
+    max-width: 90%;
   }
 }
