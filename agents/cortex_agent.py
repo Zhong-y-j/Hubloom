@@ -229,12 +229,33 @@ class CortexAgent:
             task, histories, memory_ctx=memory_ctx
         )
 
+    @staticmethod
+    def _dialogue_for_llm(messages: list[Message]) -> list[Message]:
+        """供 Assessor / Chat 使用的对话片段：仅 USER/ASSISTANT，并去掉孤立的 tool_calls。
+
+        Thought 执行期会把 assistant(tool_calls) 与 tool 消息写入会话库；若只保留
+        assistant 而丢掉 tool，部分模型（如 DashScope）会报 messages 格式非法。
+        """
+        out: list[Message] = []
+        for msg in messages:
+            if msg.role not in (Role.USER, Role.ASSISTANT):
+                continue
+            if msg.role == Role.ASSISTANT and msg.tool_calls:
+                names = ", ".join(tc.name for tc in msg.tool_calls if tc.name)
+                content = (msg.content or "").strip()
+                if not content and names:
+                    content = f"[已调用工具: {names}]"
+                out.append(Message(role=Role.ASSISTANT, content=content))
+                continue
+            out.append(msg)
+        return out
+
     def _router_histories(
         self, task: str, system_prompt: str, conv_messages: list[Message]
     ) -> list[Message]:
         """供 Assessor 使用的短窗口历史。"""
 
-        dialogue = [m for m in conv_messages if m.role in (Role.USER, Role.ASSISTANT)]
+        dialogue = self._dialogue_for_llm(conv_messages)
         dialogue = dialogue[-self.router_history_limit :]
         return [
             Message(role=Role.SYSTEM, content=system_prompt),
@@ -329,7 +350,7 @@ class CortexAgent:
         self, histories: list[Message], task: str
     ) -> list[Message]:
         """会话历史：仅 USER/ASSISTANT；若末条已是本轮 USER 则去掉，避免重复。"""
-        dialogue = [m for m in histories if m.role in (Role.USER, Role.ASSISTANT)]
+        dialogue = self._dialogue_for_llm(histories)
         current = (task or "").strip()
         if (
             current
