@@ -74,6 +74,14 @@ class ToolResultEvent(AgentEvent):
 
 
 @dataclass
+class PhaseEvent(AgentEvent):
+    """编排阶段切换（供前端展示 Agent 状态）。"""
+
+    phase: str  # thinking | replying
+    route: str = ""
+
+
+@dataclass
 class RunStatsEvent(AgentEvent):
     """本轮运行统计信息（通常在结束前发出）。"""
 

@@ -15,7 +15,7 @@ from core.models import Message, Role
 
 from agents.assessor import AssessResult, Assessor
 from agents.chat import Chat, build_chat_system_prompt
-from agents.events import AgentEvent, FinalAnswerEvent
+from agents.events import AgentEvent, FinalAnswerEvent, PhaseEvent
 from agents.agent_log import clip, cortex_log, memory_log, clear_turn_id, set_turn_id
 from memory.memory_context import MemoryContextProvider, MemoryRecallContext
 
@@ -110,7 +110,6 @@ class CortexAgent:
         self.assessor = assessor
         self.chat = chat
         self.thought = thought
-        self.session_id = session_id
         self.history_limit = history_limit
         self.router_history_limit = router_history_limit
         self._enable_long_term_memory = enable_long_term_memory
@@ -118,7 +117,10 @@ class CortexAgent:
         self._include_graph_memory = include_graph_memory
         self._last_outcome: TurnOutcome | None = None
 
-        self.namespace = f"mem:{session_id}:default"
+        from agents.app.session import format_session_id
+
+        self.session_id = (session_id or "").strip() or "tester_id"
+        self.namespace = format_session_id(self.session_id)
 
         resolved_graph: GraphBackend = (
             graph_backend if graph_backend is not None
@@ -394,6 +396,10 @@ class CortexAgent:
                 message_count=len(messages),
                 memory_hits=len(memory_ctx.memories or []),
                 has_graph=bool((memory_ctx.graph_summary or "").strip()),
+            )
+            yield PhaseEvent(
+                phase="thinking" if route == Route.THOUGHT else "replying",
+                route=route.value,
             )
             final_answer = ""
 
