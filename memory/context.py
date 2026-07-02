@@ -5,7 +5,7 @@ GSSC 四阶段上下文装配器
 import re
 from typing import List, Optional, Dict, Any
 
-from agents.core.agent_log import memory_log
+from agents.agent_log import memory_log
 from core.models import Message, Role
 
 _MEMORY_TYPE_LABELS = {

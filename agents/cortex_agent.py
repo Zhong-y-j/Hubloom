@@ -1,0 +1,336 @@
+"""ADP 编排入口：Assessor 路由 → Chat（快答）或 Thought（慢思考）。
+
+本文件为骨架：构造器 + 方法占位；具体实现后续补齐。
+"""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from enum import Enum
+from typing import TYPE_CHECKING
+
+from core.models import Message, Role
+
+from agents.assessor import AssessResult, Assessor
+from agents.chat import Chat, build_chat_system_prompt
+from agents.events import AgentEvent, FinalAnswerEvent
+from memory.memory_context import MemoryContextProvider, MemoryRecallContext
+
+if TYPE_CHECKING:
+    from core.provider import LLMProvider
+    from memory.store.conversation_sqlite_store import ConversationSQLitesStore
+    from tools.registry import ToolRegistry
+
+    from agents.thought import Thought
+
+
+from memory import create_memory_manager, ContextAssembler
+
+from agents.prompts import ASSESSOR_SYSTEM, THOUGHT_CONTEXT_SYSTEM
+
+
+class Route(str, Enum):
+    """本轮走路径。"""
+
+    CHAT = "chat"
+    THOUGHT = "thought"
+
+
+@dataclass(frozen=True)
+class TurnOutcome:
+    """上一轮编排结果。"""
+
+    route: Route
+    assess: AssessResult
+    final_answer: str = ""
+
+
+class CortexAgent:
+    """Agent Cortex 统一入口（编排层）。"""
+
+    def __init__(
+        self,
+        llm: LLMProvider,
+        tools: ToolRegistry | None = None,
+        *,
+        assessor: Assessor | None = None,
+        chat: Chat | None = None,
+        thought: Thought | None = None,
+        session_id: str = "tester_id",
+        history_limit: int = 20,
+        router_history_limit: int = 5,
+    ) -> None:
+        self.llm = llm
+        self.tools = tools
+        self.assessor = assessor
+        self.chat = chat
+        self.thought = thought
+        self.session_id = session_id
+        self.history_limit = history_limit
+        self.router_history_limit = router_history_limit
+        self._last_outcome: TurnOutcome | None = None
+
+        self.namespace = f"mem:{session_id}:default"
+
+        self._memory_manager = create_memory_manager(
+            namespace=self.namespace, graph_backend="none"
+        )
+        self._memory_context = MemoryContextProvider(
+            self._memory_manager, hybrid_top_k=5, include_associative=True
+        )
+        self._context_assembler = ContextAssembler(max_tokens=5000, min_relevance=0.3)
+
+    def get_last_outcome(self) -> TurnOutcome | None:
+        """返回上一轮编排结果。"""
+        return self._last_outcome
+
+    def _router_histories(
+        self, task: str, system_prompt: str, conv_messages: list[Message]
+    ) -> list[Message]:
+        """供 Assessor 使用的短窗口历史。"""
+
+        dialogue = [m for m in conv_messages if m.role in (Role.USER, Role.ASSISTANT)]
+        dialogue = dialogue[-self.router_history_limit :]
+        return [
+            Message(role=Role.SYSTEM, content=system_prompt),
+            *dialogue,
+            Message(role=Role.USER, content=task),
+        ]
+
+    async def _persist_user(self, task: str) -> None:
+        """落库本轮 USER。"""
+        text = (task or "").strip()
+        if not text:
+            return
+        await self._memory_manager.remember(
+            memory_type="conversation",
+            message=Message(role=Role.USER, content=text),
+        )
+
+    async def _persist_assistant(self, content: str) -> None:
+        """落库本轮 ASSISTANT（最终回复）。"""
+        text = (content or "").strip()
+        if not text:
+            return
+        await self._memory_manager.remember(
+            memory_type="conversation",
+            message=Message(role=Role.ASSISTANT, content=text),
+        )
+
+    async def _persist_conversation_message(self, message: Message) -> None:
+        """供 Thought 落库执行期消息（ASSISTANT+tool_calls / TOOL）。"""
+        if message.role not in (Role.ASSISTANT, Role.TOOL):
+            return
+        await self._memory_manager.remember(
+            memory_type="conversation",
+            message=message,
+        )
+
+    async def _assess(self, task: str, conv_messages: list[Message]) -> AssessResult:
+        """静默路由评估。"""
+        if self.assessor is None:
+            self.assessor = Assessor(self.llm)
+        messages = self._router_histories(task, ASSESSOR_SYSTEM, conv_messages)
+        return await self.assessor.evaluate(messages, task)
+
+    def _dialogue_from_histories(
+        self, histories: list[Message], task: str
+    ) -> list[Message]:
+        """会话历史：仅 USER/ASSISTANT；若末条已是本轮 USER 则去掉，避免重复。"""
+        dialogue = [m for m in histories if m.role in (Role.USER, Role.ASSISTANT)]
+        current = (task or "").strip()
+        if (
+            current
+            and dialogue
+            and dialogue[-1].role == Role.USER
+            and (dialogue[-1].content or "").strip() == current
+        ):
+            dialogue = dialogue[:-1]
+        return dialogue
+
+    def _assemble_chat_messages(
+        self,
+        task: str,
+        histories: list[Message],
+        *,
+        memory_ctx: MemoryRecallContext | None = None,
+    ) -> list[Message]:
+        """快答路径：ContextAssembler + Chat system（可选长期记忆）。"""
+        ctx = memory_ctx or MemoryRecallContext()
+        return self._context_assembler.assemble(
+            system_prompt=build_chat_system_prompt(self.tools),
+            memories=ctx.memories or None,
+            documents=None,
+            histories=self._dialogue_from_histories(histories, task),
+            current_task=(task or "").strip(),
+            graph_summary=ctx.graph_summary,
+        )
+
+    def _assemble_thought_messages(
+        self,
+        task: str,
+        histories: list[Message],
+        *,
+        memory_ctx: MemoryRecallContext | None = None,
+    ) -> list[Message]:
+        """慢思考路径：会话 + 长期记忆背景（各阶段 SYSTEM 由 Thought 注入）。"""
+        ctx = memory_ctx or MemoryRecallContext()
+        return self._context_assembler.assemble(
+            system_prompt=THOUGHT_CONTEXT_SYSTEM,
+            memories=ctx.memories or None,
+            documents=None,
+            histories=self._dialogue_from_histories(histories, task),
+            current_task=(task or "").strip(),
+            graph_summary=ctx.graph_summary,
+        )
+
+    async def _run_chat(
+        self,
+        messages: list[Message],
+    ) -> AsyncIterator[AgentEvent]:
+        """快答路径执行：透传 Chat 流式事件。"""
+        if self.chat is None:
+            self.chat = Chat(self.llm)
+        async for ev in self.chat.run_stream(messages):
+            yield ev
+
+    async def _run_thought(
+        self,
+        messages: list[Message],
+    ) -> AsyncIterator[AgentEvent]:
+        """慢思考路径执行：透传 Thought 流式事件。"""
+        from agents.thought import Thought
+
+        if self.thought is None:
+            self.thought = Thought(
+                self.llm,
+                tools=self.tools,
+                persist_message=self._persist_conversation_message,
+            )
+        async for ev in self.thought.run_stream(messages):
+            yield ev
+
+    async def run_stream(self, task: str) -> AsyncIterator[AgentEvent]:
+        """单轮编排入口：评估 → 快答 / 慢思考 → 落库。"""
+        text = (task or "").strip()
+        if not text:
+            yield FinalAnswerEvent(content="请输入有效内容。")
+            return
+
+        conv_messages = await self._memory_manager.recall(
+            memory_type="conversation", top_k=self.history_limit
+        )
+        histories = conv_messages.messages or []
+
+        assess_result = await self._assess(text, histories)
+        route = Route.THOUGHT if assess_result.need_deep_think else Route.CHAT
+
+        await self._persist_user(text)
+
+        memory_ctx = await self._memory_context.recall_for_context(text)
+        final_answer = ""
+
+        if route == Route.CHAT:
+            messages = self._assemble_chat_messages(
+                text, histories, memory_ctx=memory_ctx
+            )
+            async for ev in self._run_chat(messages):
+                if isinstance(ev, FinalAnswerEvent) and ev.content:
+                    final_answer = ev.content
+                yield ev
+        else:
+            messages = self._assemble_thought_messages(
+                text, histories, memory_ctx=memory_ctx
+            )
+            async for ev in self._run_thought(messages):
+                if isinstance(ev, FinalAnswerEvent) and ev.content:
+                    final_answer = ev.content
+                yield ev
+
+        if final_answer:
+            await self._persist_assistant(final_answer)
+
+        self._last_outcome = TurnOutcome(
+            route=route,
+            assess=assess_result,
+            final_answer=final_answer,
+        )
+
+
+async def main():
+    from pathlib import Path
+
+    from core.factory import create_llm
+    from mcp_adapter import load_mcp_tools
+    from tools.registry import ToolRegistry
+
+    from agents.events import (
+        ErrorEvent,
+        FinalAnswerDeltaEvent,
+        FinalAnswerEvent,
+        ThoughtDeltaEvent,
+        ToolCallEvent,
+        ToolResultEvent,
+    )
+
+    root = Path(__file__).resolve().parent.parent
+    bindings = await load_mcp_tools(
+        command="uv",
+        args=["run", "python", "mcp_adapter/server.py"],
+        cwd=str(root),
+    )
+    try:
+        tools = ToolRegistry.from_tools(bindings.tools)
+        cortex_agent = CortexAgent(
+            create_llm(), tools=tools, assessor=Assessor(create_llm())
+        )
+        query = "查询下我当前库存"
+        print(f"已加载 {len(tools.list_definitions())} 个工具\n")
+        print(f"--- 用户：{query} ---\n")
+        printed_thinking = False
+        printed_final = False
+        async for ev in cortex_agent.run_stream(query):
+            if isinstance(ev, ThoughtDeltaEvent):
+                if not printed_thinking:
+                    printed_thinking = True
+                    print("【思考过程】")
+                print(ev.delta, end="", flush=True)
+            elif isinstance(ev, ToolCallEvent):
+                if not printed_thinking:
+                    printed_thinking = True
+                    print("【思考过程】")
+                print(f"\n[调用工具] {ev.tool_name} {ev.args}", flush=True)
+            elif isinstance(ev, ToolResultEvent):
+                if not printed_thinking:
+                    printed_thinking = True
+                    print("【思考过程】")
+                status = "错误" if ev.is_error else "结果"
+                print(f"\n[工具{status}] {ev.tool_name}: {ev.result}", flush=True)
+            elif isinstance(ev, FinalAnswerDeltaEvent):
+                if not printed_final:
+                    printed_final = True
+                    prefix = "\n\n" if printed_thinking else ""
+                    print(f"{prefix}【最终回复】")
+                print(ev.delta, end="", flush=True)
+            elif isinstance(ev, FinalAnswerEvent):
+                if ev.content:
+                    if not printed_final:
+                        printed_final = True
+                        prefix = "\n\n" if printed_thinking else ""
+                        print(f"{prefix}【最终回复】")
+                        print(ev.content, end="", flush=True)
+                    print()
+            elif isinstance(ev, ErrorEvent):
+                print(f"\n[错误] {ev.error}")
+        print()
+    finally:
+        await bindings.client.close()
+
+
+if __name__ == "__main__":
+    import asyncio
+    from observability import setup_log
+
+    setup_log()
+    asyncio.run(main())

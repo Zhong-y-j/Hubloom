@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -35,6 +35,8 @@ from tools.runner import ToolRunner
 
 if TYPE_CHECKING:
     from core.provider import LLMProvider
+
+PersistMessageFn = Callable[[Message], Awaitable[None]]
 
 _DELIBERATE_BEFORE = """你是 Agent Cortex（灵枢），正在心里盘算接下来如何处理用户任务，并把思路说出来。
 
@@ -132,6 +134,23 @@ def build_execute_prompt(tools: ToolRegistry | None) -> str:
     return "\n\n".join(parts)
 
 
+def _task_from_messages(messages: list[Message]) -> str:
+    """从编排层 messages 末条 USER 提取当前任务。"""
+    for m in reversed(messages):
+        if m.role == Role.USER:
+            return (m.content or "").strip()
+    return ""
+
+
+def _context_backdrop(messages: list[Message]) -> list[Message]:
+    """编排层背景：去掉末条 USER（当前任务），保留记忆块与历史对话。"""
+    if not messages:
+        return []
+    if messages[-1].role == Role.USER:
+        return list(messages[:-1])
+    return list(messages)
+
+
 def _execute_user_message(task: str, observations: list[str]) -> str:
     text = (task or "").strip()
     if not observations:
@@ -149,9 +168,13 @@ def _respond_user_message(task: str, observations: list[str]) -> str:
 
 
 def _respond_messages(
-    task: str, execute_messages: list[Message], observations: list[str]
+    task: str,
+    execute_messages: list[Message],
+    observations: list[str],
+    *,
+    backdrop: list[Message] | None = None,
 ) -> list[Message]:
-    """组装响应阶段消息：优先复用执行轮对话，否则回退到任务 + 观察。"""
+    """组装响应阶段消息：优先复用执行轮对话，否则回退到背景 + 任务 + 观察。"""
     if execute_messages:
         return [
             Message(role=Role.SYSTEM, content=_RESPOND.strip()),
@@ -160,6 +183,7 @@ def _respond_messages(
         ]
     return [
         Message(role=Role.SYSTEM, content=_RESPOND.strip()),
+        *(backdrop or []),
         Message(role=Role.USER, content=_respond_user_message(task, observations)),
     ]
 
@@ -195,22 +219,42 @@ class Thought:
         *,
         max_execute_steps: int = 20,
         max_replan_rounds: int = 2,
+        persist_message: PersistMessageFn | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
         self.max_execute_steps = max_execute_steps
         self.max_replan_rounds = max_replan_rounds
+        self._persist_message = persist_message
         self._observations: list[str] = []
         self._execute_messages: list[Message] = []
+        self._backdrop: list[Message] = []
         self._execute_had_errors = False
         self._execute_hit_step_limit = False
+
+    async def _persist_conversation_message(self, message: Message) -> None:
+        """将执行期 ASSISTANT(tool_calls) / TOOL 写入会话存储。"""
+        if self._persist_message is None:
+            return
+        await self._persist_message(message)
 
     # ------------------------------------------------------------------
     # 主流程
     # ------------------------------------------------------------------
 
-    async def run_stream(self, task: str) -> AsyncIterator[AgentEvent]:
-        """深度路径入口：组合各阶段。"""
+    async def run_stream(self, messages: list[Message]) -> AsyncIterator[AgentEvent]:
+        """深度路径入口：消费编排层装配的 messages（背景 + 当前 USER）。"""
+        self._observations = []
+        self._execute_messages = []
+        self._execute_had_errors = False
+        self._execute_hit_step_limit = False
+        self._backdrop = _context_backdrop(messages)
+
+        task = _task_from_messages(messages)
+        if not task:
+            yield FinalAnswerEvent(content="未收到有效任务，请重新描述您的需求。")
+            return
+
         async for ev in self.deliberate(task, ThoughtPhase.BEFORE_EXECUTE):
             yield ev
 
@@ -255,6 +299,7 @@ class Thought:
         async for ev in self.llm.generate_stream(
             messages=[
                 Message(role=Role.SYSTEM, content=system),
+                *self._backdrop,
                 Message(role=Role.USER, content=user_content),
             ],
             tools=None,
@@ -302,6 +347,7 @@ class Thought:
         else:
             self._execute_messages = [
                 Message(role=Role.SYSTEM, content=build_execute_prompt(self.tools)),
+                *self._backdrop,
                 Message(
                     role=Role.USER,
                     content=_execute_user_message(text, self._observations),
@@ -347,13 +393,13 @@ class Thought:
                 return
 
             if final_stop == StopReason.TOOL_CALLS and tool_calls:
-                self._execute_messages.append(
-                    Message(
-                        role=Role.ASSISTANT,
-                        content=full_text.strip(),
-                        tool_calls=tool_calls,
-                    )
+                assistant_msg = Message(
+                    role=Role.ASSISTANT,
+                    content=full_text.strip(),
+                    tool_calls=tool_calls,
                 )
+                self._execute_messages.append(assistant_msg)
+                await self._persist_conversation_message(assistant_msg)
 
                 for tc in tool_calls:
                     yield ToolCallEvent(
@@ -376,14 +422,14 @@ class Thought:
                         is_error=is_error,
                     )
                     self.append_tool_result(tc.name, result, is_error=is_error)
-                    self._execute_messages.append(
-                        Message(
-                            role=Role.TOOL,
-                            content=result,
-                            tool_call_id=tc.id,
-                            name=tc.name,
-                        )
+                    tool_msg = Message(
+                        role=Role.TOOL,
+                        content=result,
+                        tool_call_id=tc.id,
+                        name=tc.name,
                     )
+                    self._execute_messages.append(tool_msg)
+                    await self._persist_conversation_message(tool_msg)
                 continue
 
             if final_stop == StopReason.LENGTH:
@@ -408,7 +454,12 @@ class Thought:
             yield FinalAnswerEvent(content="未收到有效任务，请重新描述您的需求。")
             return
 
-        messages = _respond_messages(text, self._execute_messages, self._observations)
+        messages = _respond_messages(
+            text,
+            self._execute_messages,
+            self._observations,
+            backdrop=self._backdrop,
+        )
         full_text = ""
         usage: TokenUsage | None = None
 
@@ -460,6 +511,9 @@ async def main():
     from mcp_adapter import load_mcp_tools
     from tools import ToolRegistry
 
+    from agents.prompts import THOUGHT_CONTEXT_SYSTEM
+    from memory.context import ContextAssembler
+
     bindings = await load_mcp_tools(
         command="uv",
         args=["run", "python", "mcp_adapter/server.py"],
@@ -470,6 +524,10 @@ async def main():
         thought = Thought(create_llm(), tools)
         # query = "帮我列出当前所有小区，并且每个小区的详情，小区绑定的优惠卷，以及这些小区关联的钥匙柜，钥匙柜的状态是什么"
         query = "你有什么能力呢"
+        messages = ContextAssembler().assemble(
+            system_prompt=THOUGHT_CONTEXT_SYSTEM,
+            current_task=query,
+        )
         print(f"已加载 {len(tools.list_definitions())} 个工具\n")
         print(f"--- 用户：{query} ---\n")
         thought_phase: str | None = None
@@ -492,7 +550,7 @@ async def main():
                 final_open = True
                 thought_phase = None
 
-        async for ev in thought.run_stream(query):
+        async for ev in thought.run_stream(messages):
             if isinstance(ev, ThoughtDeltaEvent):
                 _open_thinking()
                 if ev.phase != thought_phase:

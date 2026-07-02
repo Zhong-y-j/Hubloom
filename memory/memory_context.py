@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from agents.agent_log import clip, memory_log
 
-from .manager import MemoryManager, RecallResult
 from .models import AssociativeRecallResult, EpisodicItem, SemanticItem
+
+if TYPE_CHECKING:
+    from .manager import MemoryManager, RecallResult
 
 
 @dataclass
