@@ -16,7 +16,7 @@ from core.models import Message, Role
 from agents.assessor import AssessResult, Assessor
 from agents.chat import Chat, build_chat_system_prompt
 from agents.events import AgentEvent, FinalAnswerEvent
-from agents.agent_log import memory_log, clip
+from agents.agent_log import clip, cortex_log, memory_log, clear_turn_id, set_turn_id
 from memory.memory_context import MemoryContextProvider, MemoryRecallContext
 
 if TYPE_CHECKING:
@@ -166,6 +166,12 @@ class CortexAgent:
             search_documents=knowledge_base is not None,
             total=len(self.tools.list_definitions()),
         )
+        cortex_log(
+            "readonly tools attached",
+            search_memory=self._enable_long_term_memory,
+            search_documents=knowledge_base is not None,
+            tool_count=len(self.tools.list_definitions()),
+        )
 
     def get_last_outcome(self) -> TurnOutcome | None:
         """返回上一轮编排结果。"""
@@ -176,7 +182,14 @@ class CortexAgent:
         conv = await self._memory_manager.recall(
             memory_type="conversation", top_k=self.history_limit
         )
-        return conv.messages or []
+        messages = conv.messages or []
+        cortex_log(
+            "conversation recall",
+            session_id=self.namespace,
+            count=len(messages),
+            top_k=self.history_limit,
+        )
+        return messages
 
     async def _recall_long_term_context(self, task: str) -> MemoryRecallContext:
         """只读：hybrid 召回 episodic + semantic，可选图摘要 → 供 Assembler 消费。"""
@@ -229,6 +242,7 @@ class CortexAgent:
             memory_type="conversation",
             message=Message(role=Role.USER, content=text),
         )
+        cortex_log("persist user", session_id=self.namespace, content_len=len(text))
 
     async def _persist_assistant(self, content: str) -> None:
         """落库本轮 ASSISTANT（最终回复）。"""
@@ -238,6 +252,11 @@ class CortexAgent:
         await self._memory_manager.remember(
             memory_type="conversation",
             message=Message(role=Role.ASSISTANT, content=text),
+        )
+        cortex_log(
+            "persist assistant",
+            session_id=self.namespace,
+            content_len=len(text),
         )
 
     async def _persist_conversation_message(self, message: Message) -> None:
@@ -335,44 +354,76 @@ class CortexAgent:
 
     async def run_stream(self, task: str) -> AsyncIterator[AgentEvent]:
         """单轮编排入口：评估 → 快答 / 慢思考 → 落库。"""
+        import uuid
+
         text = (task or "").strip()
         if not text:
             yield FinalAnswerEvent(content="请输入有效内容。")
             return
 
-        conv_messages = await self._recall_conversation()
-        histories = conv_messages
-
-        assess_result = await self._assess(text, histories)
-        route = Route.THOUGHT if assess_result.need_deep_think else Route.CHAT
-
-        await self._persist_user(text)
-
-        memory_ctx = await self._recall_long_term_context(text)
-        messages = self._assemble_agent_messages(
-            route, text, histories, memory_ctx
+        turn_id = uuid.uuid4().hex[:8]
+        set_turn_id(turn_id)
+        cortex_log(
+            "turn start",
+            session_id=self.namespace,
+            task=clip(text, 80),
+            turn_id=turn_id,
         )
-        final_answer = ""
 
-        if route == Route.CHAT:
-            async for ev in self._run_chat(messages):
-                if isinstance(ev, FinalAnswerEvent) and ev.content:
-                    final_answer = ev.content
-                yield ev
-        else:
-            async for ev in self._run_thought(messages):
-                if isinstance(ev, FinalAnswerEvent) and ev.content:
-                    final_answer = ev.content
-                yield ev
+        try:
+            conv_messages = await self._recall_conversation()
+            histories = conv_messages
 
-        if final_answer:
-            await self._persist_assistant(final_answer)
+            assess_result = await self._assess(text, histories)
+            route = Route.THOUGHT if assess_result.need_deep_think else Route.CHAT
+            cortex_log(
+                "route selected",
+                route=route.value,
+                reason=clip(assess_result.reason, 40),
+            )
 
-        self._last_outcome = TurnOutcome(
-            route=route,
-            assess=assess_result,
-            final_answer=final_answer,
-        )
+            await self._persist_user(text)
+
+            memory_ctx = await self._recall_long_term_context(text)
+            messages = self._assemble_agent_messages(
+                route, text, histories, memory_ctx
+            )
+            cortex_log(
+                "messages assembled",
+                route=route.value,
+                message_count=len(messages),
+                memory_hits=len(memory_ctx.memories or []),
+                has_graph=bool((memory_ctx.graph_summary or "").strip()),
+            )
+            final_answer = ""
+
+            if route == Route.CHAT:
+                async for ev in self._run_chat(messages):
+                    if isinstance(ev, FinalAnswerEvent) and ev.content:
+                        final_answer = ev.content
+                    yield ev
+            else:
+                async for ev in self._run_thought(messages):
+                    if isinstance(ev, FinalAnswerEvent) and ev.content:
+                        final_answer = ev.content
+                    yield ev
+
+            if final_answer:
+                await self._persist_assistant(final_answer)
+
+            self._last_outcome = TurnOutcome(
+                route=route,
+                assess=assess_result,
+                final_answer=final_answer,
+            )
+            cortex_log(
+                "turn done",
+                route=route.value,
+                answer_len=len(final_answer),
+                turn_id=turn_id,
+            )
+        finally:
+            clear_turn_id()
 
 
 async def main():

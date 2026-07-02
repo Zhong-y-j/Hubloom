@@ -24,6 +24,7 @@ from agents.events import (
     FinalAnswerDeltaEvent,
     FinalAnswerEvent,
 )
+from agents.agent_log import clip, cortex_log
 from agents.thought import format_tool_summaries
 from memory.context import ContextAssembler
 from tools.registry import ToolRegistry
@@ -87,6 +88,7 @@ class Chat:
             yield FinalAnswerEvent(content="未收到有效消息，请重新输入。")
             return
 
+        cortex_log("chat run_stream start", message_count=len(messages))
         full_text = ""
         usage: TokenUsage | None = None
 
@@ -99,17 +101,29 @@ class Chat:
                 usage = ev.output.usage
                 break
             elif isinstance(ev, StreamErrorEvent):
+                cortex_log(
+                    "chat stream error",
+                    error=clip(str(ev.error), 120),
+                )
                 yield ErrorEvent(error=str(ev.error))
                 return
         else:
+            cortex_log("chat stream incomplete", reason="no StreamEndEvent")
             yield ErrorEvent(error="LLM 流结束但未收到 StreamEndEvent")
             return
 
         answer = full_text.strip()
         if not answer:
+            cortex_log("chat empty answer")
             yield ErrorEvent(error="未能生成回复")
             return
 
+        cortex_log(
+            "chat run_stream done",
+            answer_len=len(answer),
+            prompt_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
+            completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
+        )
         yield FinalAnswerEvent(content=answer, usage=usage)
 
 

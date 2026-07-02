@@ -30,6 +30,7 @@ from agents.events import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from agents.agent_log import clip, cortex_log
 from tools.registry import ToolRegistry
 from tools.runner import ToolRunner
 
@@ -255,6 +256,16 @@ class Thought:
             yield FinalAnswerEvent(content="未收到有效任务，请重新描述您的需求。")
             return
 
+        tool_count = (
+            len(self.tools.list_definitions()) if self.tools is not None else 0
+        )
+        cortex_log(
+            "thought run_stream start",
+            task=clip(task, 80),
+            backdrop_msgs=len(self._backdrop),
+            tool_count=tool_count,
+        )
+
         async for ev in self.deliberate(task, ThoughtPhase.BEFORE_EXECUTE):
             yield ev
 
@@ -264,6 +275,12 @@ class Thought:
         replan_round = 0
         while self.should_replan(task) and replan_round < self.max_replan_rounds:
             replan_round += 1
+            cortex_log(
+                "thought replan",
+                round=replan_round,
+                had_errors=self._execute_had_errors,
+                hit_step_limit=self._execute_hit_step_limit,
+            )
             async for ev in self.replan(task):
                 yield ev
             async for ev in self.execute(task, resume=True):
@@ -274,6 +291,14 @@ class Thought:
 
         async for ev in self.respond(task):
             yield ev
+
+        cortex_log(
+            "thought run_stream done",
+            task=clip(task, 80),
+            observations=len(self._observations),
+            replan_rounds=replan_round,
+            execute_msgs=len(self._execute_messages),
+        )
 
     # ------------------------------------------------------------------
     # 阶段方法
@@ -295,6 +320,7 @@ class Thought:
 
         system = build_deliberate_prompt(self.tools, phase)
         user_content = _deliberate_user_message(text, phase, self._observations)
+        cortex_log("thought deliberate start", phase=phase.value, task=clip(text, 80))
 
         async for ev in self.llm.generate_stream(
             messages=[
@@ -307,11 +333,18 @@ class Thought:
             if isinstance(ev, DeltaEvent):
                 yield ThoughtDeltaEvent(phase=phase.value, delta=ev.delta)
             elif isinstance(ev, StreamErrorEvent):
+                cortex_log(
+                    "thought deliberate error",
+                    phase=phase.value,
+                    error=clip(str(ev.error), 120),
+                )
                 yield ErrorEvent(error=str(ev.error))
                 return
             elif isinstance(ev, StreamEndEvent):
+                cortex_log("thought deliberate done", phase=phase.value)
                 return
 
+        cortex_log("thought deliberate incomplete", phase=phase.value)
         yield ErrorEvent(error="LLM 流结束但未收到 StreamEndEvent")
 
     async def execute(
@@ -323,6 +356,7 @@ class Thought:
             return
 
         if self.tools is None or not self.tools.list_definitions():
+            cortex_log("thought execute skipped", reason="no_tools")
             yield ErrorEvent(error="未配置可用工具，无法执行")
             return
 
@@ -330,6 +364,13 @@ class Thought:
         self._execute_hit_step_limit = False
         tool_defs = self.tools.list_definitions()
         tool_runner = ToolRunner(self.tools)
+        cortex_log(
+            "thought execute start",
+            task=clip(text, 80),
+            resume=resume,
+            tool_count=len(tool_defs),
+            max_steps=self.max_execute_steps,
+        )
 
         if resume and self._execute_messages:
             self._execute_messages[0] = Message(
@@ -354,7 +395,7 @@ class Thought:
                 ),
             ]
 
-        for _ in range(self.max_execute_steps):
+        for step in range(1, self.max_execute_steps + 1):
             full_text = ""
             final_stop: StopReason | None = None
             tool_calls = []
@@ -376,10 +417,16 @@ class Thought:
                     tool_calls = out.tool_calls
                     break
                 elif isinstance(ev, StreamErrorEvent):
+                    cortex_log(
+                        "thought execute stream error",
+                        step=step,
+                        error=clip(str(ev.error), 120),
+                    )
                     yield ErrorEvent(error=str(ev.error))
                     return
 
             if final_stop is None:
+                cortex_log("thought execute incomplete", step=step)
                 yield ErrorEvent(error="LLM 流结束但未收到 StreamEndEvent")
                 return
 
@@ -390,9 +437,22 @@ class Thought:
                         Message(role=Role.ASSISTANT, content=answer)
                     )
                 self._execute_hit_step_limit = False
+                cortex_log(
+                    "thought execute done",
+                    step=step,
+                    stop_reason="stop",
+                    content_len=len(answer),
+                )
                 return
 
             if final_stop == StopReason.TOOL_CALLS and tool_calls:
+                tool_names = [tc.name for tc in tool_calls]
+                cortex_log(
+                    "thought execute tool_calls",
+                    step=step,
+                    tools=",".join(tool_names),
+                    count=len(tool_calls),
+                )
                 assistant_msg = Message(
                     role=Role.ASSISTANT,
                     content=full_text.strip(),
@@ -415,6 +475,13 @@ class Thought:
                 for tc, (result, is_error) in zip(tool_calls, results):
                     if is_error:
                         self._execute_had_errors = True
+                    cortex_log(
+                        "thought tool result",
+                        step=step,
+                        tool=tc.name,
+                        is_error=is_error,
+                        preview=clip(result, 100),
+                    )
                     yield ToolResultEvent(
                         call_id=tc.id,
                         tool_name=tc.name,
@@ -433,13 +500,24 @@ class Thought:
                 continue
 
             if final_stop == StopReason.LENGTH:
+                cortex_log("thought execute length limit", step=step)
                 yield ErrorEvent(error="生成长度超限，执行中断")
                 return
 
+            cortex_log(
+                "thought execute unexpected stop",
+                step=step,
+                stop_reason=str(final_stop),
+            )
             yield ErrorEvent(error=f"未处理的结束原因：{final_stop}")
             return
 
         self._execute_hit_step_limit = True
+        cortex_log(
+            "thought execute step limit",
+            max_steps=self.max_execute_steps,
+            had_errors=self._execute_had_errors,
+        )
         yield ErrorEvent(error=f"执行步数已达上限（{self.max_execute_steps}）")
 
     async def replan(self, task: str) -> AsyncIterator[AgentEvent]:
@@ -460,6 +538,12 @@ class Thought:
             self._observations,
             backdrop=self._backdrop,
         )
+        cortex_log(
+            "thought respond start",
+            task=clip(text, 80),
+            message_count=len(messages),
+            observations=len(self._observations),
+        )
         full_text = ""
         usage: TokenUsage | None = None
 
@@ -472,17 +556,29 @@ class Thought:
                 usage = ev.output.usage
                 break
             elif isinstance(ev, StreamErrorEvent):
+                cortex_log(
+                    "thought respond error",
+                    error=clip(str(ev.error), 120),
+                )
                 yield ErrorEvent(error=str(ev.error))
                 return
         else:
+            cortex_log("thought respond incomplete")
             yield ErrorEvent(error="LLM 流结束但未收到 StreamEndEvent")
             return
 
         answer = full_text.strip()
         if not answer:
+            cortex_log("thought respond empty")
             yield ErrorEvent(error="未能生成最终回复")
             return
 
+        cortex_log(
+            "thought respond done",
+            answer_len=len(answer),
+            prompt_tokens=getattr(usage, "prompt_tokens", None) if usage else None,
+            completion_tokens=getattr(usage, "completion_tokens", None) if usage else None,
+        )
         yield FinalAnswerEvent(content=answer, usage=usage)
 
     # ------------------------------------------------------------------

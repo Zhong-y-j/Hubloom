@@ -20,6 +20,8 @@ if str(_ROOT) not in sys.path:
 
 from core.models import Message, Role
 
+from agents.agent_log import clip, cortex_log
+
 if TYPE_CHECKING:
     from core.provider import LLMProvider
 
@@ -58,9 +60,31 @@ class Assessor:
         self.llm = llm
 
     async def evaluate(self, messages: list[Message], task: str) -> AssessResult:
-        out = await self.llm.generate(
-            messages=messages,
-            tools=None,
+        cortex_log(
+            "assessor evaluate start",
+            task=clip(task, 80),
+            history_msgs=max(0, len(messages) - 2),
         )
-        data = _extract_json_object(out.content or "")
-        return _parse_result(data, task=task)
+        try:
+            out = await self.llm.generate(
+                messages=messages,
+                tools=None,
+            )
+            data = _extract_json_object(out.content or "")
+            result = _parse_result(data, task=task)
+        except Exception as exc:
+            cortex_log(
+                "assessor evaluate failed",
+                task=clip(task, 80),
+                error=type(exc).__name__,
+                detail=clip(str(exc), 120),
+            )
+            raise
+        cortex_log(
+            "assessor evaluate done",
+            task=clip(task, 80),
+            need_deep_think=result.need_deep_think,
+            reason=clip(result.reason, 40),
+            route="thought" if result.need_deep_think else "chat",
+        )
+        return result
