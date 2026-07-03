@@ -26,6 +26,30 @@
 
   let busy = false;
 
+  if (typeof marked !== "undefined") {
+    marked.use({ breaks: true, gfm: true });
+  }
+
+  function renderMarkdown(el, text) {
+    if (!text) {
+      el.textContent = "";
+      el.classList.remove("markdown-body");
+      return;
+    }
+    if (typeof marked === "undefined" || typeof DOMPurify === "undefined") {
+      el.textContent = text;
+      el.classList.remove("markdown-body");
+      return;
+    }
+    const raw = marked.parse(text);
+    el.innerHTML = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+    el.querySelectorAll("a").forEach(function (a) {
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener noreferrer");
+    });
+    el.classList.add("markdown-body");
+  }
+
   function uuid() {
     if (crypto.randomUUID) return crypto.randomUUID();
     return "sess-" + Date.now().toString(36);
@@ -146,7 +170,11 @@
     removeEmptyState();
     const div = document.createElement("div");
     div.className = "msg " + role + (extraClass ? " " + extraClass : "");
-    div.textContent = text;
+    if (role === "assistant") {
+      renderMarkdown(div, text);
+    } else {
+      div.textContent = text;
+    }
     els.messages.appendChild(div);
     scrollToBottom();
     return div;
@@ -206,7 +234,7 @@
 
     const answerEl = document.createElement("div");
     answerEl.className = "answer-body";
-    answerEl.textContent = content || "（无文本回复）";
+    renderMarkdown(answerEl, content || "（无文本回复）");
 
     root.appendChild(thoughtPanel);
     root.appendChild(answerEl);
@@ -332,11 +360,11 @@
       const text = (finalText || answerText || "").trim();
       if (text) {
         answerEl.classList.remove("hidden");
-        answerEl.textContent = text;
+        renderMarkdown(answerEl, text);
         answerText = text;
       } else if (!answerText.trim()) {
         answerEl.classList.remove("hidden");
-        answerEl.textContent = "（无文本回复）";
+        renderMarkdown(answerEl, "（无文本回复）");
       }
       if (hasThought) {
         thoughtPanel.classList.remove("hidden");

@@ -1,18 +1,35 @@
 .venv
-__pycache__
 venv
+__pycache__/
+*.py[cod]
 
 .env
+.env.*
+!.env.example
 
-# 忽略 data 目录下所有内容（含子目录，如 knowledge_db、chroma 等）
+# 运行时数据（memory.db、knowledge_db、chroma 等）
 data/
 
 # 运行时日志（保留 logs/.gitkeep）
-logs/*.log
-logs/*.log.*
+logs/*
+!logs/.gitkeep
 
-# 内部设计文档（仅本地保留，不纳入版本库）
-设计思路.md
-RAG设计.md
-LLM 封装.md
-记忆封装.md
+public/
+
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+.mypy_cache/
+.ruff_cache/
+
+dist/
+build/
+*.egg-info/
+.eggs/
+
+.DS_Store
+**/.DS_Store
+ 

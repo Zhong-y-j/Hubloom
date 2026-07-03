@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional
@@ -71,7 +72,26 @@ def _parse_call_tool_result(
     body = ""
 
     structured = getattr(result, "structuredContent", None)
-    if isinstance(structured, dict):
+    text_body = _extract_text_content(result)
+
+    if text_body:
+        try:
+            parsed_text = json.loads(text_body)
+            if isinstance(parsed_text, dict) and "code" in parsed_text:
+                body = text_body
+                structured = parsed_text
+            elif isinstance(structured, dict):
+                payload = {
+                    k: v
+                    for k, v in structured.items()
+                    if k not in {"_http_status", "_http_reason"}
+                }
+                if payload:
+                    body = json.dumps(payload, ensure_ascii=False)
+        except json.JSONDecodeError:
+            body = text_body
+
+    if not body and isinstance(structured, dict):
         # 兼容旧版：http 元数据曾误写入 structured_content
         if http_status is None and "_http_status" in structured:
             try:
@@ -86,8 +106,6 @@ def _parse_call_tool_result(
             if k not in {"_http_status", "_http_reason"}
         }
         if payload:
-            import json
-
             body = json.dumps(payload, ensure_ascii=False)
         elif http_status is not None:
             body = ""

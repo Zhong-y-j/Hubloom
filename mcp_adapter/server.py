@@ -1,11 +1,13 @@
 import os
 import time
+from typing import Any
 
 import httpx
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 
 from http_context import StatusCapturingClient, get_last_http_response
+from response_normalize import drf_pagination_from_envelope
 from spec_loader import prepare_openapi
 
 load_dotenv()
@@ -22,20 +24,37 @@ SWAGGER_URL = _env(
 )
 BASE_URL = _env("MCP_BASE_URL")
 TOKEN = _env("MCP_TOKEN")
+# 认证前缀：不同后端不一致（simplejwt/DVAdmin 用 JWT，OAuth2 用 Bearer）
+AUTH_SCHEME = _env("MCP_AUTH_SCHEME", "Bearer")
 
 headers = {}
 if TOKEN:
-    headers["Authorization"] = f"Bearer {TOKEN}"
+    headers["Authorization"] = f"{AUTH_SCHEME} {TOKEN}" if AUTH_SCHEME else TOKEN
 
 
 def _patch_openapi_tools_with_http_status() -> None:
-    """在 FastMCP OpenAPI 工具返回中注入 http_status（传输层事实）。"""
+    """在 FastMCP OpenAPI 工具返回中注入 http_status，并修正分页响应结构。"""
+    import json
+
     from fastmcp.server.providers.openapi.components import OpenAPITool
     from fastmcp.tools.base import ToolResult
+    from mcp.types import TextContent
 
     from log import clip_text, dumps_clip, mcp_log
 
     original_run = OpenAPITool.run
+
+    def _raw_http_json() -> dict[str, Any] | list[Any] | None:
+        response = get_last_http_response()
+        if response is None:
+            return None
+        text = (response.text or "").strip()
+        if not text:
+            return None
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
 
     async def run_with_http_status(self, arguments: dict):
         tool_name = getattr(self, "name", type(self).__name__)
@@ -66,6 +85,23 @@ def _patch_openapi_tools_with_http_status() -> None:
             reason = None
 
         if isinstance(result, ToolResult):
+            raw_payload = _raw_http_json()
+            structured = (
+                dict(result.structured_content)
+                if isinstance(result.structured_content, dict)
+                else result.structured_content
+            )
+            content = list(result.content or [])
+            if isinstance(raw_payload, dict):
+                normalized = drf_pagination_from_envelope(raw_payload)
+                if normalized is not None:
+                    structured = normalized
+                    raw_text = json.dumps(raw_payload, ensure_ascii=False)
+                    if not any(
+                        getattr(block, "text", None) == raw_text for block in content
+                    ):
+                        content.insert(0, TextContent(type="text", text=raw_text))
+
             if result.is_error:
                 err_parts = []
                 for block in result.content or []:
@@ -74,6 +110,13 @@ def _patch_openapi_tools_with_http_status() -> None:
                         err_parts.append(text)
                 fields["is_error"] = True
                 fields["error"] = clip_text("\n".join(err_parts) or "ToolResult.is_error")
+            elif isinstance(structured, dict) and structured:
+                payload = {
+                    k: v
+                    for k, v in structured.items()
+                    if not str(k).startswith("_http_")
+                }
+                fields["result"] = dumps_clip(payload if payload else structured)
             elif result.structured_content is not None:
                 payload = {
                     k: v
@@ -95,8 +138,8 @@ def _patch_openapi_tools_with_http_status() -> None:
             meta["http_status"] = status
             meta["http_reason"] = reason
             return ToolResult(
-                structured_content=result.structured_content,
-                content=result.content,
+                structured_content=structured,
+                content=content,
                 is_error=result.is_error,
                 meta=meta,
             )
