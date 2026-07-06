@@ -36,7 +36,9 @@ async def load_spec(source: str) -> dict[str, Any]:
 
 async def main():
     spec = await load_spec("https://petstore.swagger.io/v2/swagger.json")
-    print(spec)
+    print(spec.get("swagger") or spec.get("openapi"))
+    # paths: 你的 Swagger 里写的不同的 URL 端点
+    print(len(spec.get("paths", {})))
 
 
 if __name__ == "__main__":
