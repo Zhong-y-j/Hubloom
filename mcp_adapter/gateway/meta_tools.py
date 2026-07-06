@@ -52,7 +52,8 @@ def register_meta_tools(
         description=(
             "列出 API 分组（OpenAPI tag）。"
             "先调用此工具了解有哪些分组，再用 list_tools 查看组内工具。"
-        )
+        ),
+        run_in_thread=False,
     )
     async def list_groups() -> list[dict[str, Any]]:
         running = set(router.pool.running_tags())
@@ -75,7 +76,8 @@ def register_meta_tools(
         description=(
             "列出指定 tag 分组内的工具（含 parameters JSON Schema）。"
             "tag 必须来自 list_groups 的返回值。"
-        )
+        ),
+        run_in_thread=False,
     )
     async def list_tools(tag: str) -> list[dict[str, Any]]:
         return await router.list_tools(tag)
@@ -85,7 +87,8 @@ def register_meta_tools(
             "调用指定分组内的工具。"
             "tag 来自 list_groups；tool_name 来自 list_tools；"
             "arguments 为该工具的参数对象。"
-        )
+        ),
+        run_in_thread=False,
     )
     async def call_tool(
         tag: str,
