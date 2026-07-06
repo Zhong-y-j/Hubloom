@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from agents.api.context import get_bearer_token
 from mcp_adapter import MCPToolClient
+from mcp_adapter.auth import resolve_auth_token
 from tools.base import BaseTool
 
 
@@ -87,7 +89,11 @@ class MCPTool(BaseTool):
                 _coerce_args(self.parameters, kwargs),
             )
         )
-        result = await self._client.execute_tool(self.name, payload)
+        result = await self._client.execute_tool(
+            self.name,
+            payload,
+            auth_token=resolve_auth_token(get_bearer_token()),
+        )
         if not result.transport_ok:
             raise RuntimeError(result.error or "MCP 工具调用失败")
         return result.to_llm_text()

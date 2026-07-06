@@ -1,9 +1,10 @@
 import os
 
-import httpx
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 
+from mcp_adapter.auth import AuthPassthroughMiddleware
+from mcp_adapter.server.http_client import AuthedHttpClient
 from mcp_adapter.spec.filter import ToolFilter
 from mcp_adapter.spec.pipeline import prepare_openapi
 
@@ -31,17 +32,19 @@ async def build_backend_mcp(*, tag: str | None) -> FastMCP:
         tool_filter=tool_filter,
     )
 
-    client = httpx.AsyncClient(
+    client = AuthedHttpClient(
         base_url=resolved_base,
         trust_env=False,
         timeout=30.0,
     )
 
-    return FastMCP.from_openapi(
+    mcp = FastMCP.from_openapi(
         openapi_spec=openapi,
         client=client,
         name=server_name,
     )
+    mcp.add_middleware(AuthPassthroughMiddleware())
+    return mcp
 
 
 async def run_backend_stdio(*, tag: str | None) -> None:

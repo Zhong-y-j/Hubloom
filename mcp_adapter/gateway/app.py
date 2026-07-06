@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastmcp import FastMCP
 
 from mcp_adapter.gateway.catalog import load_catalog
+from mcp_adapter.auth import AuthPassthroughMiddleware
 from mcp_adapter.gateway.meta_tools import register_meta_tools
 from mcp_adapter.gateway.pool import BackendPool
 from mcp_adapter.gateway.router import BackendRouter
@@ -20,6 +21,7 @@ def build_gateway_mcp(catalog, router: BackendRouter) -> FastMCP:
         ),
     )
     register_meta_tools(mcp, router)
+    mcp.add_middleware(AuthPassthroughMiddleware())
     return mcp
 
 

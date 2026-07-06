@@ -47,10 +47,17 @@ class BackendRouter:
         tag: str,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
+        *,
+        auth_token: str | None = None,
     ) -> Any:
         self._ensure_tag(tag)
         self._ensure_tool(tag, tool_name)
-        return await self._pool.call_tool(tag, tool_name, arguments)
+        return await self._pool.call_tool(
+            tag,
+            tool_name,
+            arguments,
+            auth_token=auth_token,
+        )
 
     async def close(self) -> None:
         if self._owns_pool:

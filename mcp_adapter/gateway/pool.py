@@ -16,6 +16,7 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from mcp_adapter.auth import build_auth_meta
 from mcp_adapter.gateway.catalog import GatewayCatalog
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -155,10 +156,13 @@ class BackendPool:
         tag: str,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
+        *,
+        auth_token: str | None = None,
     ) -> Any:
         session = await self._get_session(tag)
+        meta = build_auth_meta(auth_token)
         return await asyncio.wait_for(
-            session.call_tool(tool_name, arguments or {}),
+            session.call_tool(tool_name, arguments or {}, meta=meta),
             timeout=self._timeout,
         )
 
@@ -170,8 +174,17 @@ class BackendPool:
         tag: str,
         tool_name: str,
         arguments: dict[str, Any] | None = None,
+        *,
+        auth_token: str | None = None,
     ) -> Any:
-        return await self._call_bg(self._call_tool_impl(tag, tool_name, arguments))
+        return await self._call_bg(
+            self._call_tool_impl(
+                tag,
+                tool_name,
+                arguments,
+                auth_token=auth_token,
+            )
+        )
 
     async def _prewarm_impl(self, tags: list[str] | None = None) -> None:
         wanted = tags if tags is not None else self._prewarm_tags

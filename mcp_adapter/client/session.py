@@ -10,6 +10,7 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from mcp_adapter.auth import build_auth_meta, resolve_auth_token
 from mcp_adapter.client.result import parse_call_tool_result, tool_input_schema
 from mcp_adapter.log import clip_text, dumps_clip, mcp_log
 from tools.tool_result import ToolTransportResult
@@ -84,6 +85,8 @@ class MCPToolClient:
         self,
         tool_name: str,
         arguments: dict[str, Any],
+        *,
+        auth_token: str | None = None,
     ) -> ToolTransportResult:
         """调用 MCP 工具，返回传输层结果。"""
         if not self._session:
@@ -91,9 +94,10 @@ class MCPToolClient:
 
         mcp_log("tool start", tool=tool_name, args=dumps_clip(arguments))
         start = time.monotonic()
+        meta = build_auth_meta(resolve_auth_token(auth_token))
         try:
             result = await asyncio.wait_for(
-                self._session.call_tool(tool_name, arguments),
+                self._session.call_tool(tool_name, arguments, meta=meta),
                 timeout=self.timeout,
             )
             transport = parse_call_tool_result(
@@ -132,8 +136,16 @@ class MCPToolClient:
         self,
         tool_name: str,
         arguments: dict[str, Any],
+        *,
+        auth_token: str | None = None,
     ) -> str:
-        return (await self.execute_tool(tool_name, arguments)).to_llm_text()
+        return (
+            await self.execute_tool(
+                tool_name,
+                arguments,
+                auth_token=auth_token,
+            )
+        ).to_llm_text()
 
 
 async def _demo() -> None:

@@ -7,6 +7,7 @@ from typing import Any
 
 from fastmcp import FastMCP
 
+from mcp_adapter.auth import get_request_auth_token
 from mcp_adapter.gateway.router import BackendRouter
 
 
@@ -69,5 +70,10 @@ def register_meta_tools(
         tool_name: str,
         arguments: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        result = await router.call_tool(tag, tool_name, arguments)
+        result = await router.call_tool(
+            tag,
+            tool_name,
+            arguments,
+            auth_token=get_request_auth_token(),
+        )
         return _format_call_tool_result(result)
