@@ -29,6 +29,7 @@ class CortexRuntime:
     knowledge_base: Any | None = None
     enable_mcp: bool = True
     memory_db_path: str = DEFAULT_MEMORY_DB
+    api_catalog_prompt: str = ""
     _mcp_tools: list[Any] = field(default_factory=list)
 
     async def close(self) -> None:
@@ -47,6 +48,7 @@ class CortexRuntime:
             session_id=key,
             enable_long_term_memory=ENABLE_LONG_TERM_MEMORY,
             include_graph_memory=ENABLE_LONG_TERM_MEMORY,
+            api_catalog_prompt=self.api_catalog_prompt,
         )
         agent.attach_readonly_tools(knowledge_base=self.knowledge_base)
         return agent
@@ -60,6 +62,21 @@ async def build_runtime_async(*, enable_mcp: bool = True) -> CortexRuntime:
         runtime.knowledge_base = await load_knowledge_base_from_env()
 
     if enable_mcp:
+        try:
+            from mcp_adapter.gateway.catalog import (
+                format_catalog_for_prompt,
+                load_catalog,
+            )
+
+            catalog = await load_catalog()
+            runtime.api_catalog_prompt = format_catalog_for_prompt(catalog)
+            cortex_log(
+                "runtime api catalog loaded",
+                group_count=len(catalog.list_tags()),
+            )
+        except Exception as exc:
+            cortex_log("runtime api catalog load failed", error=str(exc))
+
         try:
             from mcp_adapter import load_mcp_tools
 

@@ -37,7 +37,7 @@ _CHAT_SYSTEM = """你是 **Agent Cortex（灵枢）**，面向用户的智能助
 要求：
 - 语气自然、专业、可执行
 - 结合对话历史作答
-- 自我介绍或能力介绍时：根据下方「可用工具」各条 description 归纳 2～5 条用户可发起的任务示例
+- 自我介绍或能力介绍时：根据下方「可用工具」与「API 分组」各条 description 归纳 2～5 条用户可发起的任务示例
 - 禁止编造未出现在工具列表中的能力或服务
 - 本路径不调用外部工具；若用户需要查询或修改业务数据，友好说明可以协助，并引导其说出具体需求
 - 不要提及内部架构、评估器、快慢路径、ReAct 等术语
@@ -47,9 +47,14 @@ _CHAT_SYSTEM = """你是 **Agent Cortex（灵枢）**，面向用户的智能助
 def build_chat_system_prompt(
     tools: ToolRegistry | None,
     base: str | None = None,
+    *,
+    catalog_snippet: str = "",
 ) -> str:
-    """快答 system prompt（含工具能力简表），供编排层 ``assemble`` 使用。"""
+    """快答 system prompt（含 API 分组目录与工具能力简表），供编排层 ``assemble`` 使用。"""
     parts = [(base or _CHAT_SYSTEM).strip()]
+    snippet = (catalog_snippet or "").strip()
+    if snippet:
+        parts.append(snippet)
     if tools is not None:
         summary = format_tool_summaries(tools)
         if summary:

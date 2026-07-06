@@ -150,10 +150,12 @@ async def _demo() -> None:
     await client.connect()
     try:
         tools = await client.list_tools()
-        print(f"发现 {len(tools)} 个工具:", [t["name"] for t in tools])
+        print(f"发现 {len(tools)} 个元工具:", [t["name"] for t in tools])
         print()
-        out = await client.execute_tool("list_groups", {})
-        print(out.to_llm_text())
+        from mcp_adapter.gateway.catalog import format_catalog_for_prompt, load_catalog
+
+        catalog = await load_catalog()
+        print(format_catalog_for_prompt(catalog))
     finally:
         await client.close()
 

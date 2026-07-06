@@ -61,6 +61,29 @@ class GatewayCatalog:
             print(f"  {tag}: {g.tool_count} 个工具 — {g.description[:40]}")
 
 
+_CATALOG_USAGE = (
+    "调用方式：根据上表选定 tag，调用 list_tools(tag) 查看工具名与参数，"
+    "再用 call_tool(tag, tool_name, arguments) 调用；无参接口可不传 arguments。"
+)
+
+
+def format_catalog_for_prompt(catalog: GatewayCatalog) -> str:
+    """把分组目录格式化为注入 Chat / Thought system prompt 的片段。"""
+    if not catalog.groups:
+        return ""
+
+    lines = ["【API 分组（OpenAPI tag）】"]
+    for tag in catalog.list_tags():
+        group = catalog.get_group(tag)
+        if not group:
+            continue
+        lines.append(
+            f"- {tag}（{group.tool_count} 个工具）：{group.description}"
+        )
+    lines.append(_CATALOG_USAGE)
+    return "\n".join(lines)
+
+
 def _tag_descriptions(spec: dict) -> dict[str, str]:
     """OpenAPI 顶层 tags 里的 description（若有）。"""
     out: dict[str, str] = {}

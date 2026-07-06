@@ -111,9 +111,11 @@ class CortexAgent:
         include_graph_memory: bool = False,
         vector_backend: VectorBackend = "qdrant",
         graph_backend: GraphBackend | None = None,
+        api_catalog_prompt: str = "",
     ) -> None:
         self.llm = llm
         self.tools = tools
+        self.api_catalog_prompt = (api_catalog_prompt or "").strip()
         self.assessor = assessor
         self.chat = chat
         self.thought = thought
@@ -371,7 +373,10 @@ class CortexAgent:
         """快答路径：ContextAssembler + Chat system（可选长期记忆）。"""
         ctx = memory_ctx or MemoryRecallContext()
         return self._context_assembler.assemble(
-            system_prompt=build_chat_system_prompt(self.tools),
+            system_prompt=build_chat_system_prompt(
+                self.tools,
+                catalog_snippet=self.api_catalog_prompt,
+            ),
             memories=ctx.memories or None,
             documents=None,
             histories=self._dialogue_from_histories(histories, task),
@@ -419,6 +424,7 @@ class CortexAgent:
                 self.llm,
                 tools=self.tools,
                 persist_message=self._persist_conversation_message,
+                api_catalog_prompt=self.api_catalog_prompt,
             )
         async for ev in self.thought.run_stream(messages):
             yield ev

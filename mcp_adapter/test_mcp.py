@@ -83,10 +83,12 @@ async def cmd_list(bindings) -> None:
             print(f"  参数: {', '.join(params.keys())}")
 
 
-async def cmd_groups(bindings) -> None:
-    print("=== list_groups ===")
-    text = await _run_meta(bindings, "list_groups")
-    print(_pp(text))
+async def cmd_groups() -> None:
+    from mcp_adapter.gateway.catalog import format_catalog_for_prompt, load_catalog
+
+    print("=== API 分组目录（来自 Swagger，非 MCP 工具）===")
+    catalog = await load_catalog()
+    print(format_catalog_for_prompt(catalog))
 
 
 async def cmd_tools(bindings, tag: str) -> None:
@@ -127,7 +129,7 @@ async def cmd_smoke(
     await cmd_list(bindings)
     print()
 
-    await cmd_groups(bindings)
+    await cmd_groups()
     print()
 
     await cmd_tools(bindings, tag)
@@ -144,7 +146,7 @@ async def cmd_interactive(bindings) -> None:
 
     while True:
         print("-" * 60)
-        print("1) list_groups")
+        print("1) 打印 API 分组目录（Swagger）")
         print("2) list_tools <tag>")
         print("3) call_tool <tag> <tool_name> [json_args]")
         print("4) 任意元工具 <name> [json_kwargs]")
@@ -155,7 +157,7 @@ async def cmd_interactive(bindings) -> None:
 
         try:
             if line == "1":
-                await cmd_groups(bindings)
+                await cmd_groups()
                 continue
 
             parts = line.split(maxsplit=1)
@@ -205,7 +207,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("-i", "--interactive", action="store_true", help="交互模式")
     p.add_argument("--list", action="store_true", help="列出元工具")
-    p.add_argument("--groups", action="store_true", help="调用 list_groups")
+    p.add_argument("--groups", action="store_true", help="打印 API 分组目录（Swagger）")
     p.add_argument("--tools", metavar="TAG", help="调用 list_tools")
     p.add_argument(
         "--call",
@@ -263,7 +265,7 @@ async def main() -> int:
             return 0
 
         if args.groups:
-            await cmd_groups(bindings)
+            await cmd_groups()
             return 0
 
         if args.tools:

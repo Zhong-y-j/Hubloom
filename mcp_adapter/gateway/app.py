@@ -14,11 +14,12 @@ def build_gateway_mcp(catalog, router: BackendRouter) -> FastMCP:
     mcp = FastMCP(
         name="Gateway",
         instructions=(
-            "这是 API 网关。流程：list_groups → list_tools(tag) → "
+            "这是 API 网关。流程：list_tools(tag) → "
             "call_tool(tag, tool_name, arguments)。"
+            "tag 列表见 Agent system prompt 中的 API 分组目录。"
         ),
     )
-    register_meta_tools(mcp, catalog, router)
+    register_meta_tools(mcp, router)
     return mcp
 
 
