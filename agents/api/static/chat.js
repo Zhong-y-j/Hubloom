@@ -180,6 +180,20 @@
     return div;
   }
 
+  /** call_tool 等元工具在 UI 上展示内部 tool_name */
+  function resolveToolDisplayName(toolName, args) {
+    const name = (toolName || "").trim() || "tool";
+    if (
+      name === "call_tool" &&
+      args &&
+      typeof args.tool_name === "string" &&
+      args.tool_name.trim()
+    ) {
+      return args.tool_name.trim();
+    }
+    return name;
+  }
+
   function buildToolInline(title, body) {
     const details = document.createElement("details");
     details.className = "tool-inline";
@@ -480,7 +494,10 @@
         } else if (event === "text_delta" && data.delta) {
           turn.appendAnswerDelta(data.delta);
         } else if (event === "tool_call") {
-          const toolName = data.tool_name || "tool";
+          const toolName = resolveToolDisplayName(
+            data.tool_name || "tool",
+            data.args || {}
+          );
           turn.appendToolBlock(
             "调用 · " + toolName,
             JSON.stringify(data.args || {}, null, 2)

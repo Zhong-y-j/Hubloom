@@ -28,6 +28,17 @@ class ChatHistoryResponse(BaseModel):
     total: int = Field(description="messages 条数")
 
 
+def _is_display_assistant(meta: dict[str, Any]) -> bool:
+    """是否应在历史 UI 展示该条 assistant。
+
+    Thought 执行期会把带 tool_calls 的中间进度写入会话库（供多轮 recall），
+    但只有带 route / thought / tools 的条目才是本轮最终展示块。
+    """
+    if meta.get("display") is False:
+        return False
+    return bool(meta.get("route") or meta.get("thought") or meta.get("tools"))
+
+
 def _parse_metadata(raw: str | None) -> dict[str, Any]:
     if not raw:
         return {}
@@ -47,6 +58,8 @@ def messages_for_display(rows: list[dict[str, str]]) -> list[HistoryMessage]:
             continue
         content = (row.get("content") or "").strip()
         meta = _parse_metadata(row.get("metadata_json"))
+        if role == "assistant" and not _is_display_assistant(meta):
+            continue
         thought = (meta.get("thought") or "").strip() or None
         route = (meta.get("route") or "").strip() or None
         tools_raw = meta.get("tools") or []

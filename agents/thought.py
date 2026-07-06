@@ -33,6 +33,7 @@ from agents.events import (
     ToolResultEvent,
 )
 from agents.agent_log import clip, cortex_log
+from agents.tool_display import resolve_tool_display_name
 from tools.registry import ToolRegistry
 from tools.runner import ToolRunner
 
@@ -688,20 +689,22 @@ class Thought:
                 for tc, (result, is_error) in zip(tool_calls, results):
                     if is_error:
                         self._execute_had_errors = True
+                    display_name = resolve_tool_display_name(tc.name, tc.arguments)
                     cortex_log(
                         "thought tool result",
                         step=step,
                         tool=tc.name,
+                        display_name=display_name,
                         is_error=is_error,
                         preview=clip(result, 100),
                     )
                     yield ToolResultEvent(
                         call_id=tc.id,
-                        tool_name=tc.name,
+                        tool_name=display_name,
                         result=result,
                         is_error=is_error,
                     )
-                    self.append_tool_result(tc.name, result, is_error=is_error)
+                    self.append_tool_result(display_name, result, is_error=is_error)
                     tool_msg = Message(
                         role=Role.TOOL,
                         content=result,

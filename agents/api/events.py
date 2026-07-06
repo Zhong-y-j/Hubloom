@@ -15,6 +15,7 @@ from agents.events import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from agents.tool_display import resolve_tool_display_name
 
 
 def compact_tool_result(result: str, max_len: int = 4000) -> str:
@@ -37,7 +38,7 @@ def event_to_sse(ev: AgentEvent) -> tuple[str, dict[str, Any]] | None:
     if isinstance(ev, ToolCallEvent):
         return "tool_call", {
             "call_id": ev.call_id,
-            "tool_name": ev.tool_name,
+            "tool_name": resolve_tool_display_name(ev.tool_name, ev.args),
             "args": ev.args,
         }
     if isinstance(ev, ToolResultEvent):

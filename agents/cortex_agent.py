@@ -15,6 +15,7 @@ from core.models import Message, Role
 
 from agents.assessor import AssessResult, Assessor
 from agents.chat import Chat, build_chat_system_prompt
+from agents.tool_display import resolve_tool_display_name
 from agents.events import (
     AgentEvent,
     FinalAnswerEvent,
@@ -317,9 +318,10 @@ class CortexAgent:
         elif isinstance(ev, ToolCallEvent):
             import json
 
+            display = resolve_tool_display_name(ev.tool_name, ev.args)
             tool_log.append(
                 {
-                    "title": f"调用 · {ev.tool_name}",
+                    "title": f"调用 · {display}",
                     "body": json.dumps(ev.args or {}, ensure_ascii=False, indent=2),
                 }
             )
@@ -336,9 +338,13 @@ class CortexAgent:
         """供 Thought 落库执行期消息（ASSISTANT+tool_calls / TOOL）。"""
         if message.role not in (Role.ASSISTANT, Role.TOOL):
             return
+        metadata: dict[str, str | bool] | None = None
+        if message.role == Role.ASSISTANT and message.tool_calls:
+            metadata = {"display": False}
         await self._memory_manager.remember(
             memory_type="conversation",
             message=message,
+            metadata=metadata,
         )
 
     async def _assess(self, task: str, conv_messages: list[Message]) -> AssessResult:
