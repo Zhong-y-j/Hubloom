@@ -12,7 +12,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.staticfiles import StaticFiles
 
-from agents.api.context import clear_request_context, set_request_context
+from agents.api.request_context import clear_request_context, set_request_context
 from agents.api.events import event_to_sse, format_sse, turn_complete_payload
 from agents.api.history import ChatHistoryResponse, messages_for_display
 from agents.api.schemas import ChatRequest, ChatResponse
@@ -26,7 +26,7 @@ from agents.app.session import (
     SESSION_ID_TEMPLATE,
     format_session_id,
 )
-from agents.cortex_agent import CortexAgent
+from agents.adp.cortex_agent import CortexAgent
 from agents.events import ErrorEvent
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log

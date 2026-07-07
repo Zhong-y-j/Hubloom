@@ -16,7 +16,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
@@ -33,7 +33,7 @@ from agents.events import (
     ToolResultEvent,
 )
 from agents.agent_log import clip, cortex_log
-from agents.tool_display import resolve_tool_display_name
+from agents.api.display import resolve_tool_display_name
 from tools.registry import ToolRegistry
 from tools.runner import ToolRunner
 
@@ -842,7 +842,7 @@ async def main():
     from mcp_adapter import load_mcp_tools
     from tools import ToolRegistry
 
-    from agents.prompts import THOUGHT_CONTEXT_SYSTEM
+    from agents.adp.prompts import THOUGHT_CONTEXT_SYSTEM
     from memory.context import ContextAssembler
 
     bindings = await load_mcp_tools(

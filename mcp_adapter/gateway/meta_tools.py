@@ -29,14 +29,15 @@ def _format_call_tool_result(result: Any) -> dict[str, Any]:
 
     if texts:
         joined = "\n".join(texts)
-        out["text"] = joined
         if "structured" not in out:
             try:
                 parsed = json.loads(joined)
                 if isinstance(parsed, (dict, list)):
                     out["structured"] = parsed
+                else:
+                    out["text"] = joined
             except json.JSONDecodeError:
-                pass
+                out["text"] = joined
 
     return out
 

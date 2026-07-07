@@ -103,6 +103,20 @@ class AuthPassthroughMiddleware(Middleware):
         token = extract_token_from_meta(getattr(context.message, "meta", None))
         ctx = set_request_auth_token(token)
         try:
-            return await call_next(context)
+            result = await call_next(context)
+            # import sys
+
+            # tool = getattr(context.message, "name", "?")
+            # print(
+            #     f"[WORKER-MCP] tool={tool} isError={getattr(result, 'isError', None)}",
+            #     file=sys.stderr,
+            # )
+            # for block in getattr(result, "content", None) or []:
+            #     print(
+            #         f"[WORKER-MCP] content={getattr(block, 'text', block)}",
+            #         file=sys.stderr,
+            #     )
+            return result
+
         finally:
             reset_request_auth_token(ctx)

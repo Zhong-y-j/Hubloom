@@ -9,9 +9,11 @@ import httpx
 
 from mcp_adapter.auth import build_authorization_header, get_request_auth_token
 
-_last_http_response: contextvars.ContextVar[httpx.Response | None] = contextvars.ContextVar(
-    "_last_http_response",
-    default=None,
+_last_http_response: contextvars.ContextVar[httpx.Response | None] = (
+    contextvars.ContextVar(
+        "_last_http_response",
+        default=None,
+    )
 )
 
 
@@ -33,4 +35,9 @@ class AuthedHttpClient(httpx.AsyncClient):
             request.headers["Authorization"] = header
         response = await super().send(request, *args, **kwargs)
         _last_http_response.set(response)
+        # import sys
+
+        # print(f"[HTTP] {request.method} {request.url}", file=sys.stderr)
+        # print(f"[HTTP] status={response.status_code}", file=sys.stderr)
+        # print(f"[HTTP] body={response.text}", file=sys.stderr)
         return response

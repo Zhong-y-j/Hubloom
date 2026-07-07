@@ -42,6 +42,7 @@ async def build_backend_mcp(*, tag: str | None) -> FastMCP:
         openapi_spec=openapi,
         client=client,
         name=server_name,
+        validate_output=False,
     )
     mcp.add_middleware(AuthPassthroughMiddleware())
     return mcp

@@ -13,9 +13,9 @@ from typing import TYPE_CHECKING
 
 from core.models import Message, Role
 
-from agents.assessor import AssessResult, Assessor
-from agents.chat import Chat, build_chat_system_prompt
-from agents.tool_display import resolve_tool_display_name
+from agents.adp.assessor import AssessResult, Assessor
+from agents.adp.chat import Chat, build_chat_system_prompt
+from agents.api.display import resolve_tool_display_name
 from agents.events import (
     AgentEvent,
     FinalAnswerEvent,
@@ -31,13 +31,13 @@ if TYPE_CHECKING:
     from core.provider import LLMProvider
     from tools.registry import ToolRegistry
 
-    from agents.thought import Thought
+    from agents.adp.thought import Thought
 
 
 from memory import create_memory_manager, ContextAssembler
 from memory.factory import GraphBackend, VectorBackend
 
-from agents.prompts import ASSESSOR_SYSTEM, THOUGHT_CONTEXT_SYSTEM
+from agents.adp.prompts import ASSESSOR_SYSTEM, THOUGHT_CONTEXT_SYSTEM
 
 
 async def load_knowledge_base_from_env():
@@ -423,7 +423,7 @@ class CortexAgent:
         messages: list[Message],
     ) -> AsyncIterator[AgentEvent]:
         """慢思考路径执行：透传 Thought 流式事件。"""
-        from agents.thought import Thought
+        from agents.adp.thought import Thought
 
         if self.thought is None:
             self.thought = Thought(
@@ -539,7 +539,7 @@ async def main():
         ToolResultEvent,
     )
 
-    root = Path(__file__).resolve().parent.parent
+    root = Path(__file__).resolve().parents[2]
     kb = await load_knowledge_base_from_env()
     bindings = await load_mcp_tools(
         command="uv",

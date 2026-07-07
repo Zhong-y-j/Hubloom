@@ -11,9 +11,12 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from mcp_adapter.auth import build_auth_meta, resolve_auth_token
-from mcp_adapter.client.result import parse_call_tool_result, tool_input_schema
+from mcp_adapter.client.result import (
+    ToolTransportResult,
+    parse_call_tool_result,
+    tool_input_schema,
+)
 from mcp_adapter.log import clip_text, dumps_clip, mcp_log
-from tools.tool_result import ToolTransportResult
 
 
 class MCPToolClient:

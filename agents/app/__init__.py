@@ -1,7 +1,7 @@
 """Agent 运行时组装（HTTP / CLI 共用）。"""
 
-from agents.app.bootstrap import CortexRuntime, build_runtime_async
-from agents.app.session import (
+from .bootstrap import CortexRuntime, build_runtime_async
+from .session import (
     DEFAULT_SESSION_ID,
     ENABLE_LONG_TERM_MEMORY,
     ENABLE_RAG,

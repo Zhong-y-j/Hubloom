@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from agents.thought import Thought, is_login_related_tool, is_unauthenticated_tool_result
+from agents.adp import Thought, is_login_related_tool, is_unauthenticated_tool_result
 
 
 class TestAuthDetection(unittest.TestCase):

@@ -11,7 +11,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-_ROOT = Path(__file__).resolve().parent.parent
+_ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
@@ -25,7 +25,7 @@ from agents.events import (
     FinalAnswerEvent,
 )
 from agents.agent_log import clip, cortex_log
-from agents.thought import format_tool_summaries
+from agents.adp.thought import format_tool_summaries
 from memory.context import ContextAssembler
 from tools.registry import ToolRegistry
 

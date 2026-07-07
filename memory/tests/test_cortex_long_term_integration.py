@@ -29,8 +29,7 @@ from observability import setup_log
 from tools.base import BaseTool
 from tools.registry import ToolRegistry
 
-from agents.assessor import AssessResult
-from agents.cortex_agent import CortexAgent, Route
+from agents.adp import AssessResult, CortexAgent, Route
 from agents.events import FinalAnswerEvent, ThoughtDeltaEvent
 
 

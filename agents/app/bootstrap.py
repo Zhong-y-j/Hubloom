@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from agents.agent_log import cortex_log
-from agents.assessor import Assessor
-from agents.cortex_agent import CortexAgent, load_knowledge_base_from_env
+from agents.adp.assessor import Assessor
+from agents.adp.cortex_agent import CortexAgent, load_knowledge_base_from_env
 from agents.app.session import (
     DEFAULT_KB_DIR,
     DEFAULT_MEMORY_DB,
