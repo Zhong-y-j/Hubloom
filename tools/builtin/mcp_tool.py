@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agents.api.request_context import get_bearer_token
+from agents.api.request_context import get_bearer_token, get_mcp_auth_scheme
 from mcp_adapter import MCPToolClient
-from mcp_adapter.auth import resolve_auth_token
+from mcp_adapter.auth import auth_trace, resolve_auth_token
 from tools.base import BaseTool
 
 
@@ -16,6 +16,24 @@ def _filter_args(parameters: dict[str, Any], kwargs: dict[str, Any]) -> dict[str
         return dict(kwargs)
     allowed = set(props.keys())
     return {k: v for k, v in kwargs.items() if k in allowed}
+
+
+def _coerce_nested_arguments(tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """LLM 常把 call_tool.arguments 序列化成 JSON 字符串，网关要求 dict。"""
+    if tool_name != "call_tool":
+        return payload
+    raw = payload.get("arguments")
+    if not isinstance(raw, str) or not raw.strip():
+        return payload
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return payload
+    if not isinstance(parsed, dict):
+        return payload
+    out = dict(payload)
+    out["arguments"] = parsed
+    return out
 
 
 class MCPTool(BaseTool):
@@ -39,11 +57,22 @@ class MCPTool(BaseTool):
             self.parameters,
             kwargs,
         )
+        payload = _coerce_nested_arguments(self.name, payload)
+
+        auth_token = resolve_auth_token(get_bearer_token())
+        auth_scheme = (get_mcp_auth_scheme() or "").strip() or None
+        auth_trace(
+            "agent_tool",
+            tool=self.name,
+            has_token=bool(auth_token),
+            scheme=auth_scheme,
+        )
 
         result = await self._client.execute_tool(
             self.name,
             payload,
-            auth_token=resolve_auth_token(get_bearer_token()),
+            auth_token=auth_token,
+            auth_scheme=auth_scheme,
         )
         if not result.transport_ok:
             raise RuntimeError(result.error or "MCP 工具调用失败")

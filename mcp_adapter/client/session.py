@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from contextlib import AsyncExitStack
 from typing import Any
@@ -10,7 +11,7 @@ from typing import Any
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from mcp_adapter.auth import build_auth_meta, resolve_auth_token
+from mcp_adapter.auth import auth_trace, build_auth_meta, resolve_auth_token
 from mcp_adapter.client.result import (
     ToolTransportResult,
     parse_call_tool_result,
@@ -20,7 +21,11 @@ from mcp_adapter.log import clip_text, dumps_clip, mcp_log
 
 
 class MCPToolClient:
-    """通过子进程 stdio 与 MCP Server（网关）通信。"""
+    """通过子进程 stdio 与 MCP Server（网关）通信。
+
+    stdio 客户端的 anyio cancel scope 必须在同一 asyncio task 内进入/退出，
+    因此连接生命周期运行在独立后台事件循环中（与 BackendPool 相同策略）。
+    """
 
     def __init__(
         self,
@@ -39,8 +44,36 @@ class MCPToolClient:
         self.timeout = timeout
         self._session: ClientSession | None = None
         self._exit_stack: AsyncExitStack | None = None
+        self._bg_loop: asyncio.AbstractEventLoop | None = None
+        self._bg_thread: threading.Thread | None = None
+        self._bg_ready = threading.Event()
 
-    async def connect(self) -> None:
+    def _ensure_bg_loop(self) -> asyncio.AbstractEventLoop:
+        if self._bg_loop is not None:
+            return self._bg_loop
+
+        def _runner() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            self._bg_loop = loop
+            self._bg_ready.set()
+            loop.run_forever()
+
+        self._bg_thread = threading.Thread(
+            target=_runner,
+            name="mcp-gateway-client",
+            daemon=True,
+        )
+        self._bg_thread.start()
+        self._bg_ready.wait()
+        assert self._bg_loop is not None
+        return self._bg_loop
+
+    async def _call_bg(self, coro: Any) -> Any:
+        loop = self._ensure_bg_loop()
+        return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, loop))
+
+    async def _connect_impl(self) -> None:
         if self._exit_stack is not None:
             raise RuntimeError("MCPToolClient is already connected.")
 
@@ -59,13 +92,32 @@ class MCPToolClient:
         self._exit_stack = stack
         self._session = session
 
-    async def close(self) -> None:
+    async def connect(self) -> None:
+        await self._call_bg(self._connect_impl())
+
+    async def _close_impl(self) -> None:
         if self._exit_stack is not None:
-            await self._exit_stack.__aexit__(None, None, None)
+            try:
+                await self._exit_stack.__aexit__(None, None, None)
+            except RuntimeError:
+                pass
             self._exit_stack = None
         self._session = None
 
-    async def list_tools(self) -> list[dict[str, Any]]:
+    async def close(self) -> None:
+        if self._bg_loop is None:
+            return
+        try:
+            await self._call_bg(self._close_impl())
+        finally:
+            self._bg_loop.call_soon_threadsafe(self._bg_loop.stop)
+            if self._bg_thread is not None:
+                self._bg_thread.join(timeout=5.0)
+            self._bg_loop = None
+            self._bg_thread = None
+            self._bg_ready.clear()
+
+    async def _list_tools_impl(self) -> list[dict[str, Any]]:
         if not self._session:
             raise RuntimeError("MCP client not connected. Call connect() first.")
 
@@ -84,20 +136,32 @@ class MCPToolClient:
             )
         return tools
 
-    async def execute_tool(
+    async def list_tools(self) -> list[dict[str, Any]]:
+        return await self._call_bg(self._list_tools_impl())
+
+    async def _execute_tool_impl(
         self,
         tool_name: str,
         arguments: dict[str, Any],
         *,
         auth_token: str | None = None,
+        auth_scheme: str | None = None,
     ) -> ToolTransportResult:
-        """调用 MCP 工具，返回传输层结果。"""
         if not self._session:
             raise RuntimeError("MCP client not connected. Call connect() first.")
 
         mcp_log("tool start", tool=tool_name, args=dumps_clip(arguments))
         start = time.monotonic()
-        meta = build_auth_meta(resolve_auth_token(auth_token))
+        meta = build_auth_meta(
+            resolve_auth_token(auth_token),
+            scheme=auth_scheme,
+        )
+        auth_trace(
+            "agent_client",
+            tool=tool_name,
+            has_meta=meta is not None,
+            scheme=auth_scheme,
+        )
         try:
             result = await asyncio.wait_for(
                 self._session.call_tool(tool_name, arguments, meta=meta),
@@ -135,18 +199,38 @@ class MCPToolClient:
         mcp_log("tool done", **fields)
         return transport
 
+    async def execute_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        auth_token: str | None = None,
+        auth_scheme: str | None = None,
+    ) -> ToolTransportResult:
+        """调用 MCP 工具，返回传输层结果。"""
+        return await self._call_bg(
+            self._execute_tool_impl(
+                tool_name,
+                arguments,
+                auth_token=auth_token,
+                auth_scheme=auth_scheme,
+            )
+        )
+
     async def execute_tool_text(
         self,
         tool_name: str,
         arguments: dict[str, Any],
         *,
         auth_token: str | None = None,
+        auth_scheme: str | None = None,
     ) -> str:
         return (
             await self.execute_tool(
                 tool_name,
                 arguments,
                 auth_token=auth_token,
+                auth_scheme=auth_scheme,
             )
         ).to_llm_text()
 

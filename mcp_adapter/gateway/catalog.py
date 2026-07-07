@@ -63,7 +63,8 @@ class GatewayCatalog:
 
 _CATALOG_USAGE = (
     "调用方式：根据上表选定 tag，调用 list_tools(tag) 查看工具名与参数，"
-    "再用 call_tool(tag, tool_name, arguments) 调用；无参接口可不传 arguments。"
+    "再用 call_tool(tag, tool_name, arguments) 调用实际业务接口；无参接口可不传 arguments。"
+    "list_tools 仅用于查 schema，创建/查询/更新/删除都必须通过 call_tool 完成。"
 )
 
 

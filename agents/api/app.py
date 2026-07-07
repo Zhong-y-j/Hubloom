@@ -12,10 +12,16 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.staticfiles import StaticFiles
 
+from agents.api.client_headers import ClientHeaderContext, parse_client_headers
 from agents.api.request_context import clear_request_context, set_request_context
 from agents.api.events import event_to_sse, format_sse, turn_complete_payload
 from agents.api.history import ChatHistoryResponse, messages_for_display
-from agents.api.schemas import ChatRequest, ChatResponse
+from agents.api.schemas import (
+    ApplyConfigRequest,
+    ApplyConfigResponse,
+    ChatRequest,
+    ChatResponse,
+)
 from agents.app.bootstrap import CortexRuntime, build_runtime_async
 from agents.app.session import (
     DEFAULT_MEMORY_DB,
@@ -27,6 +33,7 @@ from agents.app.session import (
     format_session_id,
 )
 from agents.adp.cortex_agent import CortexAgent
+from agents.agent_log import cortex_log
 from agents.events import ErrorEvent
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log
@@ -35,6 +42,14 @@ _runtime: CortexRuntime | None = None
 _agent_lock = asyncio.Lock()
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _NO_CACHE = "no-cache, no-store, must-revalidate"
+_RUNTIME_CONFIG_KEYS = (
+    "OPENAI_MODEL",
+    "OPENAI_BASE_URL",
+    "MCP_SWAGGER_URL",
+    "MCP_BASE_URL",
+    "MCP_AUTH_SCHEME",
+)
+_DEFAULT_SWAGGER_URL = "https://petstore.swagger.io/v2/swagger.json"
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -58,14 +73,41 @@ def _resolve_session_id(body_session: str | None, header_session: str | None) ->
     return format_session_id(_raw_session_key(body_session, header_session))
 
 
-def _extract_bearer(authorization: str | None) -> str | None:
-    if not authorization:
-        return None
-    text = authorization.strip()
-    if text.lower().startswith("bearer "):
-        token = text[7:].strip()
-        return token or None
+def _apply_client_context(ctx: ClientHeaderContext, *, session_id: str) -> None:
+    set_request_context(session_id=session_id, **ctx)
+
+
+def _clean_config_value(value: str | None) -> str | None:
+    text = (value or "").strip()
     return text or None
+
+
+def _env_value(key: str, default: str = "") -> str:
+    return (os.getenv(key) or default).strip()
+
+
+def _config_env_updates(config: ApplyConfigRequest) -> dict[str, str]:
+    """Only non-secret runtime settings are applied to process env."""
+    pairs = {
+        "OPENAI_MODEL": config.openai_model,
+        "OPENAI_BASE_URL": config.openai_base_url,
+        "MCP_SWAGGER_URL": config.mcp_swagger_url,
+        "MCP_BASE_URL": config.mcp_base_url,
+        "MCP_AUTH_SCHEME": config.mcp_auth_scheme,
+    }
+    return {
+        key: value
+        for key, raw in pairs.items()
+        if (value := _clean_config_value(raw)) is not None
+    }
+
+
+def _restore_env(snapshot: dict[str, str | None]) -> None:
+    for key, value in snapshot.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
 
 
 @asynccontextmanager
@@ -119,11 +161,66 @@ async def client_config() -> dict[str, str | bool]:
     }
 
 
+@app.post("/v1/config/apply", response_model=ApplyConfigResponse)
+async def apply_client_config(config: ApplyConfigRequest) -> ApplyConfigResponse:
+    """应用前端体验配置，并重建 MCP runtime 以加载新的 Swagger。"""
+    global _runtime
+
+    async with _agent_lock:
+        updates = _config_env_updates(config)
+        snapshot = {key: os.environ.get(key) for key in _RUNTIME_CONFIG_KEYS}
+        os.environ.update(updates)
+
+        swagger_url = _env_value("MCP_SWAGGER_URL", _DEFAULT_SWAGGER_URL)
+        base_url = _env_value("MCP_BASE_URL")
+
+        try:
+            from mcp_adapter.gateway.catalog import build_catalog_from_openapi
+            from mcp_adapter.spec.filter import count_operations
+            from mcp_adapter.spec.pipeline import prepare_openapi
+
+            openapi, resolved_base_url = await prepare_openapi(
+                swagger_url,
+                base_url=base_url or None,
+            )
+            catalog = build_catalog_from_openapi(openapi)
+            new_runtime = await build_runtime_async()
+            if new_runtime.mcp_bindings is None:
+                await new_runtime.close()
+                raise RuntimeError("MCP 网关启动失败，请检查 Swagger / Base URL")
+        except Exception as exc:
+            _restore_env(snapshot)
+            raise HTTPException(
+                status_code=400,
+                detail=f"连接 Swagger 失败：{exc}",
+            ) from exc
+
+        old_runtime = _runtime
+        _runtime = new_runtime
+        if old_runtime is not None:
+            await old_runtime.close()
+
+        return ApplyConfigResponse(
+            status="ok",
+            swagger_url=swagger_url,
+            base_url=resolved_base_url,
+            group_count=len(catalog.groups),
+            tool_count=count_operations(openapi),
+        )
+
+
 @app.post("/v1/chat")
 async def chat(
     body: ChatRequest,
     authorization: str | None = Header(default=None),
     x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+    x_openai_api_key: str | None = Header(default=None, alias="X-OpenAI-Api-Key"),
+    x_openai_model: str | None = Header(default=None, alias="X-OpenAI-Model"),
+    x_openai_base_url: str | None = Header(default=None, alias="X-OpenAI-Base-Url"),
+    x_mcp_token: str | None = Header(default=None, alias="X-MCP-Token"),
+    x_mcp_auth_scheme: str | None = Header(default=None, alias="X-MCP-Auth-Scheme"),
+    x_mcp_swagger_url: str | None = Header(default=None, alias="X-MCP-Swagger-Url"),
+    x_mcp_base_url: str | None = Header(default=None, alias="X-MCP-Base-Url"),
 ):
     if _runtime is None:
         raise HTTPException(status_code=503, detail="运行时尚未初始化")
@@ -134,7 +231,26 @@ async def chat(
 
     raw_key = _raw_session_key(body.session_id, x_session_id)
     session_id = format_session_id(raw_key)
-    bearer = _extract_bearer(authorization)
+    client_ctx = parse_client_headers(
+        authorization=authorization,
+        x_openai_api_key=x_openai_api_key,
+        x_openai_model=x_openai_model,
+        x_openai_base_url=x_openai_base_url,
+        x_mcp_token=x_mcp_token,
+        x_mcp_auth_scheme=x_mcp_auth_scheme,
+        x_mcp_swagger_url=x_mcp_swagger_url,
+        x_mcp_base_url=x_mcp_base_url,
+    )
+    if not client_ctx["openai_api_key"]:
+        raise HTTPException(
+            status_code=400,
+            detail="请在前端填写 OPENAI_API_KEY，或在服务端配置环境变量",
+        )
+    cortex_log(
+        "chat client auth",
+        has_bearer=bool(client_ctx["bearer_token"]),
+        scheme=client_ctx["mcp_auth_scheme"],
+    )
 
     if body.stream:
         return StreamingResponse(
@@ -142,7 +258,7 @@ async def chat(
                 message,
                 session_key=raw_key or "tester_id",
                 session_id=session_id,
-                bearer=bearer,
+                client_ctx=client_ctx,
             ),
             media_type="text/event-stream",
             headers={
@@ -156,7 +272,7 @@ async def chat(
         message,
         session_key=raw_key or "tester_id",
         session_id=session_id,
-        bearer=bearer,
+        client_ctx=client_ctx,
     )
     return JSONResponse(content=result.model_dump())
 
@@ -193,10 +309,10 @@ async def _stream_chat(
     *,
     session_key: str,
     session_id: str,
-    bearer: str | None,
+    client_ctx: ClientHeaderContext,
 ) -> AsyncIterator[str]:
     async with _agent_lock:
-        set_request_context(bearer_token=bearer, session_id=session_id)
+        _apply_client_context(client_ctx, session_id=session_id)
         runtime = _runtime
         assert runtime is not None
         agent = runtime.create_agent(session_key)
@@ -230,10 +346,10 @@ async def _run_chat_once(
     *,
     session_key: str,
     session_id: str,
-    bearer: str | None,
+    client_ctx: ClientHeaderContext,
 ) -> ChatResponse:
     async with _agent_lock:
-        set_request_context(bearer_token=bearer, session_id=session_id)
+        _apply_client_context(client_ctx, session_id=session_id)
         runtime = _runtime
         assert runtime is not None
         agent: CortexAgent = runtime.create_agent(session_key)

@@ -1,7 +1,18 @@
 (function () {
   const STORAGE_SESSION = "cortex_session_key";
-  const STORAGE_TOKEN = "cortex_auth_token";
   const LEGACY_STORAGE_SESSION = "cortex_session_id";
+  const LEGACY_STORAGE_TOKEN = "cortex_auth_token";
+  const LEGACY_STORAGE_CONNECTION = "cortex_connection_meta";
+
+  const CONFIG_KEYS = {
+    openaiApiKey: "cortex_openai_api_key",
+    openaiModel: "cortex_openai_model",
+    openaiBaseUrl: "cortex_openai_base_url",
+    mcpSwaggerUrl: "cortex_mcp_swagger_url",
+    mcpBaseUrl: "cortex_mcp_base_url",
+    mcpAuthScheme: "cortex_mcp_auth_scheme",
+    mcpToken: "cortex_mcp_token",
+  };
 
   /** Agent 对用户可见的三种状态（理解中 → 思考中 → 回复中） */
   const AGENT_STATE = {
@@ -16,12 +27,21 @@
     input: document.getElementById("message-input"),
     sendBtn: document.getElementById("send-btn"),
     sessionId: document.getElementById("session-id"),
-    authToken: document.getElementById("auth-token"),
     newSession: document.getElementById("new-session"),
     streamMode: document.getElementById("stream-mode"),
     showTools: document.getElementById("show-tools"),
     status: document.getElementById("status"),
     routeBadge: document.getElementById("route-badge"),
+    connectBtn: document.getElementById("connect-btn"),
+    configStatus: document.getElementById("config-status"),
+    connectDetail: document.getElementById("connect-detail"),
+    openaiApiKey: document.getElementById("openai-api-key"),
+    openaiModel: document.getElementById("openai-model"),
+    openaiBaseUrl: document.getElementById("openai-base-url"),
+    mcpSwaggerUrl: document.getElementById("mcp-swagger-url"),
+    mcpBaseUrl: document.getElementById("mcp-base-url"),
+    mcpAuthScheme: document.getElementById("mcp-auth-scheme"),
+    mcpToken: document.getElementById("mcp-token"),
   };
 
   let busy = false;
@@ -73,8 +93,42 @@
       localStorage.getItem(STORAGE_SESSION) ||
       localStorage.getItem(LEGACY_STORAGE_SESSION);
     if (sid) els.sessionId.value = normalizeSessionKey(sid);
-    const tok = localStorage.getItem(STORAGE_TOKEN);
-    if (tok) els.authToken.value = tok;
+
+    const legacyToken = localStorage.getItem(LEGACY_STORAGE_TOKEN);
+    const fields = {
+      openaiApiKey: els.openaiApiKey,
+      openaiModel: els.openaiModel,
+      openaiBaseUrl: els.openaiBaseUrl,
+      mcpSwaggerUrl: els.mcpSwaggerUrl,
+      mcpBaseUrl: els.mcpBaseUrl,
+      mcpAuthScheme: els.mcpAuthScheme,
+      mcpToken: els.mcpToken,
+    };
+    for (const [key, el] of Object.entries(fields)) {
+      if (!el) continue;
+      let value = localStorage.getItem(CONFIG_KEYS[key]);
+      if (!value && key === "mcpToken" && legacyToken) value = legacyToken;
+      if (value) el.value = value;
+    }
+    if (!els.mcpAuthScheme.value.trim()) {
+      els.mcpAuthScheme.value = "Bearer";
+    }
+    localStorage.removeItem(LEGACY_STORAGE_CONNECTION);
+    setConnectStatus("idle", "未连接", "");
+  }
+
+  function formatConnectDetail(data) {
+    const parts = [];
+    if (data.group_count != null && data.tool_count != null) {
+      parts.push(data.group_count + " 个分组 · " + data.tool_count + " 个接口");
+    }
+    if (data.base_url) parts.push("API " + data.base_url);
+    if (data.swagger_url) parts.push(data.swagger_url);
+    return parts.join("\n");
+  }
+
+  function markConfigStale() {
+    setConnectStatus("idle", "未连接", "配置已变更，请重新连接");
   }
 
   function saveSettings() {
@@ -83,7 +137,105 @@
       normalizeSessionKey(els.sessionId.value)
     );
     localStorage.removeItem(LEGACY_STORAGE_SESSION);
-    localStorage.setItem(STORAGE_TOKEN, els.authToken.value.trim());
+
+    const fields = {
+      openaiApiKey: els.openaiApiKey,
+      openaiModel: els.openaiModel,
+      openaiBaseUrl: els.openaiBaseUrl,
+      mcpSwaggerUrl: els.mcpSwaggerUrl,
+      mcpBaseUrl: els.mcpBaseUrl,
+      mcpAuthScheme: els.mcpAuthScheme,
+      mcpToken: els.mcpToken,
+    };
+    for (const [key, el] of Object.entries(fields)) {
+      if (!el) continue;
+      localStorage.setItem(CONFIG_KEYS[key], el.value.trim());
+    }
+  }
+
+  function configPayload() {
+    return {
+      openai_model: els.openaiModel && els.openaiModel.value.trim(),
+      openai_base_url: els.openaiBaseUrl && els.openaiBaseUrl.value.trim(),
+      mcp_swagger_url: els.mcpSwaggerUrl && els.mcpSwaggerUrl.value.trim(),
+      mcp_base_url: els.mcpBaseUrl && els.mcpBaseUrl.value.trim(),
+      mcp_auth_scheme: els.mcpAuthScheme && els.mcpAuthScheme.value.trim(),
+    };
+  }
+
+  async function applyConfig() {
+    const res = await fetch("/v1/config/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(configPayload()),
+    });
+
+    if (!res.ok) {
+      let message = "HTTP " + res.status;
+      try {
+        const data = await res.json();
+        message = data.detail || message;
+      } catch (_) {
+        message = (await res.text()) || message;
+      }
+      throw new Error(message);
+    }
+
+    return await res.json();
+  }
+
+  function setPill(pillEl, state, text) {
+    if (!pillEl) return;
+    pillEl.setAttribute("data-state", state);
+    pillEl.querySelector(".pill-text").textContent = text;
+  }
+
+  function setConnectDetail(text) {
+    if (!els.connectDetail) return;
+    const value = (text || "").trim();
+    if (!value) {
+      els.connectDetail.textContent = "";
+      els.connectDetail.classList.add("hidden");
+      return;
+    }
+    els.connectDetail.textContent = value;
+    els.connectDetail.classList.remove("hidden");
+  }
+
+  function setConnectStatus(state, pillText, detail) {
+    setPill(els.configStatus, state, pillText);
+    setConnectDetail(detail);
+  }
+
+  function setConnectButtonBusy(connecting) {
+    if (!els.connectBtn) return;
+    els.connectBtn.disabled = connecting;
+    els.connectBtn.textContent = connecting ? "连接中…" : "连接 Swagger";
+  }
+
+  async function onConnect() {
+    saveSettings();
+    setConnectButtonBusy(true);
+    setConnectStatus("loading", "连接中…", "正在加载 Swagger 并重建 MCP…");
+    setStatus("正在连接 Swagger…");
+
+    try {
+      const data = await applyConfig();
+      const meta = {
+        swagger_url: data.swagger_url || "",
+        base_url: data.base_url || "",
+        group_count: data.group_count,
+        tool_count: data.tool_count,
+      };
+      setConnectStatus("ok", "已连接", formatConnectDetail(meta));
+      setStatus("Swagger 已连接，可以开始对话");
+    } catch (err) {
+      const message = String(err.message || err);
+      setConnectStatus("error", "连接失败", message);
+      setStatus(message);
+    } finally {
+      setConnectButtonBusy(false);
+    }
   }
 
   function setStatus(text) {
@@ -111,8 +263,7 @@
       empty.id = "empty-state";
       empty.innerHTML =
         '<p class="empty-title">开始对话</p>' +
-        '<p class="empty-desc">用自然语言与已接入的 REST API 交互。Agent Cortex 会理解意图、' +
-        "按需调用 MCP 工具，并支持多轮澄清与流式回复。</p>" +
+        '<p class="empty-desc">先在左侧填写配置并连接 Swagger，然后用自然语言查询、操作已接入的 API。</p>' +
         '<p class="empty-hint">例如：「你能帮我做什么？」「查询某条记录」' +
         "「帮我完成一个需要填参数的操作」</p>";
       els.messages.appendChild(empty);
@@ -427,9 +578,28 @@
 
   function buildHeaders(sessionKey) {
     const headers = { "Content-Type": "application/json" };
-    const token = els.authToken.value.trim();
-    if (token) headers["Authorization"] = "Bearer " + token;
     if (sessionKey) headers["X-Session-Id"] = sessionKey;
+
+    const apiKey = els.openaiApiKey && els.openaiApiKey.value.trim();
+    if (apiKey) headers["X-OpenAI-Api-Key"] = apiKey;
+    const model = els.openaiModel && els.openaiModel.value.trim();
+    if (model) headers["X-OpenAI-Model"] = model;
+    const baseUrl = els.openaiBaseUrl && els.openaiBaseUrl.value.trim();
+    if (baseUrl) headers["X-OpenAI-Base-Url"] = baseUrl;
+
+    const swaggerUrl = els.mcpSwaggerUrl && els.mcpSwaggerUrl.value.trim();
+    if (swaggerUrl) headers["X-MCP-Swagger-Url"] = swaggerUrl;
+    const mcpBaseUrl = els.mcpBaseUrl && els.mcpBaseUrl.value.trim();
+    if (mcpBaseUrl) headers["X-MCP-Base-Url"] = mcpBaseUrl;
+
+    const token = els.mcpToken && els.mcpToken.value.trim();
+    const scheme =
+      (els.mcpAuthScheme && els.mcpAuthScheme.value.trim()) || "Bearer";
+    if (scheme) headers["X-MCP-Auth-Scheme"] = scheme;
+    if (token) {
+      headers["X-MCP-Token"] = token;
+      headers["Authorization"] = scheme + " " + token;
+    }
     return headers;
   }
 
@@ -599,7 +769,31 @@
     saveSettings();
     loadHistory();
   });
-  els.authToken.addEventListener("change", saveSettings);
+  if (els.connectBtn) {
+    els.connectBtn.addEventListener("click", onConnect);
+  }
+
+  [
+    els.openaiApiKey,
+    els.openaiModel,
+    els.openaiBaseUrl,
+    els.mcpSwaggerUrl,
+    els.mcpBaseUrl,
+    els.mcpAuthScheme,
+    els.mcpToken,
+  ].forEach(function (el) {
+    if (!el) return;
+    el.addEventListener("change", function () {
+      saveSettings();
+      if (
+        el === els.mcpSwaggerUrl ||
+        el === els.mcpBaseUrl ||
+        el === els.mcpAuthScheme
+      ) {
+        markConfigStale();
+      }
+    });
+  });
 
   loadSettings();
   if (!els.sessionId.value.trim()) {

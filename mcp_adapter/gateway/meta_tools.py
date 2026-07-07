@@ -7,7 +7,11 @@ from typing import Any
 
 from fastmcp import FastMCP
 
-from mcp_adapter.auth import get_request_auth_token
+from mcp_adapter.auth import (
+    auth_trace,
+    get_request_auth_scheme,
+    get_request_auth_token,
+)
 from mcp_adapter.gateway.router import BackendRouter
 
 
@@ -51,6 +55,7 @@ def register_meta_tools(
     @mcp.tool(
         description=(
             "列出指定 tag 分组内的工具（含 parameters JSON Schema）。"
+            "仅用于发现工具名与参数，不能代替实际业务调用。"
             "tag 为 OpenAPI 分组名，见 system prompt 中的「API 分组」目录。"
         ),
         run_in_thread=False,
@@ -60,7 +65,7 @@ def register_meta_tools(
 
     @mcp.tool(
         description=(
-            "调用指定分组内的工具。"
+            "调用指定分组内的实际业务工具（创建/查询/更新/删除等均须通过本工具）。"
             "tag 见 system prompt 中的「API 分组」；tool_name 来自 list_tools；"
             "arguments 为该工具的参数对象（JSON object），无参时可省略。"
         ),
@@ -71,10 +76,20 @@ def register_meta_tools(
         tool_name: str,
         arguments: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        auth_token = get_request_auth_token()
+        auth_scheme = get_request_auth_scheme()
+        auth_trace(
+            "gateway_forward",
+            tag=tag,
+            tool_name=tool_name,
+            has_token=bool(auth_token),
+            scheme=auth_scheme,
+        )
         result = await router.call_tool(
             tag,
             tool_name,
             arguments,
-            auth_token=get_request_auth_token(),
+            auth_token=auth_token,
+            auth_scheme=auth_scheme,
         )
         return _format_call_tool_result(result)

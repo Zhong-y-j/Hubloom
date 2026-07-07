@@ -33,9 +33,9 @@ def dumps_clip(value: Any, n: int = _DEFAULT_CLIP) -> str:
 def mcp_log(message: str, /, **fields: Any) -> None:
     if not _enabled():
         return
-    try:
-        from observability import log as _log
+    # try:
+    #     from observability import log as _log
 
-        _log(f"mcp {message}", **fields)
-    except ModuleNotFoundError:
-        pass
+    #     _log(f"mcp {message}", **fields)
+    # except ModuleNotFoundError:
+    #     pass

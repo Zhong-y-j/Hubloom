@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 import unittest
 
-from agents.adp import Thought, is_login_related_tool, is_unauthenticated_tool_result
+from agents.adp import (
+    Thought,
+    has_business_tool_in_observations,
+    has_list_tools_only_since,
+    is_login_related_tool,
+    is_unauthenticated_tool_result,
+    observation_tool_name,
+)
 
 
 class TestAuthDetection(unittest.TestCase):
@@ -49,6 +56,32 @@ class TestShouldReplan(unittest.TestCase):
         thought._execute_had_errors = True
         thought._auth_failure_detected = True
         self.assertFalse(thought.should_replan("查询地区"))
+
+
+class TestObservationHelpers(unittest.TestCase):
+    def test_observation_tool_name(self) -> None:
+        obs = "- list_tools（成功）：[{\"name\": \"Role_Create\"}]"
+        self.assertEqual(observation_tool_name(obs), "list_tools")
+
+    def test_has_business_tool_in_observations(self) -> None:
+        obs = [
+            "- list_tools（成功）：[...]",
+            "- Role_Create（成功）：{\"code\": 2000}",
+        ]
+        self.assertTrue(has_business_tool_in_observations(obs, since_index=0))
+        self.assertTrue(has_business_tool_in_observations(obs, since_index=1))
+        self.assertFalse(
+            has_business_tool_in_observations(obs[:1], since_index=0)
+        )
+
+    def test_has_list_tools_only_since(self) -> None:
+        obs = ["- list_tools（成功）：[...]"]
+        self.assertTrue(has_list_tools_only_since(obs, since_index=0))
+        obs2 = [
+            "- list_tools（成功）：[...]",
+            "- Role_Create（成功）：ok",
+        ]
+        self.assertFalse(has_list_tools_only_since(obs2, since_index=0))
 
 
 if __name__ == "__main__":

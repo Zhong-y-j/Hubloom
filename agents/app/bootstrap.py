@@ -9,6 +9,11 @@ from typing import Any
 from agents.agent_log import cortex_log
 from agents.adp.assessor import Assessor
 from agents.adp.cortex_agent import CortexAgent, load_knowledge_base_from_env
+from agents.api.request_context import (
+    get_openai_api_key,
+    get_openai_base_url,
+    get_openai_model,
+)
 from agents.app.session import (
     DEFAULT_KB_DIR,
     DEFAULT_MEMORY_DB,
@@ -34,17 +39,28 @@ class CortexRuntime:
 
     async def close(self) -> None:
         if self.mcp_bindings is not None:
-            await self.mcp_bindings.client.close()
+            try:
+                await self.mcp_bindings.client.close()
+            except Exception as exc:
+                cortex_log("runtime mcp close failed", error=str(exc))
             self.mcp_bindings = None
 
     def create_agent(self, session_key: str) -> CortexAgent:
         """为单次对话创建 Agent（MCP 工具共享，记忆 namespace 按会话隔离）。"""
         key = (session_key or "").strip() or "tester_id"
         tools = ToolRegistry.from_tools(list(self._mcp_tools))
+        llm_kwargs: dict[str, str] = {}
+        if api_key := get_openai_api_key():
+            llm_kwargs["api_key"] = api_key
+        if model := get_openai_model():
+            llm_kwargs["model"] = model
+        if base_url := get_openai_base_url():
+            llm_kwargs["base_url"] = base_url
+        llm = create_llm(**llm_kwargs)
         agent = CortexAgent(
-            create_llm(),
+            llm,
             tools=tools,
-            assessor=Assessor(create_llm()),
+            assessor=Assessor(create_llm(**llm_kwargs)),
             session_id=key,
             enable_long_term_memory=ENABLE_LONG_TERM_MEMORY,
             include_graph_memory=ENABLE_LONG_TERM_MEMORY,

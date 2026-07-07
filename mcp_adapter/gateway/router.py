@@ -49,6 +49,7 @@ class BackendRouter:
         arguments: dict[str, Any] | None = None,
         *,
         auth_token: str | None = None,
+        auth_scheme: str | None = None,
     ) -> Any:
         self._ensure_tag(tag)
         self._ensure_tool(tag, tool_name)
@@ -57,6 +58,7 @@ class BackendRouter:
             tool_name,
             arguments,
             auth_token=auth_token,
+            auth_scheme=auth_scheme,
         )
 
     async def close(self) -> None:

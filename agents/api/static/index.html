@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Cache-Control" content="no-cache" />
     <title>Agent Cortex · 灵枢</title>
-    <link rel="stylesheet" href="/static/styles.css?v=10" />
+    <link rel="stylesheet" href="/static/styles.css?v=11" />
   </head>
   <body>
     <div class="layout">
@@ -14,36 +14,146 @@
           <span class="brand-mark">◈</span>
           <div>
             <h1>Agent Cortex</h1>
-            <p>灵枢 · MCP 对话</p>
+            <p>灵枢 · 体验配置</p>
           </div>
         </div>
 
-        <section class="panel">
-          <label for="session-id">用户 ID</label>
-          <input
-            id="session-id"
-            type="text"
-            placeholder="web-uuid 或企业 user_id"
-            autocomplete="off"
-          />
-          <p class="hint">只传裸 ID；服务端自动套 mem:…:default。</p>
-          <button type="button" id="new-session" class="btn ghost">
-            新会话
-          </button>
+        <p class="sidebar-intro">
+          填写运行参数后点击连接，加载 Swagger 并接入 API。密钥仅保存在本机浏览器。
+        </p>
+
+        <section class="config-card">
+          <h3 class="config-card-title">模型（OpenAI）</h3>
+
+          <div class="field">
+            <label for="openai-api-key">
+              API Key
+              <span class="env-key">OPENAI_API_KEY</span>
+            </label>
+            <input
+              id="openai-api-key"
+              type="password"
+              placeholder="sk-..."
+              autocomplete="off"
+            />
+          </div>
+
+          <div class="field">
+            <label for="openai-model">
+              模型
+              <span class="env-key">OPENAI_MODEL</span>
+            </label>
+            <input
+              id="openai-model"
+              type="text"
+              placeholder="gpt-4o / qwen3-max"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+
+          <div class="field">
+            <label for="openai-base-url">
+              Base URL
+              <span class="env-key">OPENAI_BASE_URL</span>
+            </label>
+            <input
+              id="openai-base-url"
+              type="text"
+              placeholder="https://api.openai.com/v1"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
         </section>
 
-        <section class="panel">
-          <label for="auth-token">Bearer Token（可选）</label>
-          <input
-            id="auth-token"
-            type="password"
-            placeholder="企业 JWT，透传至 API"
-            autocomplete="off"
-          />
-          <p class="hint">本地调试可留空；生产由企业后端转发 Token。</p>
+        <section class="config-card">
+          <h3 class="config-card-title">API 接入（MCP）</h3>
+
+          <div class="field">
+            <label for="mcp-swagger-url">
+              Swagger URL
+              <span class="env-key">MCP_SWAGGER_URL</span>
+            </label>
+            <input
+              id="mcp-swagger-url"
+              type="text"
+              placeholder="https://host/?format=openapi"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+
+          <div class="field">
+            <label for="mcp-base-url">
+              Base URL
+              <span class="env-key">MCP_BASE_URL</span>
+            </label>
+            <input
+              id="mcp-base-url"
+              type="text"
+              placeholder="https://host/api"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+
+          <div class="field-row">
+            <div class="field">
+              <label for="mcp-auth-scheme">
+                认证前缀
+                <span class="env-key">MCP_AUTH_SCHEME</span>
+              </label>
+              <input
+                id="mcp-auth-scheme"
+                type="text"
+                value="Bearer"
+                placeholder="Bearer / JWT"
+                autocomplete="off"
+                spellcheck="false"
+              />
+            </div>
+            <div class="field field-grow">
+              <label for="mcp-token">
+                Token
+                <span class="env-key">MCP_TOKEN</span>
+              </label>
+              <input
+                id="mcp-token"
+                type="password"
+                placeholder="access_token"
+                autocomplete="off"
+              />
+            </div>
+          </div>
         </section>
 
-        <section class="panel">
+        <button type="button" id="connect-btn" class="btn block primary">
+          连接 Swagger
+        </button>
+        <div class="connect-status" id="connect-status">
+          <div class="pill" id="config-status" data-state="idle">
+            <span class="dot"></span>
+            <span class="pill-text">未连接</span>
+          </div>
+          <p class="connect-detail hidden" id="connect-detail"></p>
+        </div>
+
+        <section class="config-card config-card-compact">
+          <h3 class="config-card-title">会话</h3>
+          <div class="field">
+            <label for="session-id">用户 ID</label>
+            <input
+              id="session-id"
+              type="text"
+              placeholder="web-uuid"
+              autocomplete="off"
+            />
+          </div>
+          <button type="button" id="new-session" class="btn ghost">新会话</button>
+        </section>
+
+        <section class="panel-options">
           <label class="checkbox">
             <input id="stream-mode" type="checkbox" checked />
             流式输出（SSE）
@@ -79,6 +189,6 @@
 
     <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <script src="/static/chat.js?v=12"></script>
+    <script src="/static/chat.js?v=17"></script>
   </body>
 </html>

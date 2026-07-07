@@ -19,3 +19,22 @@ class ChatResponse(BaseModel):
     final_message: str
     session_id: str
     reason: str = ""
+
+
+class ApplyConfigRequest(BaseModel):
+    openai_api_key: str | None = None
+    openai_model: str | None = None
+    openai_base_url: str | None = None
+    mcp_swagger_url: str | None = None
+    mcp_base_url: str | None = None
+    mcp_auth_scheme: str | None = None
+    mcp_token: str | None = None
+
+
+class ApplyConfigResponse(BaseModel):
+    status: str
+    swagger_url: str
+    base_url: str
+    group_count: int
+    tool_count: int
+    secret_persisted: bool = False

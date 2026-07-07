@@ -7,8 +7,11 @@ from agents.adp.prompts import ASSESSOR_SYSTEM, THOUGHT_CONTEXT_SYSTEM
 from agents.adp.thought import (
     Thought,
     format_tool_summaries,
+    has_business_tool_in_observations,
+    has_list_tools_only_since,
     is_login_related_tool,
     is_unauthenticated_tool_result,
+    observation_tool_name,
 )
 
 __all__ = [
@@ -22,7 +25,10 @@ __all__ = [
     "Thought",
     "build_chat_system_prompt",
     "format_tool_summaries",
+    "has_business_tool_in_observations",
+    "has_list_tools_only_since",
     "is_login_related_tool",
     "is_unauthenticated_tool_result",
     "load_knowledge_base_from_env",
+    "observation_tool_name",
 ]
