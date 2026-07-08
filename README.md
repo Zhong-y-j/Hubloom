@@ -6,6 +6,12 @@
 
 Hubloom 不仅是「用自然语言操作 API」，更是企业智能体技术栈中的**编排与互联枢纽**。**MCP** 负责连接工具与数据（当前已支持）；**A2A**、**ANP** 在路线图中，分别用于跨 Agent 任务委托与更开放的 Agent 互联协作。
 
+## 在线体验
+
+**[https://hubloom.onrender.com](https://hubloom.onrender.com)**
+
+在左侧填写模型 API Key 与 Swagger 接入信息，点击「连接 Swagger」即可开始对话。密钥仅保存在浏览器本地，不会上传服务端。免费实例闲置后会休眠，首次打开可能需要等待约 30～60 秒。
+
 ---
 
 ## 特性
