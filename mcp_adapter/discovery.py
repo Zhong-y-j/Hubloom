@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from mcp_adapter.client.session import MCPToolClient
+
+
+def mcp_gateway_stdio_cmd() -> tuple[str, list[str]]:
+    """启动 MCP 网关 stdio 服务。"""
+    return sys.executable, ["mcp_adapter/server.py"]
+
+
+def mcp_worker_stdio_cmd(tag: str) -> tuple[str, list[str]]:
+    """启动按 tag 分组的 backend worker。"""
+    return sys.executable, ["-m", "mcp_adapter.server.worker", tag]
 
 
 def build_mcp_subprocess_env(

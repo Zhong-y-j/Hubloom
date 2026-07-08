@@ -17,6 +17,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from mcp_adapter.auth import auth_trace, build_auth_meta
+from mcp_adapter.discovery import mcp_worker_stdio_cmd
 from mcp_adapter.gateway.catalog import GatewayCatalog
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -43,9 +44,10 @@ def build_subprocess_env() -> dict[str, str]:
 
 
 def worker_server_params(tag: str) -> StdioServerParameters:
+    command, args = mcp_worker_stdio_cmd(tag)
     return StdioServerParameters(
-        command="uv",
-        args=["run", "python", "-m", "mcp_adapter.server.worker", tag],
+        command=command,
+        args=args,
         env=build_subprocess_env(),
         cwd=str(PROJECT_ROOT),
     )

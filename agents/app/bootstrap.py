@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -96,10 +95,12 @@ async def build_runtime_async(*, enable_mcp: bool = True) -> CortexRuntime:
 
         try:
             from mcp_adapter import load_mcp_tools
+            from mcp_adapter.discovery import mcp_gateway_stdio_cmd
 
+            command, args = mcp_gateway_stdio_cmd()
             bindings = await load_mcp_tools(
-                command=sys.executable,
-                args=["mcp_adapter/server.py"],
+                command=command,
+                args=args,
                 cwd=str(PROJECT_ROOT),
             )
             runtime.mcp_bindings = bindings
