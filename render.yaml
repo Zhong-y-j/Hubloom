@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: hubloom
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHONPATH
+        value: /app
+      - key: CORTEX_ENABLE_LONG_TERM_MEMORY
+        value: "0"
+      - key: CORTEX_MEMORY_DB
+        value: /app/data/memory.db
+      - key: CORTEX_KB_DIR
+        value: /app/data/knowledge_db
+      - key: CORTEX_API_RELOAD
+        value: "0"
