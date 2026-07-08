@@ -32,6 +32,7 @@
     showTools: document.getElementById("show-tools"),
     status: document.getElementById("status"),
     routeBadge: document.getElementById("route-badge"),
+    connectWarning: document.getElementById("connect-warning"),
     connectBtn: document.getElementById("connect-btn"),
     configStatus: document.getElementById("config-status"),
     connectDetail: document.getElementById("connect-detail"),
@@ -45,6 +46,11 @@
   };
 
   let busy = false;
+  let swaggerConnected = false;
+  let connectState = "idle";
+
+  const CHAT_PLACEHOLDER_CONNECTED = "输入消息，Enter 发送，Shift+Enter 换行";
+  const CHAT_PLACEHOLDER_DISCONNECTED = "请先连接 Swagger 后再开始对话";
 
   if (typeof marked !== "undefined") {
     marked.use({ breaks: true, gfm: true });
@@ -202,9 +208,44 @@
     els.connectDetail.classList.remove("hidden");
   }
 
+  function connectWarningText() {
+    if (connectState === "loading") return "正在连接 Swagger…";
+    if (connectState === "error") return "Swagger 连接失败，请重新连接";
+    return "未连接 Swagger，请先在左侧完成连接";
+  }
+
   function setConnectStatus(state, pillText, detail) {
     setPill(els.configStatus, state, pillText);
     setConnectDetail(detail);
+    connectState = state;
+    swaggerConnected = state === "ok";
+    updateChatInputState();
+  }
+
+  function updateChatInputState() {
+    const canChat = swaggerConnected && !busy;
+    if (els.input) {
+      els.input.disabled = !canChat;
+      els.input.placeholder = swaggerConnected
+        ? CHAT_PLACEHOLDER_CONNECTED
+        : CHAT_PLACEHOLDER_DISCONNECTED;
+    }
+    if (els.sendBtn) {
+      els.sendBtn.disabled = !canChat;
+    }
+    if (els.form) {
+      els.form.classList.toggle("composer-disabled", !swaggerConnected);
+    }
+    if (els.connectWarning) {
+      if (swaggerConnected) {
+        els.connectWarning.classList.add("hidden");
+      } else {
+        els.connectWarning.textContent = connectWarningText();
+        els.connectWarning.setAttribute("data-state", connectState);
+        els.connectWarning.classList.remove("hidden");
+      }
+    }
+    refreshEmptyState();
   }
 
   function setConnectButtonBusy(connecting) {
@@ -256,18 +297,51 @@
     els.messages.scrollTop = els.messages.scrollHeight;
   }
 
-  function ensureEmptyState() {
-    if (els.messages.children.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "empty-state";
-      empty.id = "empty-state";
-      empty.innerHTML =
+  function getEmptyStateHtml() {
+    if (swaggerConnected) {
+      return (
         '<p class="empty-title">开始对话</p>' +
-        '<p class="empty-desc">先在左侧填写配置并连接 Swagger，然后用自然语言查询、操作已接入的 API。</p>' +
+        '<p class="empty-desc">用自然语言查询、操作已接入的 API。</p>' +
         '<p class="empty-hint">例如：「你能帮我做什么？」「查询某条记录」' +
-        "「帮我完成一个需要填参数的操作」</p>";
+        "「帮我完成一个需要填参数的操作」</p>"
+      );
+    }
+    return (
+      '<p class="empty-title">请先连接 Swagger</p>' +
+      '<p class="empty-desc">在左侧填写模型与 API 接入配置，点击「连接 Swagger」后即可开始对话。</p>'
+    );
+  }
+
+  function renderEmptyState(empty) {
+    empty.className =
+      "empty-state" +
+      (swaggerConnected ? " empty-state-ready" : " empty-state-disconnected");
+    empty.innerHTML = getEmptyStateHtml();
+  }
+
+  function refreshEmptyState() {
+    const empty = document.getElementById("empty-state");
+    if (empty) {
+      renderEmptyState(empty);
+      return;
+    }
+    if (els.messages.children.length === 0) {
+      ensureEmptyState();
+    }
+  }
+
+  function ensureEmptyState() {
+    if (els.messages.children.length > 0 && !document.getElementById("empty-state")) {
+      return;
+    }
+
+    let empty = document.getElementById("empty-state");
+    if (!empty) {
+      empty = document.createElement("div");
+      empty.id = "empty-state";
       els.messages.appendChild(empty);
     }
+    renderEmptyState(empty);
   }
 
   function removeEmptyState() {
@@ -576,6 +650,43 @@
     });
   }
 
+  const scrollbarTimers = new WeakMap();
+  const SCROLLBAR_REVEAL_MS = 1000;
+
+  function markScrollbarActive(el) {
+    if (!(el instanceof Element)) return;
+    if (!el.matches(".sidebar, .messages, .thought-body")) return;
+
+    el.classList.add("scrollbar-active");
+    const prev = scrollbarTimers.get(el);
+    if (prev) clearTimeout(prev);
+    scrollbarTimers.set(
+      el,
+      setTimeout(function () {
+        el.classList.remove("scrollbar-active");
+        scrollbarTimers.delete(el);
+      }, SCROLLBAR_REVEAL_MS)
+    );
+  }
+
+  function setupScrollbarReveal() {
+    document.querySelectorAll(".sidebar, .messages").forEach(function (el) {
+      ["scroll", "wheel"].forEach(function (eventName) {
+        el.addEventListener(eventName, function () {
+          markScrollbarActive(el);
+        }, { passive: true });
+      });
+    });
+
+    document.addEventListener(
+      "scroll",
+      function (e) {
+        markScrollbarActive(e.target);
+      },
+      true
+    );
+  }
+
   function buildHeaders(sessionKey) {
     const headers = { "Content-Type": "application/json" };
     if (sessionKey) headers["X-Session-Id"] = sessionKey;
@@ -708,7 +819,7 @@
 
   async function onSubmit(e) {
     e.preventDefault();
-    if (busy) return;
+    if (busy || !swaggerConnected) return;
 
     const message = els.input.value.trim();
     if (!message) return;
@@ -717,7 +828,7 @@
     const sessionKey = normalizeSessionKey(els.sessionId.value);
 
     busy = true;
-    els.sendBtn.disabled = true;
+    updateChatInputState();
     setRoute("");
 
     appendMessage("user", message);
@@ -741,8 +852,8 @@
       setStatus("出错");
     } finally {
       busy = false;
-      els.sendBtn.disabled = false;
-      els.input.focus();
+      updateChatInputState();
+      if (swaggerConnected) els.input.focus();
       scrollToBottom();
     }
   }
@@ -800,6 +911,8 @@
     els.sessionId.value = newSessionKey();
     saveSettings();
   }
+  setupScrollbarReveal();
   loadHistory();
-  els.input.focus();
+  updateChatInputState();
+  if (swaggerConnected) els.input.focus();
 })();

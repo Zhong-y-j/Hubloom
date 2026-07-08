@@ -1,11 +1,11 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Cache-Control" content="no-cache" />
     <title>Hubloom</title>
-    <link rel="stylesheet" href="/static/styles.css?v=11" />
+    <link rel="stylesheet" href="/static/styles.css?v=20" />
   </head>
   <body>
     <div class="layout">
@@ -18,52 +18,30 @@
           </div>
         </div>
 
-        <p class="sidebar-intro">
-          填写运行参数后点击连接，加载 Swagger 并接入 API。密钥仅保存在本机浏览器。
-        </p>
+        <div class="sidebar-intro">
+          <ul>
+            <li>API Key、Token 等密钥仅保存在本机浏览器，不会保存到服务端。</li>
+            <li>聊天记录会短期存储在服务端，用于会话上下文与历史回显。</li>
+            <li>请勿接入生产环境 Swagger，避免误操作真实业务数据。</li>
+          </ul>
+        </div>
 
         <section class="config-card">
           <h3 class="config-card-title">模型（OpenAI）</h3>
 
           <div class="field">
-            <label for="openai-api-key">
-              API Key
-              <span class="env-key">OPENAI_API_KEY</span>
-            </label>
-            <input
-              id="openai-api-key"
-              type="password"
-              placeholder="sk-..."
-              autocomplete="off"
-            />
+            <label for="openai-api-key"> API Key </label>
+            <input id="openai-api-key" type="password" placeholder="sk-..." autocomplete="off" />
           </div>
 
           <div class="field">
-            <label for="openai-model">
-              模型
-              <span class="env-key">OPENAI_MODEL</span>
-            </label>
-            <input
-              id="openai-model"
-              type="text"
-              placeholder="gpt-4o / qwen3-max"
-              autocomplete="off"
-              spellcheck="false"
-            />
+            <label for="openai-model"> 模型 </label>
+            <input id="openai-model" type="text" placeholder="gpt-4o / qwen3-max" autocomplete="off" spellcheck="false" />
           </div>
 
           <div class="field">
-            <label for="openai-base-url">
-              Base URL
-              <span class="env-key">OPENAI_BASE_URL</span>
-            </label>
-            <input
-              id="openai-base-url"
-              type="text"
-              placeholder="https://api.openai.com/v1"
-              autocomplete="off"
-              spellcheck="false"
-            />
+            <label for="openai-base-url"> Base URL </label>
+            <input id="openai-base-url" type="text" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false" />
           </div>
         </section>
 
@@ -71,66 +49,28 @@
           <h3 class="config-card-title">API 接入（MCP）</h3>
 
           <div class="field">
-            <label for="mcp-swagger-url">
-              Swagger URL
-              <span class="env-key">MCP_SWAGGER_URL</span>
-            </label>
-            <input
-              id="mcp-swagger-url"
-              type="text"
-              placeholder="https://host/?format=openapi"
-              autocomplete="off"
-              spellcheck="false"
-            />
+            <label for="mcp-swagger-url"> Swagger URL </label>
+            <input id="mcp-swagger-url" type="text" placeholder="https://host/?format=openapi" autocomplete="off" spellcheck="false" />
           </div>
 
           <div class="field">
-            <label for="mcp-base-url">
-              Base URL
-              <span class="env-key">MCP_BASE_URL</span>
-            </label>
-            <input
-              id="mcp-base-url"
-              type="text"
-              placeholder="https://host/api"
-              autocomplete="off"
-              spellcheck="false"
-            />
+            <label for="mcp-base-url"> Base URL </label>
+            <input id="mcp-base-url" type="text" placeholder="https://host/api" autocomplete="off" spellcheck="false" />
           </div>
 
           <div class="field-row">
             <div class="field">
-              <label for="mcp-auth-scheme">
-                认证前缀
-                <span class="env-key">MCP_AUTH_SCHEME</span>
-              </label>
-              <input
-                id="mcp-auth-scheme"
-                type="text"
-                value="Bearer"
-                placeholder="Bearer / JWT"
-                autocomplete="off"
-                spellcheck="false"
-              />
+              <label for="mcp-auth-scheme"> 认证前缀 </label>
+              <input id="mcp-auth-scheme" type="text" value="Bearer" placeholder="Bearer / JWT" autocomplete="off" spellcheck="false" />
             </div>
             <div class="field field-grow">
-              <label for="mcp-token">
-                Token
-                <span class="env-key">MCP_TOKEN</span>
-              </label>
-              <input
-                id="mcp-token"
-                type="password"
-                placeholder="access_token"
-                autocomplete="off"
-              />
+              <label for="mcp-token"> Token </label>
+              <input id="mcp-token" type="password" placeholder="access_token" autocomplete="off" />
             </div>
           </div>
         </section>
 
-        <button type="button" id="connect-btn" class="btn block primary">
-          连接 Swagger
-        </button>
+        <button type="button" id="connect-btn" class="btn block primary">连接 Swagger</button>
         <div class="connect-status" id="connect-status">
           <div class="pill" id="config-status" data-state="idle">
             <span class="dot"></span>
@@ -143,12 +83,7 @@
           <h3 class="config-card-title">会话</h3>
           <div class="field">
             <label for="session-id">用户 ID</label>
-            <input
-              id="session-id"
-              type="text"
-              placeholder="web-uuid"
-              autocomplete="off"
-            />
+            <input id="session-id" type="text" placeholder="web-uuid" autocomplete="off" />
           </div>
           <button type="button" id="new-session" class="btn ghost">新会话</button>
         </section>
@@ -169,26 +104,28 @@
 
       <main class="chat">
         <header class="chat-header">
-          <h2>对话</h2>
-          <span id="route-badge" class="badge hidden"></span>
+          <div class="chat-header-inner">
+            <h2>OpenAPI 驱动的对话式 API 网关 — 自然语言操作企业 REST API</h2>
+            <div class="chat-header-actions">
+              <span id="connect-warning" class="connect-warning hidden">未连接 Swagger</span>
+              <span id="route-badge" class="badge hidden"></span>
+            </div>
+          </div>
         </header>
 
         <div id="messages" class="messages" aria-live="polite"></div>
 
         <form id="chat-form" class="composer">
-          <textarea
-            id="message-input"
-            rows="2"
-            placeholder="输入消息，Enter 发送，Shift+Enter 换行"
-            required
-          ></textarea>
-          <button type="submit" id="send-btn" class="btn primary">发送</button>
+          <div class="composer-inner">
+            <textarea id="message-input" rows="2" placeholder="输入消息，Enter 发送，Shift+Enter 换行" required></textarea>
+            <button type="submit" id="send-btn" class="btn primary">发送</button>
+          </div>
         </form>
       </main>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-    <script src="/static/chat.js?v=17"></script>
+    <script src="/static/chat.js?v=22"></script>
   </body>
 </html>
