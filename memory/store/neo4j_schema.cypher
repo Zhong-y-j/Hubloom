@@ -1,4 +1,4 @@
-// Agent Cortex · associative 联想记忆 Schema（Neo4j 5+）
+// Hubloom · associative 联想记忆 Schema（Neo4j 5+）
 // 由 Neo4jStore.ensure_schema() 执行；可重复运行（IF NOT EXISTS）
 
 CREATE CONSTRAINT entity_id_unique IF NOT EXISTS

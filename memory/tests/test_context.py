@@ -11,7 +11,7 @@ from core.models import Message, Role
 from memory.context import ContextAssembler
 from observability import setup_log
 
-SYSTEM = "你是 Agent Cortex 助手，请结合记忆与文档回答。"
+SYSTEM = "你是 Hubloom 助手，请结合记忆与文档回答。"
 
 MEMORIES = [
     {"content": "用户在上海负责合同项目A", "score": 0.88, "memory_type": "episodic"},

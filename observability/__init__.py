@@ -1,4 +1,4 @@
-"""灵枢日志（Loguru）。"""
+"""Hubloom 日志（Loguru）。"""
 
 from loguru import logger
 

@@ -94,7 +94,7 @@ class TurnOutcome:
 
 
 class CortexAgent:
-    """Agent Cortex 统一入口（编排层）。"""
+    """Hubloom 统一入口（编排层）。"""
 
     def __init__(
         self,

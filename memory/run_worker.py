@@ -66,7 +66,7 @@ async def _async_main(args: argparse.Namespace) -> None:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Agent Cortex 离线记忆 worker")
+    parser = argparse.ArgumentParser(description="Hubloom 离线记忆 worker")
     parser.add_argument(
         "--session",
         help="只处理指定 session_id / namespace（默认扫描全部）",

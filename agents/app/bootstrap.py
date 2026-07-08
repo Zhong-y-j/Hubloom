@@ -1,4 +1,4 @@
-"""组装 CortexAgent 运行时（CLI 与 HTTP 共用）。"""
+"""组装 Hubloom Agent 运行时（CLI 与 HTTP 共用）。"""
 
 from __future__ import annotations
 

@@ -58,7 +58,7 @@ async def main(
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="清空 Agent Cortex 长期记忆")
+    parser = argparse.ArgumentParser(description="清空 Hubloom 长期记忆")
     parser.add_argument(
         "--qdrant-all",
         action="store_true",

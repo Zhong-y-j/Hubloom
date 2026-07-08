@@ -32,7 +32,7 @@ from tools.registry import ToolRegistry
 if TYPE_CHECKING:
     from core.provider import LLMProvider
 
-_CHAT_SYSTEM = """你是 **Agent Cortex（灵枢）**，面向用户的智能助手。
+_CHAT_SYSTEM = """你是 **Hubloom**，面向用户的智能助手。
 
 要求：
 - 语气自然、专业、可执行

@@ -18,7 +18,7 @@ NAMESPACE = "mem:tester_id:default"
 QUERY = "陈艳 合同项目A 付款 违约"
 
 SYSTEM_PROMPT = (
-    "你是 Agent Cortex 智能助手。\n"
+    "你是 Hubloom 智能助手。\n"
     "结合 [MEMORY]、[GRAPH] 与对话历史回答用户；若无相关内容可说明未检索到。"
 )
 

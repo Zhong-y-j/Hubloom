@@ -69,5 +69,5 @@ def memory_log(message: str, /, **fields) -> None:
 
 
 def cortex_log(message: str, /, **fields) -> None:
-    """ADP 编排层日志（CortexAgent / Assessor / Chat / Thought）。"""
+    """ADP 编排层日志（Hubloom / Assessor / Chat / Thought）。"""
     _emit("cortex", "CORTEX_CORTEX_LOG", message, **fields)

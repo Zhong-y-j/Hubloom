@@ -1,4 +1,4 @@
-"""CortexAgent 事件 → JSON（SSE / 非流式 API）。"""
+"""Hubloom Agent 事件 → JSON（SSE / 非流式 API）。"""
 
 from __future__ import annotations
 

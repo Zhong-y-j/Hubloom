@@ -1,7 +1,7 @@
 [project]
-name = "agentcortex"
+name = "hubloom"
 version = "0.1.0"
-description = "OpenAPI-driven MCP agent hub: natural language interface to REST APIs via ReAct, Hub orchestration, and optional Plan/Reflection."
+description = "Open-source enterprise agent interconnect platform: OpenAPI-driven MCP gateway, natural language to REST APIs, orchestration via assessor and deep thought."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"

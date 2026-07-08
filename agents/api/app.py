@@ -1,4 +1,4 @@
-"""Agent Cortex HTTP API（FastAPI）。"""
+"""Hubloom HTTP API（FastAPI）。"""
 
 from __future__ import annotations
 
@@ -124,7 +124,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="Agent Cortex API",
+    title="Hubloom API",
     description="ADP 编排（Assessor → Chat / Thought）HTTP 接口",
     version="0.2.0",
     lifespan=lifespan,
