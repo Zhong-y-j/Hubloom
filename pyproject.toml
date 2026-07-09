@@ -19,4 +19,5 @@ dependencies = [
     "prance>=25.4.8.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.32.0",
+    "a2a-sdk>=1.1.0",
 ]
