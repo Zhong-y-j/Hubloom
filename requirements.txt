@@ -1,4 +1,3 @@
-# Hubloom Python 依赖
 # 要求: Python >= 3.12
 #
 # 安装:

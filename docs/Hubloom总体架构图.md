@@ -131,6 +131,7 @@ sequenceDiagram
 
 - [ADP 编排层](./Hubloom-ADP编排.md) — 路由决策、Chat / Thought 双路径
 - [MCP 适配层](./Hubloom-MCP适配.md) — Swagger → 工具、网关与 Worker、Token 透传
+- [A2A 互联](./Hubloom-A2A互联.md) — 双向 A2A 设计：入站 Server / 出站 Client（设计稿）
 - [工具层](./Hubloom-工具层.md) — BaseTool / Registry / Runner 与内置工具
 - [记忆系统](./Hubloom-记忆系统.md) — 会话 / 长期记忆 / 离线提炼
 - [RAG 知识库](./Hubloom-RAG知识库.md) — 文档入库 / 向量检索 / search_documents

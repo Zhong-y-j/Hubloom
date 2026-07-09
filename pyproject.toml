@@ -1,6 +1,6 @@
 [project]
 name = "hubloom"
-version = "0.1.0"
+version = "0.3.0"
 description = "Open-source enterprise agent interconnect platform: OpenAPI-driven MCP gateway, natural language to REST APIs, orchestration via assessor and deep thought."
 readme = "README.md"
 license = "Apache-2.0"
