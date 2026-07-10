@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 
 from agents.a2a.credential.base import Credential
+from agents.agent_log import a2a_log
 
 # 本地联调假身份；可用环境变量覆盖。
 _STATIC_USER_ID = "a2a_dev_user"
@@ -22,4 +23,11 @@ def resolve_credential() -> Credential:
         raise ValueError("A2A static user_id is empty; set A2A_STATIC_USER_ID")
     if not token:
         raise ValueError("A2A static token is empty; set A2A_STATIC_TOKEN")
-    return Credential(token=token, user_id=user_id)
+    cred = Credential(token=token, user_id=user_id)
+    a2a_log(
+        "credential resolved",
+        user_id=cred.user_id,
+        has_token=bool(cred.token),
+        scheme=cred.scheme,
+    )
+    return cred

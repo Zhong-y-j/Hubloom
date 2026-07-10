@@ -16,6 +16,7 @@ from a2a.server.events import EventQueue
 from a2a.server.tasks import TaskUpdater
 from a2a.types import TaskState
 
+from agents.agent_log import a2a_log, clip
 from a2a_adapter.server.mapping import message_to_text, text_to_artifact_parts
 
 # (channel, text) → 写出分片；channel 见 bridge
@@ -95,6 +96,12 @@ class HubloomExecutor(AgentExecutor):
 
         try:
             query = message_to_text(context.message)
+            a2a_log(
+                "executor start",
+                task_id=task.id,
+                context_id=task.context_id,
+                query=clip(query, 80),
+            )
             reply = await self._run_turn(query, task.id, on_stream)
 
             if answer_chunks == 0:
@@ -127,7 +134,15 @@ class HubloomExecutor(AgentExecutor):
                 state=TaskState.TASK_STATE_COMPLETED,
                 message=new_text_message("Done."),
             )
+            a2a_log(
+                "executor completed",
+                task_id=task.id,
+                answer_chunks=answer_chunks,
+                trace_chunks=trace_chunks,
+                reply_len=len(reply or ""),
+            )
         except Exception as exc:
+            a2a_log("executor failed", task_id=task.id, error=str(exc))
             await updater.update_status(
                 state=TaskState.TASK_STATE_FAILED,
                 message=new_text_message(f"Failed: {exc}"),

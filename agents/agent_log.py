@@ -71,3 +71,8 @@ def memory_log(message: str, /, **fields) -> None:
 def cortex_log(message: str, /, **fields) -> None:
     """ADP 编排层日志（Hubloom / Assessor / Chat / Thought）。"""
     _emit("cortex", "CORTEX_CORTEX_LOG", message, **fields)
+
+
+def a2a_log(message: str, /, **fields) -> None:
+    """A2A 入站日志（Executor / bridge / credential）。"""
+    _emit("a2a", "CORTEX_A2A_LOG", message, **fields)

@@ -33,7 +33,7 @@ from agents.app.session import (
     format_session_id,
 )
 from agents.adp.cortex_agent import CortexAgent
-from agents.agent_log import cortex_log
+from agents.agent_log import a2a_log, cortex_log
 from agents.events import ErrorEvent
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log
@@ -145,8 +145,8 @@ async def _mount_a2a_routes(app: FastAPI) -> None:
     for route in build_a2a_routes(card, run_turn=run_turn, rpc_url="/"):
         app.router.routes.append(route)
 
-    cortex_log(
-        "a2a mounted on FastAPI",
+    a2a_log(
+        "mounted on FastAPI",
         public_url=public_url,
         skill_count=len(card.skills),
         card=f"{public_url}/.well-known/agent-card.json",
