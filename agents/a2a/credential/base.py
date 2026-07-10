@@ -7,9 +7,10 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Credential:
-    """可用凭证：执行层据此透传给 MCP / 企业 API。"""
+    """可用凭证：执行层据此定 session，并透传 token 给 MCP。"""
 
     token: str
+    user_id: str
     scheme: str = "Bearer"
 
     def authorization_header(self) -> str:

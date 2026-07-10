@@ -110,11 +110,55 @@ def _restore_env(snapshot: dict[str, str | None]) -> None:
             os.environ[key] = value
 
 
+def _public_base_url() -> str:
+    """对外公布的 A2A / Card URL（勿用 0.0.0.0）。"""
+    explicit = (os.getenv("CORTEX_PUBLIC_URL") or "").strip().rstrip("/")
+    if explicit:
+        return explicit
+    port = int(os.getenv("CORTEX_API_PORT", "8000"))
+    return f"http://127.0.0.1:{port}"
+
+
+async def _mount_a2a_routes(app: FastAPI) -> None:
+    """把 A2A Card + JSON-RPC 挂到主 FastAPI（与 Chat 同进程）。"""
+    from a2a_adapter.server.app import build_a2a_routes
+    from agents.a2a.bridge import run_a2a_turn
+    from agents.a2a.card import build_agent_card
+    from mcp_adapter.gateway.catalog import load_catalog
+
+    public_url = _public_base_url()
+    catalog = await load_catalog()
+    card = await build_agent_card(public_url, catalog)
+
+    async def run_turn(query: str, task_id: str, on_stream) -> str:
+        # 始终用当前全局 runtime（/v1/config/apply 重建后仍有效）
+        runtime = _runtime
+        if runtime is None:
+            raise RuntimeError("CortexRuntime 尚未就绪")
+        return await run_a2a_turn(
+            runtime,
+            query,
+            task_id=task_id,
+            on_stream=on_stream,
+        )
+
+    for route in build_a2a_routes(card, run_turn=run_turn, rpc_url="/"):
+        app.router.routes.append(route)
+
+    cortex_log(
+        "a2a mounted on FastAPI",
+        public_url=public_url,
+        skill_count=len(card.skills),
+        card=f"{public_url}/.well-known/agent-card.json",
+    )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     global _runtime
     setup_log()
     _runtime = await build_runtime_async()
+    await _mount_a2a_routes(_app)
     try:
         yield
     finally:

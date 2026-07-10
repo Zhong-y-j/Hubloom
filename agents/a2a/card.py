@@ -95,7 +95,7 @@ async def build_agent_card(public_url: str, catalog: GatewayCatalog) -> AgentCar
         version="0.1.0",
         default_input_modes=["text/plain"],
         default_output_modes=["text/plain"],
-        capabilities=AgentCapabilities(streaming=False),
+        capabilities=AgentCapabilities(streaming=True),
         supported_interfaces=[
             AgentInterface(
                 protocol_binding="JSONRPC",
