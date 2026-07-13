@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache" />
+    <title>景点智能助手</title>
+    <link rel="stylesheet" href="/static/styles.css?v=1" />
+  </head>
+  <body>
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-mark">🏛️</span>
+          <div>
+            <h1>景点助手</h1>
+            <p id="user-label">已登录</p>
+          </div>
+        </div>
+
+        <div class="sidebar-intro">
+          <ul>
+            <li>OpenAI API Key 仅保存在本机浏览器。</li>
+            <li>景点 API 随服务启动自动接入 Hubloom。</li>
+            <li>会话 ID 使用当前登录账号。</li>
+          </ul>
+        </div>
+
+        <section class="config-card">
+          <h3 class="config-card-title">模型（OpenAI）</h3>
+
+          <div class="field">
+            <label for="openai-api-key"> API Key </label>
+            <input id="openai-api-key" type="password" placeholder="sk-..." autocomplete="off" />
+          </div>
+
+          <div class="field">
+            <label for="openai-model"> 模型 </label>
+            <input id="openai-model" type="text" placeholder="gpt-4o / qwen3-max" autocomplete="off" spellcheck="false" />
+          </div>
+
+          <div class="field">
+            <label for="openai-base-url"> Base URL </label>
+            <input id="openai-base-url" type="text" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false" />
+          </div>
+        </section>
+
+        <section class="panel-options">
+          <label class="checkbox">
+            <input id="stream-mode" type="checkbox" checked />
+            流式输出（SSE）
+          </label>
+          <label class="checkbox">
+            <input id="show-tools" type="checkbox" checked />
+            显示工具调用
+          </label>
+        </section>
+
+        <a href="/login" class="btn ghost block" id="logout-link">退出登录</a>
+        <div class="status" id="status">就绪</div>
+      </aside>
+
+      <main class="chat">
+        <header class="chat-header">
+          <div class="chat-header-inner">
+            <h2>旅行景点系统 · 自然语言查询门票与预约</h2>
+            <div class="chat-header-actions">
+              <span id="route-badge" class="badge hidden"></span>
+            </div>
+          </div>
+        </header>
+
+        <div id="messages" class="messages" aria-live="polite"></div>
+
+        <form id="chat-form" class="composer">
+          <div class="composer-inner">
+            <textarea id="message-input" rows="2" placeholder="输入消息，Enter 发送，Shift+Enter 换行" required></textarea>
+            <button type="submit" id="send-btn" class="btn primary">发送</button>
+          </div>
+        </form>
+      </main>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+    <script src="/static/chat.js?v=1"></script>
+  </body>
+</html>

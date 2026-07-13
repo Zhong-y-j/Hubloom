@@ -38,6 +38,16 @@ Hubloom 跨系统编排演示：交通通行、酒店预定、旅行景点三个
 
 三个系统**逻辑与代码分治**；联调时经 `gateway/` 聚合为统一 MCP 入口（贴近企业 API 网关）。
 
+### 单系统演示（当前可用）
+
+| 系统 | 启动脚本 | 登录页 | Hubloom 端口 |
+|------|----------|--------|--------------|
+| 酒店 | `./examples/travel/scripts/start-hotel-demo.sh` | http://127.0.0.1:9001/login | 8001 |
+| 交通 | `./examples/travel/scripts/start-transport-demo.sh` | http://127.0.0.1:9003/login | 8003 |
+| 景点 | `./examples/travel/scripts/start-attraction-demo.sh` | http://127.0.0.1:9004/login | 8004 |
+
+三个演示可独立运行，互不依赖；停止脚本分别为 `stop-hotel-demo.sh`、`stop-transport-demo.sh`、`stop-attraction-demo.sh`。
+
 ---
 
 ## 端口规划
@@ -45,11 +55,12 @@ Hubloom 跨系统编排演示：交通通行、酒店预定、旅行景点三个
 | 进程 | 端口 | 说明 |
 |------|------|------|
 | travel-gateway | 8100 | MCP 聚合入口 |
-| transport-api（可选独立调试） | 8101 | 仅开发单测 |
+| transport-api（可选独立调试） | 9003 | 仅开发单测 |
 | hotel-api（可选独立调试） | 9001 | 仅开发单测 |
-| attraction-api（可选独立调试） | 8103 | 仅开发单测 |
-| Hubloom A1 | 8001 | 主 Web UI + 交通/酒店 MCP + A2A 出站 |
-| Hubloom A2 | 8002 | 景点 Agent，承接 `delegate_task` |
+| attraction-api（可选独立调试） | 9004 | 仅开发单测 |
+| Hubloom 酒店 | 8001 | 酒店演示专用 Hubloom |
+| Hubloom 交通 | 8003 | 交通演示专用 Hubloom |
+| Hubloom 景点 | 8004 | 景点演示专用 Hubloom |
 
 ---
 
@@ -75,11 +86,11 @@ examples/travel/
 
 - [x] **Step 1**：创建目录骨架与本 README
 - [ ] **Step 2**：编写种子数据 `seeds/trip-5566.json`（跨系统共享，待交通/景点完成后统一）
-- [x] **Step 3a**：酒店 mock 系统（SQLite + 18 业务接口 + 登录）→ 见 [`mocks/hotel/README.md`](./mocks/hotel/README.md)
-- [x] **Step 3b**：交通 mock 系统（高铁/动车，SQLite + 18 业务接口 + 登录）→ 见 [`mocks/transport/README.md`](./mocks/transport/README.md)
-- [x] **Step 3c**：景区 mock 系统（SQLite + 18 业务接口 + 登录）→ 见 [`mocks/attraction/README.md`](./mocks/attraction/README.md)
+- [x] **Step 3a**：酒店 mock 系统（SQLite + 18 业务接口 + 登录 + UI/联调）→ 见 [`mocks/hotel/README.md`](./mocks/hotel/README.md)
+- [x] **Step 3b**：交通 mock 系统（高铁/动车，SQLite + 18 业务接口 + 登录 + UI/联调）→ 见 [`mocks/transport/README.md`](./mocks/transport/README.md)
+- [x] **Step 3c**：景区 mock 系统（SQLite + 18 业务接口 + 登录 + UI/联调）→ 见 [`mocks/attraction/README.md`](./mocks/attraction/README.md)
 - [ ] **Step 4**：gateway 聚合 + OpenAPI spec
-- [ ] **Step 5**：`env/` 与 `scripts/` 联调脚本
+- [ ] **Step 5**：`env/` 与三系统联调脚本（单系统演示脚本已完成）
 - [ ] **Step 6**：双 Hubloom 实例端到端演示
 
 ---

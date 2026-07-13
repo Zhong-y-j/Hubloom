@@ -4,14 +4,70 @@ SQLite 存储的独立景区门票预约 API，用于 Hubloom 差旅演示案例
 
 ## 启动
 
+### 方式一：一键脚本（推荐）
+
+在 **Hubloom 项目根目录** 执行：
+
+```bash
+./examples/travel/scripts/start-attraction-demo.sh
+```
+
+停止：
+
+```bash
+./examples/travel/scripts/stop-attraction-demo.sh
+```
+
+脚本会依次启动：
+1. 景点 mock（`9004`，先提供 `/openapi.json`）
+2. Hubloom A2（`8004`，会话库 `data/memory-attraction.db`）
+3. 向 Hubloom 注册景点 OpenAPI
+
+打开：**http://127.0.0.1:9004/login**
+
+### 方式二：仅 API（无聊天 UI）
+
 ```bash
 # 在 Hubloom 项目根目录
 PYTHONPATH=. uv run python -m examples.travel.mocks.attraction
 ```
 
-- 服务地址：http://127.0.0.1:8103
-- OpenAPI 文档：http://127.0.0.1:8103/docs
+### 方式三：两个终端手动联调
+
+**终端 1 — 景点（先启动）：**
+```bash
+HUBLOOM_BASE_URL=http://127.0.0.1:8004 ATTRACTION_PUBLIC_URL=http://127.0.0.1:9004 PYTHONPATH=. uv run python -m examples.travel.mocks.attraction
+```
+
+**终端 2 — Hubloom：**
+```bash
+CORTEX_API_PORT=8004 CORTEX_MEMORY_DB=data/memory-attraction.db PYTHONPATH=. uv run python -m agents.api.app
+```
+
+- 服务地址：http://127.0.0.1:9004
+- 登录页：http://127.0.0.1:9004/ 或 http://127.0.0.1:9004/login
+- 聊天页：http://127.0.0.1:9004/chat（需先登录）
+- OpenAPI 文档：http://127.0.0.1:9004/docs
 - 数据库：`data/attraction.db`（首次启动自动建表并种子化）
+
+联调 Hubloom 助手时，**先启景点、再启 Hubloom**（默认 `http://127.0.0.1:8004`）。
+
+可选环境变量：
+
+| 变量 | 默认 | 说明 |
+|------|------|------|
+| `HUBLOOM_BASE_URL` | `http://127.0.0.1:8004` | Hubloom 基址 |
+| `ATTRACTION_PUBLIC_URL` | `http://127.0.0.1:9004` | 景点对外基址（写入 Swagger） |
+
+## Hubloom 代理（BFF）
+
+前端通过景点同源接口转发到 Hubloom：
+
+| 景点接口 | 转发到 |
+|----------|--------|
+| `POST /hubloom/config/apply` | `POST {HUBLOOM}/v1/config/apply` |
+| `POST /hubloom/chat` | `POST {HUBLOOM}/v1/chat`（SSE 透传） |
+| `GET /hubloom/chat/history` | `GET {HUBLOOM}/v1/chat/history` |
 
 ## 演示账号
 
@@ -86,10 +142,10 @@ Authorization: Bearer demo-attraction-token
 ## 快速验证
 
 ```bash
-curl http://127.0.0.1:8103/health
+curl http://127.0.0.1:9004/health
 
-curl http://127.0.0.1:8103/tickets/by-trip/TRIP-5566 \
+curl http://127.0.0.1:9004/tickets/by-trip/TRIP-5566 \
   -H "Authorization: Bearer demo-attraction-token"
 
-curl http://127.0.0.1:8103/attractions/ATTR-BJ-GUGONG/policies
+curl http://127.0.0.1:9004/attractions/ATTR-BJ-GUGONG/policies
 ```
