@@ -114,6 +114,7 @@ class CortexAgent:
         vector_backend: VectorBackend = "qdrant",
         graph_backend: GraphBackend | None = None,
         api_catalog_prompt: str = "",
+        memory_db_path: str | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -128,10 +129,11 @@ class CortexAgent:
         self._include_graph_memory = include_graph_memory
         self._last_outcome: TurnOutcome | None = None
 
-        from agents.app.session import format_session_id
+        from agents.app.session import DEFAULT_MEMORY_DB, format_session_id
 
         self.session_id = (session_id or "").strip() or "tester_id"
         self.namespace = format_session_id(self.session_id)
+        resolved_db_path = (memory_db_path or DEFAULT_MEMORY_DB).strip() or DEFAULT_MEMORY_DB
 
         resolved_graph: GraphBackend = (
             graph_backend
@@ -144,6 +146,7 @@ class CortexAgent:
 
         self._memory_manager = create_memory_manager(
             namespace=self.namespace,
+            db_path=resolved_db_path,
             vector_backend=resolved_vector,
             graph_backend=resolved_graph,
         )

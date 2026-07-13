@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from mcp_adapter.gateway.catalog import GatewayCatalog
+from mcp_adapter.gateway.catalog import GatewayCatalog, mcp_tool_name
 from mcp_adapter.gateway.pool import BackendPool, DEFAULT_TIMEOUT
 
 
@@ -26,13 +26,27 @@ class BackendRouter:
         if tag not in self._catalog.groups:
             raise ValueError(f"未知分组 tag: {tag!r}")
 
-    def _ensure_tool(self, tag: str, tool_name: str) -> None:
+    def _resolve_tool_name(self, tag: str, tool_name: str) -> str:
+        """校验并解析工具名；兼容 LLM 传入的完整 operationId。"""
         group = self._catalog.get_group(tag)
-        if group and tool_name not in group.tool_names:
-            preview = ", ".join(group.tool_names[:5])
-            raise ValueError(
-                f"工具 {tool_name!r} 不属于分组 {tag!r}；示例: {preview}..."
-            )
+        if not group:
+            raise ValueError(f"未知分组 tag: {tag!r}")
+
+        name = (tool_name or "").strip()
+        if not name:
+            raise ValueError(f"工具名不能为空（分组 {tag!r}）")
+
+        if name in group.tool_names:
+            return name
+
+        short = mcp_tool_name(name)
+        if short in group.tool_names:
+            return short
+
+        preview = ", ".join(group.tool_names[:5])
+        raise ValueError(
+            f"工具 {tool_name!r} 不属于分组 {tag!r}；示例: {preview}..."
+        )
 
     @property
     def pool(self) -> BackendPool:
@@ -52,10 +66,10 @@ class BackendRouter:
         auth_scheme: str | None = None,
     ) -> Any:
         self._ensure_tag(tag)
-        self._ensure_tool(tag, tool_name)
+        resolved = self._resolve_tool_name(tag, tool_name)
         return await self._pool.call_tool(
             tag,
-            tool_name,
+            resolved,
             arguments,
             auth_token=auth_token,
             auth_scheme=auth_scheme,

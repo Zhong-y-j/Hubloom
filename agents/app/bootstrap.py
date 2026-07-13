@@ -65,6 +65,7 @@ class CortexRuntime:
             enable_long_term_memory=ENABLE_LONG_TERM_MEMORY,
             include_graph_memory=ENABLE_LONG_TERM_MEMORY,
             api_catalog_prompt=self.api_catalog_prompt,
+            memory_db_path=self.memory_db_path,
         )
         agent.attach_readonly_tools(knowledge_base=self.knowledge_base)
         return agent
@@ -72,7 +73,10 @@ class CortexRuntime:
 
 async def build_runtime_async(*, enable_mcp: bool = True) -> CortexRuntime:
     """加载 MCP / RAG，构造可复用的 CortexRuntime。"""
-    runtime = CortexRuntime(enable_mcp=enable_mcp)
+    runtime = CortexRuntime(
+        enable_mcp=enable_mcp,
+        memory_db_path=DEFAULT_MEMORY_DB,
+    )
 
     if ENABLE_RAG:
         runtime.knowledge_base = await load_knowledge_base_from_env()

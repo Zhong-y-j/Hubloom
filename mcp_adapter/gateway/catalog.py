@@ -15,9 +15,14 @@ from mcp_adapter.spec.loader import load_spec
 from mcp_adapter.spec.normalize import normalize_openapi_spec
 
 
+def mcp_tool_name(operation_id: str) -> str:
+    """FastMCP.from_openapi 注册的工具名（取 operationId 首段，``__`` 前）。"""
+    return str(operation_id or "").strip().split("__", 1)[0]
+
+
 @dataclass(frozen=True)
 class ToolRef:
-    """组内一个工具（MCP tool name = operationId）。"""
+    """组内一个工具（MCP tool name，与 FastMCP worker 一致）。"""
 
     name: str
     method: str
@@ -119,7 +124,10 @@ def build_catalog_from_openapi(spec: dict) -> GatewayCatalog:
             if method == "parameters" or not isinstance(operation, dict):
                 continue
 
-            name = str(operation.get("operationId") or "").strip()
+            operation_id = str(operation.get("operationId") or "").strip()
+            if not operation_id:
+                continue
+            name = mcp_tool_name(operation_id)
             if not name:
                 continue
 

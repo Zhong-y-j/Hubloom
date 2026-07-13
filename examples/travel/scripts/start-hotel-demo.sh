@@ -14,16 +14,52 @@ HOTEL_PORT="${HOTEL_PORT:-9001}"
 HUBLOOM_URL="http://127.0.0.1:${HUBLOOM_PORT}"
 HOTEL_URL="http://127.0.0.1:${HOTEL_PORT}"
 
-if [[ -f "$PID_DIR/hotel.pid" ]] && kill -0 "$(cat "$PID_DIR/hotel.pid")" 2>/dev/null; then
+pids_on_port() {
+  # lsof 无匹配时 exit 1；pipefail + set -e 下须吞掉，否则脚本会静默退出
+  lsof -tiTCP:"$1" -sTCP:LISTEN 2>/dev/null | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true
+}
+
+record_listener_pid() {
+  local port="$1"
+  local pid_file="$2"
+  local pid
+  pid="$(pids_on_port "$port" | awk '{print $1}')"
+  if [[ -n "$pid" ]]; then
+    echo "$pid" >"$pid_file"
+    return 0
+  fi
+  return 1
+}
+
+is_service_running() {
+  local pid_file="$1"
+  local port="$2"
+  [[ -f "$pid_file" ]] && kill -0 "$(cat "$pid_file")" 2>/dev/null && [[ -n "$(pids_on_port "$port")" ]]
+}
+
+if is_service_running "$PID_DIR/hotel.pid" "$HOTEL_PORT"; then
   echo "酒店服务已在运行 (pid $(cat "$PID_DIR/hotel.pid"))"
 else
+  stale_pids="$(pids_on_port "$HOTEL_PORT")"
+  if [[ -n "$stale_pids" ]]; then
+    echo "清理占用 ${HOTEL_PORT} 的旧酒店进程 (pid ${stale_pids})"
+    # shellcheck disable=SC2086
+    kill $stale_pids 2>/dev/null || true
+    sleep 1
+  fi
+  rm -f "$PID_DIR/hotel.pid"
   echo "启动酒店 mock → ${HOTEL_URL}"
   HUBLOOM_BASE_URL="$HUBLOOM_URL" \
   HOTEL_PUBLIC_URL="$HOTEL_URL" \
   PYTHONPATH=. \
   uv run python -m examples.travel.mocks.hotel \
     >"$LOG_DIR/hotel.log" 2>&1 &
-  echo $! >"$PID_DIR/hotel.pid"
+  for _ in $(seq 1 20); do
+    if record_listener_pid "$HOTEL_PORT" "$PID_DIR/hotel.pid"; then
+      break
+    fi
+    sleep 1
+  done
 fi
 
 echo "等待酒店服务就绪…"
@@ -34,16 +70,29 @@ for _ in $(seq 1 20); do
   sleep 1
 done
 
-if [[ -f "$PID_DIR/hubloom.pid" ]] && kill -0 "$(cat "$PID_DIR/hubloom.pid")" 2>/dev/null; then
+if is_service_running "$PID_DIR/hubloom.pid" "$HUBLOOM_PORT"; then
   echo "Hubloom 已在运行 (pid $(cat "$PID_DIR/hubloom.pid"))"
 else
+  stale_pids="$(pids_on_port "$HUBLOOM_PORT")"
+  if [[ -n "$stale_pids" ]]; then
+    echo "清理占用 ${HUBLOOM_PORT} 的旧 Hubloom 进程 (pid ${stale_pids})"
+    # shellcheck disable=SC2086
+    kill $stale_pids 2>/dev/null || true
+    sleep 1
+  fi
+  rm -f "$PID_DIR/hubloom.pid"
   echo "启动 Hubloom → ${HUBLOOM_URL}"
   CORTEX_API_PORT="$HUBLOOM_PORT" \
   CORTEX_MEMORY_DB=data/memory-hotel.db \
   PYTHONPATH=. \
   uv run python -m agents.api.app \
     >"$LOG_DIR/hubloom.log" 2>&1 &
-  echo $! >"$PID_DIR/hubloom.pid"
+  for _ in $(seq 1 30); do
+    if record_listener_pid "$HUBLOOM_PORT" "$PID_DIR/hubloom.pid"; then
+      break
+    fi
+    sleep 1
+  done
 fi
 
 echo "等待 Hubloom 就绪…"
