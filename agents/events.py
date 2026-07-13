@@ -52,6 +52,7 @@ class ErrorEvent(AgentEvent):
     """本轮出错（对外以事件表达，而不是直接 raise）。"""
 
     error: str
+    recoverable: bool = False
 
 
 @dataclass

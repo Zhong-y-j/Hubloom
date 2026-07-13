@@ -1,17 +1,14 @@
 (function () {
-  const STORAGE_SESSION = "cortex_session_key";
-  const LEGACY_STORAGE_SESSION = "cortex_session_id";
-  const LEGACY_STORAGE_TOKEN = "cortex_auth_token";
-  const LEGACY_STORAGE_CONNECTION = "cortex_connection_meta";
+  const AUTH_TOKEN = "hotel_demo_token";
+  const AUTH_USER = "hotel_demo_user";
+  const MCP_SWAGGER = "hotel_mcp_swagger_url";
+  const MCP_BASE = "hotel_mcp_base_url";
+  const MCP_SCHEME = "hotel_mcp_auth_scheme";
 
   const CONFIG_KEYS = {
-    openaiApiKey: "cortex_openai_api_key",
-    openaiModel: "cortex_openai_model",
-    openaiBaseUrl: "cortex_openai_base_url",
-    mcpSwaggerUrl: "cortex_mcp_swagger_url",
-    mcpBaseUrl: "cortex_mcp_base_url",
-    mcpAuthScheme: "cortex_mcp_auth_scheme",
-    mcpToken: "cortex_mcp_token",
+    openaiApiKey: "hotel_openai_api_key",
+    openaiModel: "hotel_openai_model",
+    openaiBaseUrl: "hotel_openai_base_url",
   };
 
   /** Agent 对用户可见的三种状态（理解中 → 思考中 → 回复中） */
@@ -26,23 +23,13 @@
     form: document.getElementById("chat-form"),
     input: document.getElementById("message-input"),
     sendBtn: document.getElementById("send-btn"),
-    sessionId: document.getElementById("session-id"),
-    newSession: document.getElementById("new-session"),
     streamMode: document.getElementById("stream-mode"),
     showTools: document.getElementById("show-tools"),
     status: document.getElementById("status"),
     routeBadge: document.getElementById("route-badge"),
-    connectWarning: document.getElementById("connect-warning"),
-    connectBtn: document.getElementById("connect-btn"),
-    configStatus: document.getElementById("config-status"),
-    connectDetail: document.getElementById("connect-detail"),
     openaiApiKey: document.getElementById("openai-api-key"),
     openaiModel: document.getElementById("openai-model"),
     openaiBaseUrl: document.getElementById("openai-base-url"),
-    mcpSwaggerUrl: document.getElementById("mcp-swagger-url"),
-    mcpBaseUrl: document.getElementById("mcp-base-url"),
-    mcpAuthScheme: document.getElementById("mcp-auth-scheme"),
-    mcpToken: document.getElementById("mcp-token"),
   };
 
   let busy = false;
@@ -50,7 +37,47 @@
   let connectState = "idle";
 
   const CHAT_PLACEHOLDER_CONNECTED = "输入消息，Enter 发送，Shift+Enter 换行";
-  const CHAT_PLACEHOLDER_DISCONNECTED = "请先连接 Swagger 后再开始对话";
+  const CHAT_PLACEHOLDER_DISCONNECTED = "正在准备酒店助手，请稍候…";
+
+  function requireAuth() {
+    const token = sessionStorage.getItem(AUTH_TOKEN);
+    if (!token) {
+      window.location.replace("/login");
+      return false;
+    }
+    return true;
+  }
+
+  function getMcpConfig() {
+    return {
+      swaggerUrl: sessionStorage.getItem(MCP_SWAGGER) || "",
+      baseUrl: sessionStorage.getItem(MCP_BASE) || "",
+      authScheme: sessionStorage.getItem(MCP_SCHEME) || "Bearer",
+      token: sessionStorage.getItem(AUTH_TOKEN) || "",
+    };
+  }
+
+  function getSessionKey() {
+    try {
+      const user = JSON.parse(sessionStorage.getItem(AUTH_USER) || "{}");
+      return normalizeSessionKey(user.user_id || user.username || "");
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function renderUserLabel() {
+    const label = document.getElementById("user-label");
+    if (!label) return;
+    try {
+      const user = JSON.parse(sessionStorage.getItem(AUTH_USER) || "{}");
+      const name = user.display_name || user.username || "已登录";
+      const id = user.user_id ? "（" + user.user_id + "）" : "";
+      label.textContent = name + id;
+    } catch (_) {
+      label.textContent = "已登录";
+    }
+  }
 
   if (typeof marked !== "undefined") {
     marked.use({ breaks: true, gfm: true });
@@ -76,11 +103,6 @@
     el.classList.add("markdown-body");
   }
 
-  function uuid() {
-    if (crypto.randomUUID) return crypto.randomUUID();
-    return "sess-" + Date.now().toString(36);
-  }
-
   function normalizeSessionKey(value) {
     const trimmed = (value || "").trim();
     if (!trimmed) return "";
@@ -90,68 +112,24 @@
     return trimmed;
   }
 
-  function newSessionKey() {
-    return "web-" + uuid();
-  }
-
   function loadSettings() {
-    let sid =
-      localStorage.getItem(STORAGE_SESSION) ||
-      localStorage.getItem(LEGACY_STORAGE_SESSION);
-    if (sid) els.sessionId.value = normalizeSessionKey(sid);
-
-    const legacyToken = localStorage.getItem(LEGACY_STORAGE_TOKEN);
     const fields = {
       openaiApiKey: els.openaiApiKey,
       openaiModel: els.openaiModel,
       openaiBaseUrl: els.openaiBaseUrl,
-      mcpSwaggerUrl: els.mcpSwaggerUrl,
-      mcpBaseUrl: els.mcpBaseUrl,
-      mcpAuthScheme: els.mcpAuthScheme,
-      mcpToken: els.mcpToken,
     };
     for (const [key, el] of Object.entries(fields)) {
       if (!el) continue;
-      let value = localStorage.getItem(CONFIG_KEYS[key]);
-      if (!value && key === "mcpToken" && legacyToken) value = legacyToken;
+      const value = localStorage.getItem(CONFIG_KEYS[key]);
       if (value) el.value = value;
     }
-    if (!els.mcpAuthScheme.value.trim()) {
-      els.mcpAuthScheme.value = "Bearer";
-    }
-    localStorage.removeItem(LEGACY_STORAGE_CONNECTION);
-    setConnectStatus("idle", "未连接", "");
-  }
-
-  function formatConnectDetail(data) {
-    const parts = [];
-    if (data.group_count != null && data.tool_count != null) {
-      parts.push(data.group_count + " 个分组 · " + data.tool_count + " 个接口");
-    }
-    if (data.base_url) parts.push("API " + data.base_url);
-    if (data.swagger_url) parts.push(data.swagger_url);
-    return parts.join("\n");
-  }
-
-  function markConfigStale() {
-    setConnectStatus("idle", "未连接", "配置已变更，请重新连接");
   }
 
   function saveSettings() {
-    localStorage.setItem(
-      STORAGE_SESSION,
-      normalizeSessionKey(els.sessionId.value)
-    );
-    localStorage.removeItem(LEGACY_STORAGE_SESSION);
-
     const fields = {
       openaiApiKey: els.openaiApiKey,
       openaiModel: els.openaiModel,
       openaiBaseUrl: els.openaiBaseUrl,
-      mcpSwaggerUrl: els.mcpSwaggerUrl,
-      mcpBaseUrl: els.mcpBaseUrl,
-      mcpAuthScheme: els.mcpAuthScheme,
-      mcpToken: els.mcpToken,
     };
     for (const [key, el] of Object.entries(fields)) {
       if (!el) continue;
@@ -160,63 +138,40 @@
   }
 
   function configPayload() {
+    const mcp = getMcpConfig();
     return {
       openai_model: els.openaiModel && els.openaiModel.value.trim(),
       openai_base_url: els.openaiBaseUrl && els.openaiBaseUrl.value.trim(),
-      mcp_swagger_url: els.mcpSwaggerUrl && els.mcpSwaggerUrl.value.trim(),
-      mcp_base_url: els.mcpBaseUrl && els.mcpBaseUrl.value.trim(),
-      mcp_auth_scheme: els.mcpAuthScheme && els.mcpAuthScheme.value.trim(),
+      mcp_swagger_url: mcp.swaggerUrl,
+      mcp_base_url: mcp.baseUrl,
+      mcp_auth_scheme: mcp.authScheme,
+      mcp_token: mcp.token,
     };
   }
 
   async function applyConfig() {
-    const res = await fetch("/v1/config/apply", {
+    const res = await fetch("/hubloom/config/apply", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: buildHeaders(getSessionKey()),
       body: JSON.stringify(configPayload()),
     });
 
+    const text = await res.text();
     if (!res.ok) {
       let message = "HTTP " + res.status;
       try {
-        const data = await res.json();
+        const data = JSON.parse(text);
         message = data.detail || message;
       } catch (_) {
-        message = (await res.text()) || message;
+        message = text || message;
       }
       throw new Error(message);
     }
 
-    return await res.json();
+    return text ? JSON.parse(text) : {};
   }
 
-  function setPill(pillEl, state, text) {
-    if (!pillEl) return;
-    pillEl.setAttribute("data-state", state);
-    pillEl.querySelector(".pill-text").textContent = text;
-  }
-
-  function setConnectDetail(text) {
-    if (!els.connectDetail) return;
-    const value = (text || "").trim();
-    if (!value) {
-      els.connectDetail.textContent = "";
-      els.connectDetail.classList.add("hidden");
-      return;
-    }
-    els.connectDetail.textContent = value;
-    els.connectDetail.classList.remove("hidden");
-  }
-
-  function connectWarningText() {
-    if (connectState === "loading") return "正在连接 Swagger…";
-    if (connectState === "error") return "Swagger 连接失败，请重新连接";
-    return "未连接 Swagger，请先在左侧完成连接";
-  }
-
-  function setConnectStatus(state, pillText, detail) {
-    setPill(els.configStatus, state, pillText);
-    setConnectDetail(detail);
+  function setConnectState(state) {
     connectState = state;
     swaggerConnected = state === "ok";
     updateChatInputState();
@@ -236,47 +191,27 @@
     if (els.form) {
       els.form.classList.toggle("composer-disabled", !swaggerConnected);
     }
-    if (els.connectWarning) {
-      if (swaggerConnected) {
-        els.connectWarning.classList.add("hidden");
-      } else {
-        els.connectWarning.textContent = connectWarningText();
-        els.connectWarning.setAttribute("data-state", connectState);
-        els.connectWarning.classList.remove("hidden");
-      }
-    }
     refreshEmptyState();
   }
 
-  function setConnectButtonBusy(connecting) {
-    if (!els.connectBtn) return;
-    els.connectBtn.disabled = connecting;
-    els.connectBtn.textContent = connecting ? "连接中…" : "连接 Swagger";
-  }
-
-  async function onConnect() {
+  async function autoConnect() {
     saveSettings();
-    setConnectButtonBusy(true);
-    setConnectStatus("loading", "连接中…", "正在加载 Swagger 并重建 MCP…");
-    setStatus("正在连接 Swagger…");
+    setConnectState("loading");
+    setStatus("正在同步酒店 API 配置…");
 
     try {
-      const data = await applyConfig();
-      const meta = {
-        swagger_url: data.swagger_url || "",
-        base_url: data.base_url || "",
-        group_count: data.group_count,
-        tool_count: data.tool_count,
-      };
-      setConnectStatus("ok", "已连接", formatConnectDetail(meta));
-      setStatus("Swagger 已连接，可以开始对话");
+      await applyConfig();
+      setConnectState("ok");
+      setStatus("就绪");
+      await loadHistory();
     } catch (err) {
-      const message = String(err.message || err);
-      setConnectStatus("error", "连接失败", message);
-      setStatus(message);
-    } finally {
-      setConnectButtonBusy(false);
+      setConnectState("error");
+      setStatus(String(err.message || err));
+      ensureEmptyState();
     }
+
+    updateChatInputState();
+    if (swaggerConnected) els.input.focus();
   }
 
   function setStatus(text) {
@@ -301,14 +236,14 @@
     if (swaggerConnected) {
       return (
         '<p class="empty-title">开始对话</p>' +
-        '<p class="empty-desc">用自然语言查询、操作已接入的 API。</p>' +
-        '<p class="empty-hint">例如：「你能帮我做什么？」「查询某条记录」' +
-        "「帮我完成一个需要填参数的操作」</p>"
+        '<p class="empty-desc">用自然语言查询酒店预订、房型与订单。</p>' +
+        '<p class="empty-hint">例如：「行程 TRIP-5566 的酒店预订状态？」' +
+        "「查 HTL-889 订单详情」</p>"
       );
     }
     return (
-      '<p class="empty-title">请先连接 Swagger</p>' +
-      '<p class="empty-desc">在左侧填写模型与 API 接入配置，点击「连接 Swagger」后即可开始对话。</p>'
+      '<p class="empty-title">正在准备助手</p>' +
+      '<p class="empty-desc">请确认 Hubloom 与酒店服务均已启动，并填写 OpenAI API Key。</p>'
     );
   }
 
@@ -354,7 +289,7 @@
   }
 
   async function loadHistory() {
-    const sessionKey = normalizeSessionKey(els.sessionId.value);
+    const sessionKey = getSessionKey();
     if (!sessionKey) {
       clearMessages();
       ensureEmptyState();
@@ -366,7 +301,7 @@
 
     try {
       const url =
-        "/v1/chat/history?session_id=" + encodeURIComponent(sessionKey);
+        "/hubloom/chat/history?session_id=" + encodeURIComponent(sessionKey);
       const res = await fetch(url, { headers: buildHeaders(sessionKey) });
       if (!res.ok) {
         const errText = await res.text();
@@ -984,14 +919,12 @@
     const baseUrl = els.openaiBaseUrl && els.openaiBaseUrl.value.trim();
     if (baseUrl) headers["X-OpenAI-Base-Url"] = baseUrl;
 
-    const swaggerUrl = els.mcpSwaggerUrl && els.mcpSwaggerUrl.value.trim();
-    if (swaggerUrl) headers["X-MCP-Swagger-Url"] = swaggerUrl;
-    const mcpBaseUrl = els.mcpBaseUrl && els.mcpBaseUrl.value.trim();
-    if (mcpBaseUrl) headers["X-MCP-Base-Url"] = mcpBaseUrl;
+    const mcp = getMcpConfig();
+    if (mcp.swaggerUrl) headers["X-MCP-Swagger-Url"] = mcp.swaggerUrl;
+    if (mcp.baseUrl) headers["X-MCP-Base-Url"] = mcp.baseUrl;
 
-    const token = els.mcpToken && els.mcpToken.value.trim();
-    const scheme =
-      (els.mcpAuthScheme && els.mcpAuthScheme.value.trim()) || "Bearer";
+    const token = mcp.token;
+    const scheme = mcp.authScheme || "Bearer";
     if (scheme) headers["X-MCP-Auth-Scheme"] = scheme;
     if (token) {
       headers["X-MCP-Token"] = token;
@@ -1024,7 +957,7 @@
   }
 
   async function chatStream(message, sessionKey, turn) {
-    const res = await fetch("/v1/chat", {
+    const res = await fetch("/hubloom/chat", {
       method: "POST",
       headers: buildHeaders(sessionKey),
       body: JSON.stringify({
@@ -1104,7 +1037,7 @@
   }
 
   async function chatOnce(message, sessionKey) {
-    const res = await fetch("/v1/chat", {
+    const res = await fetch("/hubloom/chat", {
       method: "POST",
       headers: buildHeaders(sessionKey),
       body: JSON.stringify({
@@ -1130,7 +1063,7 @@
     if (!message) return;
 
     saveSettings();
-    const sessionKey = normalizeSessionKey(els.sessionId.value);
+    const sessionKey = getSessionKey();
 
     busy = true;
     updateChatInputState();
@@ -1172,52 +1105,32 @@
     }
   });
 
-  els.newSession.addEventListener("click", () => {
-    els.sessionId.value = newSessionKey();
-    saveSettings();
-    clearMessages();
-    ensureEmptyState();
-    setRoute("");
-    setStatus("已创建新会话");
-  });
-
-  els.sessionId.addEventListener("change", () => {
-    saveSettings();
-    loadHistory();
-  });
-  if (els.connectBtn) {
-    els.connectBtn.addEventListener("click", onConnect);
-  }
-
   [
     els.openaiApiKey,
     els.openaiModel,
     els.openaiBaseUrl,
-    els.mcpSwaggerUrl,
-    els.mcpBaseUrl,
-    els.mcpAuthScheme,
-    els.mcpToken,
   ].forEach(function (el) {
     if (!el) return;
     el.addEventListener("change", function () {
       saveSettings();
-      if (
-        el === els.mcpSwaggerUrl ||
-        el === els.mcpBaseUrl ||
-        el === els.mcpAuthScheme
-      ) {
-        markConfigStale();
-      }
+      autoConnect();
     });
   });
 
-  loadSettings();
-  if (!els.sessionId.value.trim()) {
-    els.sessionId.value = newSessionKey();
-    saveSettings();
+  const logoutLink = document.getElementById("logout-link");
+  if (logoutLink) {
+    logoutLink.addEventListener("click", function () {
+      sessionStorage.removeItem(AUTH_TOKEN);
+      sessionStorage.removeItem(AUTH_USER);
+      sessionStorage.removeItem(MCP_SWAGGER);
+      sessionStorage.removeItem(MCP_BASE);
+      sessionStorage.removeItem(MCP_SCHEME);
+    });
   }
+
+  if (!requireAuth()) return;
+  renderUserLabel();
+  loadSettings();
   setupScrollbarReveal();
-  loadHistory();
-  updateChatInputState();
-  if (swaggerConnected) els.input.focus();
+  autoConnect();
 })();

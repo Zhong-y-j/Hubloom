@@ -850,7 +850,10 @@ class Thought:
             max_steps=self.max_execute_steps,
             had_errors=self._execute_had_errors,
         )
-        yield ErrorEvent(error=f"执行步数已达上限（{self.max_execute_steps}）")
+        yield ErrorEvent(
+            error=f"执行步数已达上限（{self.max_execute_steps}）",
+            recoverable=True,
+        )
 
     async def replan(self, task: str) -> AsyncIterator[AgentEvent]:
         """工具失败或计划失效时，重新研判后续步骤。"""
@@ -925,7 +928,9 @@ class Thought:
             return False
         if self._auth_failure_detected:
             return False
-        return self._execute_had_errors or self._execute_hit_step_limit
+        if self._execute_hit_step_limit:
+            return False
+        return self._execute_had_errors
 
     def append_tool_result(
         self, tool_name: str, result: str, *, is_error: bool

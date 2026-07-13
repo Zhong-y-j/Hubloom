@@ -367,7 +367,7 @@ async def _stream_chat(
                     name, payload = mapped
                     payload["session_id"] = session_id
                     yield format_sse(name, payload)
-                if isinstance(ev, ErrorEvent):
+                if isinstance(ev, ErrorEvent) and not ev.recoverable:
                     return
 
             outcome = agent.get_last_outcome()
@@ -399,7 +399,7 @@ async def _run_chat_once(
         agent: CortexAgent = runtime.create_agent(session_key)
         try:
             async for ev in agent.run_stream(message):
-                if isinstance(ev, ErrorEvent):
+                if isinstance(ev, ErrorEvent) and not ev.recoverable:
                     raise HTTPException(status_code=500, detail=ev.error)
         finally:
             clear_request_context()

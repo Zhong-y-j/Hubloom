@@ -10,6 +10,11 @@ __pycache__/
 # 运行时数据（memory.db、knowledge_db、chroma 等）
 data/
 
+# travel demo runtime sqlite
+examples/travel/mocks/**/data/
+examples/travel/scripts/.pids/
+examples/travel/scripts/logs/
+
 # 运行时日志（保留 logs/.gitkeep）
 logs/*
 !logs/.gitkeep

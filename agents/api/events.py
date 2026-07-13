@@ -58,7 +58,10 @@ def event_to_sse(ev: AgentEvent) -> tuple[str, dict[str, Any]] | None:
             "status": ev.status,
         }
     if isinstance(ev, ErrorEvent):
-        return "error", {"error": ev.error}
+        payload: dict[str, Any] = {"error": ev.error}
+        if ev.recoverable:
+            payload["recoverable"] = True
+        return "error", payload
     return None
 
 
