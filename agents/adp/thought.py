@@ -28,6 +28,7 @@ from agents.events import (
     ErrorEvent,
     FinalAnswerDeltaEvent,
     FinalAnswerEvent,
+    RemoteProcessEvent,
     ThoughtDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -752,9 +753,39 @@ class Thought:
                         args=tc.arguments,
                     )
 
-                results = await asyncio.gather(
-                    *[tool_runner.run(tc.name, tc.arguments) for tc in tool_calls]
-                )
+                results: list[tuple[str, bool]] = []
+                for tc in tool_calls:
+                    if tc.name == "delegate_task":
+                        from agents.api.request_context import (
+                            clear_remote_process_sink,
+                            set_remote_process_sink,
+                        )
+
+                        agent_id = str((tc.arguments or {}).get("agent_id") or "")
+                        queue: asyncio.Queue[RemoteProcessEvent] = asyncio.Queue()
+                        set_remote_process_sink(
+                            queue, call_id=tc.id, agent_id=agent_id
+                        )
+                        try:
+                            run_task = asyncio.create_task(
+                                tool_runner.run(tc.name, tc.arguments)
+                            )
+                            while not run_task.done():
+                                try:
+                                    ev = await asyncio.wait_for(queue.get(), timeout=0.1)
+                                    yield ev
+                                except asyncio.TimeoutError:
+                                    continue
+                            while True:
+                                try:
+                                    yield queue.get_nowait()
+                                except asyncio.QueueEmpty:
+                                    break
+                            results.append(await run_task)
+                        finally:
+                            clear_remote_process_sink()
+                    else:
+                        results.append(await tool_runner.run(tc.name, tc.arguments))
 
                 for tc, (result, is_error) in zip(tool_calls, results):
                     if is_error:

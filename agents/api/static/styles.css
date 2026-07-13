@@ -735,8 +735,8 @@ body {
 
 .thought-panel {
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: var(--surface-2);
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
 }
 
 .thought-panel.hidden {
@@ -748,7 +748,8 @@ body {
   user-select: none;
   padding: 0.45rem 0.65rem;
   font-size: 0.78rem;
-  color: var(--muted);
+  color: #2563eb;
+  font-weight: 600;
   list-style: none;
 }
 
@@ -780,7 +781,7 @@ body {
 .thought-tools {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.45rem;
   padding: 0 0.55rem 0.55rem;
 }
 
@@ -788,6 +789,96 @@ body {
   font-size: 0.75rem;
   border-top: 1px dashed var(--border);
   padding-top: 0.35rem;
+}
+
+.tool-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 0;
+  overflow: hidden;
+}
+
+.tool-card + .tool-card {
+  margin-top: 0;
+}
+
+.tool-card-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  cursor: pointer;
+  color: var(--text);
+  user-select: none;
+  font-weight: 500;
+  padding: 0.45rem 0.6rem;
+  list-style: none;
+}
+
+.tool-card-summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-card-summary::before {
+  content: "›";
+  color: var(--muted);
+  width: 0.7rem;
+  flex-shrink: 0;
+}
+
+.tool-card[open] > .tool-card-summary::before {
+  content: "▾";
+}
+
+.tool-chip {
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  line-height: 1.3;
+}
+
+.tool-chip.call {
+  background: #ecfeff;
+  color: #0e7490;
+}
+
+.tool-chip.ret {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.tool-chip.fail {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.tool-chip.badge {
+  background: var(--surface-2);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.tool-card-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.tool-card > pre {
+  margin: 0;
+  padding: 0 0.65rem 0.55rem;
+  overflow-x: auto;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-card.has-remote > pre {
+  display: none;
 }
 
 .tool-inline summary {
@@ -804,6 +895,116 @@ body {
   color: var(--text-secondary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 出站委托：嵌套远程过程面板（示意稿薄荷绿） */
+.remote-process {
+  margin: 0.15rem 0.55rem 0.55rem;
+  border: 1px solid #5eead4;
+  border-left: 3px solid #14b8a6;
+  background: #f0fdfa;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.remote-process-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+  user-select: none;
+  background: #ecfdf5;
+}
+
+.remote-process-title {
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: #0f766e;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.45rem;
+}
+
+.remote-process-meta {
+  font-size: 0.68rem;
+  color: #5eead4;
+  font-weight: 400;
+}
+
+.remote-process-status {
+  flex-shrink: 0;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 0.12rem 0.55rem;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #5eead4;
+  color: #0f766e;
+}
+
+.remote-process-status.is-live {
+  animation: remote-pulse 1.2s ease-in-out infinite;
+  background: #ccfbf1;
+  border-color: #2dd4bf;
+  color: #0f766e;
+}
+
+.remote-process-status.is-done {
+  background: #10b981;
+  border-color: #10b981;
+  color: #fff;
+}
+
+.remote-process-status.is-fail {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}
+
+@keyframes remote-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.remote-process-body {
+  display: none;
+  padding: 0 0.65rem 0.6rem;
+  border-top: 1px dashed #99f6e4;
+  max-height: 320px;
+  overflow-y: auto;
+  background: #f0fdfa;
+}
+
+.remote-process.is-open .remote-process-body {
+  display: block;
+}
+
+.remote-process-thought {
+  font-size: 0.78rem;
+  line-height: 1.55;
+  color: #134e4a;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0.45rem 0 0.35rem;
+}
+
+.remote-process-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.remote-process-tools .tool-card {
+  background: #fff;
+  border-color: #99f6e4;
 }
 
 .answer-body {

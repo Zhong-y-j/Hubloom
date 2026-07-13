@@ -1,8 +1,8 @@
 # Hubloom 工具层
 
-工具层是 LLM 与外部能力之间的**统一接口**：所有能力（企业 API、文档检索、长期记忆）都被抽象成 `BaseTool`，注册进 `ToolRegistry`，由 `ToolRunner` 统一执行。LLM 不直接碰 HTTP 或数据库，只认注册表里的工具定义。
+工具层是 LLM 与外部能力之间的**统一接口**：所有能力（企业 API、文档检索、长期记忆、跨 Agent 委托）都被抽象成 `BaseTool`，注册进 `ToolRegistry`，由 `ToolRunner` 统一执行。LLM 不直接碰 HTTP 或数据库，只认注册表里的工具定义。
 
-← 返回 [总体架构图](./Hubloom总体架构图.md) · [ADP 编排层](./Hubloom-ADP编排.md) · [MCP 适配层](./Hubloom-MCP适配.md)
+← 返回 [总体架构图](./Hubloom总体架构图.md) · [ADP 编排层](./Hubloom-ADP编排.md) · [MCP 适配层](./Hubloom-MCP适配.md) · [A2A 互联](./Hubloom-A2A互联.md)
 
 ---
 
@@ -16,6 +16,8 @@
 | **MCPTool**             | `tools/builtin/mcp_tool.py`       | 代理 MCP 网关元工具（`list_tools` / `call_tool`）             |
 | **SearchDocumentsTool** | `tools/builtin/retrieval_tool.py` | RAG 文档检索（可选 hyde / mqe 查询优化）                      |
 | **SearchMemoryTool**    | `tools/builtin/memory_tool.py`    | 长期记忆检索（情景 + 语义 + 可选联想图）                      |
+| **ListAgentsTool**      | `tools/builtin/a2a_tool.py`       | 出站 A2A：列出 `A2A_REMOTE_AGENTS` 静态目录                   |
+| **DelegateTaskTool**    | `tools/builtin/a2a_tool.py`       | 出站 A2A：委托远程 Agent；入站回合防环拒绝；过程旁路上屏      |
 
 ---
 
@@ -32,6 +34,8 @@ flowchart TB
     MCP2["MCPTool: call_tool"] --> REG
     DOC["SearchDocumentsTool"] --> REG
     MEM["SearchMemoryTool"] --> REG
+    A2A1["ListAgentsTool"] --> REG
+    A2A2["DelegateTaskTool"] --> REG
 
     REG -->|"list_definitions()<br/>name + description + JSON Schema"| LLM["LLM<br/>tools 参数"]
     REG -->|"get(name)"| RUN["ToolRunner<br/>白名单 · 重试 ×2"]
@@ -40,14 +44,16 @@ flowchart TB
     MCP2 -.->|"stdio"| GW
     DOC -.-> KB["KnowledgeBase<br/>ChromaDB"]
     MEM -.-> MM["MemoryManager<br/>Qdrant / Neo4j"]
+    A2A1 -.-> DIR["A2A_REMOTE_AGENTS"]
+    A2A2 -.-> CLIENT["a2a_adapter/client"]
 
     classDef reg fill:#f0fdfa,stroke:#2dd4bf,color:#0f766e
     classDef tool fill:#eff6ff,stroke:#60a5fa,color:#1e40af
     classDef backend fill:#f8fafc,stroke:#cbd5e1,color:#475569
 
     class REG,RUN reg
-    class MCP1,MCP2,DOC,MEM tool
-    class LLM,GW,KB,MM backend
+    class MCP1,MCP2,DOC,MEM,A2A1,A2A2 tool
+    class LLM,GW,KB,MM,DIR,CLIENT backend
 ```
 
 ### 工具从哪里来？
@@ -57,8 +63,9 @@ flowchart TB
 | `list_tools` / `call_tool` | 启动时 `load_mcp_tools()` 发现网关元工具，包装为 `MCPTool` | `agents/app/bootstrap.py`    |
 | `search_memory`            | `CortexAgent.attach_readonly_tools()`，需开启长期记忆      | `agents/adp/cortex_agent.py` |
 | `search_documents`         | 同上，需配置 RAG 知识库                                    | 同上                         |
+| `list_agents` / `delegate_task` | 同上，始终注册（出站 A2A）                            | 同上；详解见 [A2A 互联](./Hubloom-A2A互联.md) |
 
-Agent 侧看到的 MCP 工具**只有 2 个元工具**，不是全量业务接口——这是 [MCP 适配层](./Hubloom-MCP适配.md) 的分组网关设计。
+Agent 侧看到的 MCP 工具**只有 2 个元工具**，不是全量业务接口——这是 [MCP 适配层](./Hubloom-MCP适配.md) 的分组网关设计。出站 A2A 另有 2 个 meta-tools，与 MCP 并列。
 
 ---
 
@@ -144,10 +151,13 @@ tools/
 └── builtin/
     ├── mcp_tool.py       # MCPTool：参数过滤、嵌套 JSON 纠正、Token 解析
     ├── retrieval_tool.py # SearchDocumentsTool：RAG 检索 + hyde/mqe 优化
-    └── memory_tool.py    # SearchMemoryTool：情景/语义/联想图检索
+    ├── memory_tool.py    # SearchMemoryTool：情景/语义/联想图检索
+    └── a2a_tool.py       # list_agents / delegate_task（出站 A2A + 防环）
 
-agents/adp/thought.py     # execute() 消费 tool_defs，ToolRunner 执行
+agents/adp/thought.py     # execute() 消费 tool_defs；delegate_task 时旁路 RemoteProcessEvent
+agents/adp/cortex_agent.py # attach_readonly_tools 注册 memory/RAG/A2A
 agents/app/bootstrap.py   # 启动时 load_mcp_tools → ToolRegistry.from_tools
+a2a_adapter/client/       # registry / transport / mapping
 ```
 
 ---
@@ -156,5 +166,6 @@ agents/app/bootstrap.py   # 启动时 load_mcp_tools → ToolRegistry.from_tools
 
 - [ADP 编排层](./Hubloom-ADP编排.md) — Thought.execute 的 ReAct 循环
 - [MCP 适配层](./Hubloom-MCP适配.md) — MCPTool 背后的网关与 Worker
+- [A2A 互联](./Hubloom-A2A互联.md) — 出站委托、双通道 UI、入站防环
 - [记忆系统](./Hubloom-记忆系统.md) — SearchMemoryTool 背后的 MemoryManager
 - [RAG 知识库](./Hubloom-RAG知识库.md) — SearchDocumentsTool 背后的 KnowledgeBase

@@ -16,7 +16,11 @@ from agents.a2a.credential import Credential, resolve_credential
 from agents.agent_log import a2a_log, clip
 from agents.api.display import resolve_tool_display_name
 from agents.api.events import compact_tool_result
-from agents.api.request_context import clear_request_context, set_request_context
+from agents.api.request_context import (
+    clear_request_context,
+    set_a2a_inbound,
+    set_request_context,
+)
 from agents.app.bootstrap import CortexRuntime
 from agents.app.session import format_session_id
 from agents.events import (
@@ -24,6 +28,7 @@ from agents.events import (
     FinalAnswerDeltaEvent,
     FinalAnswerEvent,
     PhaseEvent,
+    RemoteProcessEvent,
     ThoughtDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -51,6 +56,8 @@ async def run_a2a_turn(
     session_key = cred.user_id
     session_id = format_session_id(session_key)
     set_request_context(session_id=session_id, bearer_token=cred.token)
+    # 入站回合：禁止再向外 delegate，避免 A↔B 互委托死循环
+    set_a2a_inbound(True)
     agent = runtime.create_agent(session_key)
 
     a2a_log(
@@ -59,6 +66,7 @@ async def run_a2a_turn(
         user_id=cred.user_id,
         session_id=session_id,
         has_token=bool(cred.token),
+        a2a_inbound=True,
         query=clip(query, 80),
     )
 
@@ -115,6 +123,12 @@ async def run_a2a_turn(
                     "tool_result",
                     f"[tool_result:{tag}] {ev.tool_name}\n{body}\n",
                 )
+
+            elif isinstance(ev, RemoteProcessEvent):
+                if ev.channel == "status" and ev.status:
+                    await _emit("thought", f"[remote:{ev.agent_id}] {ev.status}\n")
+                elif ev.delta:
+                    await _emit("thought", ev.delta)
 
             elif isinstance(ev, FinalAnswerDeltaEvent) and ev.delta:
                 answer_streamed = True

@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>A2A 远程过程 · 前端交互示意</title>
+  <style>
+    :root {
+      --bg: #f0f4f8;
+      --surface: #fff;
+      --surface-2: #f1f5f9;
+      --border: #dde4ed;
+      --text: #1e293b;
+      --muted: #64748b;
+      --accent: #0d9488;
+      --accent-light: #ccfbf1;
+      --info: #2563eb;
+      --info-bg: #eff6ff;
+      --remote: #0f766e;
+      --remote-bg: #f0fdfa;
+      --remote-border: #99f6e4;
+      --user-bg: #dbeafe;
+      --radius: 12px;
+      --font: "SF Pro Text", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px 16px 48px;
+    }
+    .page {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.15rem;
+      font-weight: 650;
+      margin: 0 0 6px;
+    }
+    .lead {
+      color: var(--muted);
+      font-size: 0.9rem;
+      line-height: 1.5;
+      margin: 0 0 20px;
+    }
+    .modes {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .modes button {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text);
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .modes button.active {
+      background: var(--accent-light);
+      border-color: var(--accent);
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .msg-user, .msg-bot {
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .msg-user {
+      background: var(--user-bg);
+      border-color: #bfdbfe;
+      margin-left: 48px;
+    }
+    .msg-bot { margin-right: 24px; }
+    .role {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    details.thought {
+      background: var(--info-bg);
+      border: 1px solid #bfdbfe;
+      border-radius: 10px;
+      padding: 0;
+      margin-bottom: 12px;
+    }
+    details.thought > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 10px 12px;
+      font-weight: 600;
+      font-size: 0.9rem;
+      color: var(--info);
+      user-select: none;
+    }
+    details.thought > summary::-webkit-details-marker { display: none; }
+    details.thought > summary::before {
+      content: "▸ ";
+      display: inline-block;
+      transition: transform 0.15s;
+    }
+    details.thought[open] > summary::before { transform: rotate(90deg); }
+    .thought-inner { padding: 0 12px 12px; }
+    .note {
+      font-size: 0.85rem;
+      line-height: 1.55;
+      color: #334155;
+      margin-bottom: 10px;
+    }
+    .tool {
+      border: 1px solid var(--border);
+      background: var(--surface);
+      border-radius: 8px;
+      margin: 6px 0;
+      overflow: hidden;
+    }
+    .tool > summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .tool > summary::-webkit-details-marker { display: none; }
+    .tool > summary::before { content: "›"; color: var(--muted); width: 12px; }
+    .chip {
+      font-size: 0.7rem;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--muted);
+    }
+    .chip.call { background: #ecfeff; color: #0e7490; }
+    .chip.ret { background: #f0fdf4; color: #15803d; }
+    .tool-body {
+      padding: 0 10px 10px;
+      font-size: 0.8rem;
+      color: var(--muted);
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    /* —— 远程过程嵌套面板（核心示意） —— */
+    .remote {
+      margin: 8px 0 8px 12px;
+      border: 1px solid var(--remote-border);
+      border-left: 3px solid var(--remote);
+      background: var(--remote-bg);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .remote-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .remote-head strong {
+      font-size: 0.85rem;
+      color: var(--remote);
+    }
+    .remote-meta {
+      font-size: 0.72rem;
+      color: var(--muted);
+    }
+    .status {
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #fff;
+      border: 1px solid var(--remote-border);
+      color: var(--remote);
+    }
+    .status.live {
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.55; }
+    }
+    .remote-body {
+      display: none;
+      padding: 0 10px 10px;
+      border-top: 1px dashed var(--remote-border);
+    }
+    .remote.open .remote-body { display: block; }
+    .remote.open .remote-head .chev::before { content: "▾"; }
+    .chev::before { content: "▸"; color: var(--muted); margin-right: 4px; }
+    .a2-thought {
+      font-size: 0.82rem;
+      line-height: 1.5;
+      color: #134e4a;
+      margin: 8px 0;
+      min-height: 1.2em;
+    }
+    .a2-thought .cursor {
+      display: inline-block;
+      width: 6px;
+      height: 1em;
+      background: var(--remote);
+      margin-left: 2px;
+      vertical-align: text-bottom;
+      animation: blink 0.9s step-end infinite;
+    }
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+    .answer {
+      font-size: 0.92rem;
+      line-height: 1.6;
+    }
+    .answer table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+      font-size: 0.85rem;
+    }
+    .answer th, .answer td {
+      border: 1px solid var(--border);
+      padding: 6px 8px;
+      text-align: left;
+    }
+    .answer th { background: var(--surface-2); }
+    .legend {
+      margin-top: 20px;
+      padding: 12px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      color: var(--text-secondary, #475569);
+      line-height: 1.55;
+    }
+    .legend code {
+      font-size: 0.8em;
+      background: var(--surface-2);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1>委托 Agent 远程过程 · 交互示意</h1>
+    <p class="lead">
+      示意：A1 工具块保持现状；在 <code>delegate_task</code> 调用与返回之间，嵌套一块「远程过程 · A2」。
+      过程直播给用户看，不进 LLM 的 tool_result。可切换下方模式预览。
+    </p>
+
+    <div class="modes">
+      <button type="button" class="active" data-mode="done">完成后回看</button>
+      <button type="button" data-mode="live">委托进行中（直播）</button>
+      <button type="button" data-mode="collapsed">默认折叠远程过程</button>
+    </div>
+
+    <div class="msg-user">
+      <div class="role">你</div>
+      先用 list_agents，再用 delegate_task 让 hubloom-a2 查询当前有哪些小区（必须调用工具）。
+    </div>
+
+    <div class="msg-bot" id="bot">
+      <div class="role">Hubloom · A1</div>
+
+      <details class="thought" open>
+        <summary>思考过程 · A1</summary>
+        <div class="thought-inner">
+          <div class="note">
+            先确认可委托 Agent，再把查小区任务交给 hubloom-a2；本地不直接调业务工具。
+          </div>
+
+          <details class="tool">
+            <summary><span class="chip call">调用</span> list_agents</summary>
+            <div class="tool-body">{}</div>
+          </details>
+          <details class="tool">
+            <summary><span class="chip ret">返回</span> list_agents</summary>
+            <div class="tool-body">共 1 个可委托远程 Agent：
+[1] id=hubloom-a2
+    name=Hubloom-A2
+    url=http://127.0.0.1:8002</div>
+          </details>
+
+          <details class="tool" open>
+            <summary>
+              <span class="chip call">调用</span> delegate_task
+              <span class="chip">→ hubloom-a2</span>
+            </summary>
+            <div class="tool-body">{
+  "agent_id": "hubloom-a2",
+  "message": "请调用工具查询当前有哪些小区……"
+}</div>
+          </details>
+
+          <!-- 核心：嵌在调用与返回之间 -->
+          <div class="remote open" id="remote">
+            <div class="remote-head" id="remoteToggle" role="button" tabindex="0">
+              <div>
+                <span class="chev"></span>
+                <strong>远程过程 · Hubloom-A2</strong>
+                <span class="remote-meta">hubloom-a2 · http://127.0.0.1:8002</span>
+              </div>
+              <span class="status" id="remoteStatus">已完成</span>
+            </div>
+            <div class="remote-body">
+              <div class="a2-thought" id="a2Thought">
+                需要查询小区列表，先 list_tools（GatedCommunity），再调用 GetList…
+              </div>
+              <details class="tool">
+                <summary><span class="chip call">调用</span> list_tools</summary>
+                <div class="tool-body">{"tag": "GatedCommunity"}</div>
+              </details>
+              <details class="tool">
+                <summary><span class="chip call">调用</span> GatedCommunity_GetList</summary>
+                <div class="tool-body">…</div>
+              </details>
+              <details class="tool">
+                <summary><span class="chip ret">返回</span> GatedCommunity_GetList</summary>
+                <div class="tool-body">5 条小区记录…</div>
+              </details>
+            </div>
+          </div>
+
+          <details class="tool" open>
+            <summary><span class="chip ret">返回</span> delegate_task</summary>
+            <div class="tool-body" id="delegateResult">当前系统中共有 5 个小区……（仅最终 answer，不含 A2 过程全文）</div>
+          </details>
+        </div>
+      </details>
+
+      <div class="answer" id="finalAnswer">
+        根据远程 Agent 查询结果，当前共有 <strong>5</strong> 个小区：
+        <table>
+          <thead><tr><th>序号</th><th>小区名称</th><th>状态</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>测试小区4</td><td>未启用</td></tr>
+            <tr><td>2</td><td>慈城金茂逸墅</td><td>启用</td></tr>
+            <tr><td>3</td><td>测试小区3</td><td>启用</td></tr>
+            <tr><td>4</td><td>骑际马术</td><td>启用</td></tr>
+            <tr><td>5</td><td>鄞新电力</td><td>启用</td></tr>
+          </tbody>
+        </table>
+        如需进一步操作，请告诉我。
+      </div>
+    </div>
+
+    <div class="legend">
+      <strong>交互要点</strong><br />
+      1. <code>list_agents</code> / <code>delegate_task</code> 仍是 A1 的独立工具块。<br />
+      2. 「远程过程」嵌在 <em>调用 delegate_task</em> 与 <em>返回 delegate_task</em> 之间，左边线区分 A2。<br />
+      3. 委托进行中：状态为「进行中」，过程区可逐字增长；完成后变为「已完成」，默认可折叠。<br />
+      4. <code>返回 · delegate_task</code> 只保留短 answer，避免塞进 LLM 上下文。
+    </div>
+  </div>
+
+  <script>
+    const remote = document.getElementById("remote");
+    const statusEl = document.getElementById("remoteStatus");
+    const thoughtEl = document.getElementById("a2Thought");
+    const finalAnswer = document.getElementById("finalAnswer");
+    const delegateResult = document.getElementById("delegateResult");
+
+    const fullThought =
+      "需要查询小区列表，先 list_tools（GatedCommunity），再调用 GetList，汇总启用状态后回答。";
+
+    let liveTimer = null;
+
+    document.getElementById("remoteToggle").addEventListener("click", () => {
+      remote.classList.toggle("open");
+    });
+
+    document.querySelectorAll(".modes button").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".modes button").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        applyMode(btn.dataset.mode);
+      });
+    });
+
+    function applyMode(mode) {
+      if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = null;
+      }
+      finalAnswer.style.opacity = "1";
+      delegateResult.textContent =
+        "当前系统中共有 5 个小区……（仅最终 answer，不含 A2 过程全文）";
+
+      if (mode === "done") {
+        remote.classList.add("open");
+        statusEl.textContent = "已完成";
+        statusEl.classList.remove("live");
+        thoughtEl.innerHTML = fullThought;
+        return;
+      }
+
+      if (mode === "collapsed") {
+        remote.classList.remove("open");
+        statusEl.textContent = "已完成 · 点击展开";
+        statusEl.classList.remove("live");
+        thoughtEl.innerHTML = fullThought;
+        return;
+      }
+
+      // live
+      remote.classList.add("open");
+      statusEl.textContent = "进行中";
+      statusEl.classList.add("live");
+      finalAnswer.style.opacity = "0.35";
+      delegateResult.textContent = "（等待远程完成…）";
+      let i = 0;
+      thoughtEl.innerHTML = '<span class="cursor"></span>';
+      liveTimer = setInterval(() => {
+        i += 1;
+        thoughtEl.innerHTML =
+          fullThought.slice(0, i) + '<span class="cursor"></span>';
+        if (i >= fullThought.length) {
+          clearInterval(liveTimer);
+          liveTimer = null;
+          statusEl.textContent = "已完成";
+          statusEl.classList.remove("live");
+          thoughtEl.textContent = fullThought;
+          delegateResult.textContent =
+            "当前系统中共有 5 个小区……（仅最终 answer，不含 A2 过程全文）";
+          finalAnswer.style.opacity = "1";
+        }
+      }, 40);
+    }
+  </script>
+</body>
+</html>

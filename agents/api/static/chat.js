@@ -419,17 +419,157 @@
     return name;
   }
 
-  function buildToolInline(title, body) {
+  function buildToolInline(title, body, opts) {
     const details = document.createElement("details");
-    details.className = "tool-inline";
-    details.open = false;
+    details.className = "tool-inline tool-card";
+    details.open = !!(opts && opts.open);
     const summary = document.createElement("summary");
-    summary.textContent = title;
+    summary.className = "tool-card-summary";
+
+    const kind = (opts && opts.kind) || "";
+    const name = (opts && opts.name) || title;
+    if (kind === "call" || kind === "ret" || kind === "fail") {
+      const chip = document.createElement("span");
+      chip.className =
+        "tool-chip " +
+        (kind === "call" ? "call" : kind === "fail" ? "fail" : "ret");
+      chip.textContent =
+        kind === "call" ? "调用" : kind === "fail" ? "失败" : "返回";
+      summary.appendChild(chip);
+      const nameEl = document.createElement("span");
+      nameEl.className = "tool-card-name";
+      nameEl.textContent = name;
+      summary.appendChild(nameEl);
+      if (opts && opts.badge) {
+        const badge = document.createElement("span");
+        badge.className = "tool-chip badge";
+        badge.textContent = opts.badge;
+        summary.appendChild(badge);
+      }
+    } else {
+      summary.textContent = title;
+    }
+
     const pre = document.createElement("pre");
-    pre.textContent = body;
+    pre.textContent = body || "";
     details.appendChild(summary);
     details.appendChild(pre);
     return details;
+  }
+
+  function buildRemoteProcessPanel(agentId) {
+    const wrap = document.createElement("div");
+    wrap.className = "remote-process is-open";
+
+    const head = document.createElement("div");
+    head.className = "remote-process-head";
+
+    const title = document.createElement("div");
+    title.className = "remote-process-title";
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = "远程过程 · " + (agentId || "Agent");
+    const meta = document.createElement("span");
+    meta.className = "remote-process-meta";
+    if (agentId) meta.textContent = agentId;
+    title.appendChild(nameSpan);
+    title.appendChild(meta);
+
+    const status = document.createElement("span");
+    status.className = "remote-process-status is-live";
+    status.textContent = "进行中";
+
+    head.appendChild(title);
+    head.appendChild(status);
+
+    const body = document.createElement("div");
+    body.className = "remote-process-body";
+
+    const thought = document.createElement("div");
+    thought.className = "remote-process-thought";
+
+    const tools = document.createElement("div");
+    tools.className = "remote-process-tools";
+
+    body.appendChild(thought);
+    body.appendChild(tools);
+
+    head.addEventListener("click", (e) => {
+      e.preventDefault();
+      wrap.classList.toggle("is-open");
+    });
+
+    wrap.appendChild(head);
+    wrap.appendChild(body);
+
+    return {
+      wrap,
+      body,
+      status,
+      title,
+      thought,
+      tools,
+      buffer: "",
+      agentId: agentId || "",
+    };
+  }
+
+  /** 把 A2A trace 文本拆成：思考文案 + 工具卡片（对齐示意稿） */
+  function renderRemoteTrace(panel) {
+    const raw = panel.buffer || "";
+    const thoughtChunks = [];
+    const toolItems = [];
+
+    const re =
+      /\[tool_call\]\s+(\S+)(?:\s+(\{[\s\S]*?\}))?(?=\n\[|\s*$)|\[tool_result:(ok|ERROR)\]\s+(\S+)\n?([\s\S]*?)(?=\n\[tool_call\]|\n\[tool_result:|\n\[(?:thinking|replying|working)\]|\s*$)|\[(thinking|replying|working)\][^\n]*/g;
+
+    let last = 0;
+    let m;
+    while ((m = re.exec(raw)) !== null) {
+      if (m.index > last) {
+        const gap = raw.slice(last, m.index).trim();
+        if (gap) thoughtChunks.push(gap);
+      }
+      last = m.index + m[0].length;
+
+      if (m[1]) {
+        // tool_call
+        toolItems.push({
+          kind: "call",
+          name: m[1],
+          body: (m[2] || "").trim(),
+        });
+      } else if (m[4]) {
+        // tool_result
+        toolItems.push({
+          kind: m[3] === "ERROR" ? "fail" : "ret",
+          name: m[4],
+          body: (m[5] || "").trim(),
+        });
+      } else if (m[6]) {
+        // phase line — 轻量写入思考区
+        const line = m[0].trim();
+        if (line) thoughtChunks.push(line);
+      }
+    }
+    if (last < raw.length) {
+      const tail = raw.slice(last).trim();
+      if (tail) thoughtChunks.push(tail);
+    }
+
+    const thoughtText = thoughtChunks.join("\n").trim();
+    panel.thought.textContent = thoughtText;
+    panel.thought.style.display = thoughtText ? "" : "none";
+
+    panel.tools.innerHTML = "";
+    for (const item of toolItems) {
+      panel.tools.appendChild(
+        buildToolInline("", item.body, {
+          kind: item.kind,
+          name: item.name,
+          open: false,
+        })
+      );
+    }
   }
 
   /** 从历史记录渲染助手消息（含可折叠思考区） */
@@ -464,7 +604,33 @@
       for (const item of tools) {
         const title = (item.title || "").trim();
         if (!title) continue;
-        toolHost.appendChild(buildToolInline(title, item.body || ""));
+        if (title.startsWith("远程过程 ·")) {
+          const agentId = title.replace(/^远程过程\s*·\s*/, "");
+          const panel = buildRemoteProcessPanel(agentId);
+          panel.status.textContent = "已完成";
+          panel.status.classList.remove("is-live");
+          panel.status.classList.add("is-done");
+          panel.buffer = item.body || "";
+          renderRemoteTrace(panel);
+          panel.wrap.classList.add("is-open");
+          toolHost.appendChild(panel.wrap);
+          continue;
+        }
+        let kind = "";
+        let name = title;
+        if (title.startsWith("调用")) {
+          kind = "call";
+          name = title.replace(/^调用\s*·\s*/, "");
+        } else if (title.startsWith("返回")) {
+          kind = "ret";
+          name = title.replace(/^返回\s*·\s*/, "");
+        } else if (title.startsWith("失败")) {
+          kind = "fail";
+          name = title.replace(/^失败\s*·\s*/, "");
+        }
+        toolHost.appendChild(
+          buildToolInline(title, item.body || "", { kind, name })
+        );
       }
     }
     thoughtPanel.appendChild(thoughtSummary);
@@ -536,6 +702,10 @@
     let answerText = "";
     let currentState = "understanding";
     let hasThought = false;
+    /** @type {Map<string, HTMLElement>} */
+    const callBlocks = new Map();
+    /** @type {Map<string, any>} */
+    const remoteByCallId = new Map();
 
     function updateThoughtSummary() {
       const len = thoughtText.trim().length;
@@ -570,11 +740,111 @@
       scrollToBottom();
     }
 
-    function appendToolBlock(title, body) {
-      if (!els.showTools.checked) return;
+    function parseToolTitle(title) {
+      const t = (title || "").trim();
+      if (t.startsWith("调用 · ") || t.startsWith("调用 ·")) {
+        return { kind: "call", name: t.replace(/^调用\s*·\s*/, "") };
+      }
+      if (t.startsWith("返回 · ") || t.startsWith("返回 ·")) {
+        return { kind: "ret", name: t.replace(/^返回\s*·\s*/, "") };
+      }
+      if (t.startsWith("失败 · ") || t.startsWith("失败 ·")) {
+        return { kind: "fail", name: t.replace(/^失败\s*·\s*/, "") };
+      }
+      return { kind: "", name: t };
+    }
+
+    function appendToolBlock(title, body, opts) {
+      if (!els.showTools.checked) return null;
       showThoughtPanel();
       if (currentState !== "replying") setAgentState("thinking");
-      toolHost.appendChild(buildToolInline(title, body));
+      const parsed = parseToolTitle(title);
+      const badge =
+        opts && opts.badge
+          ? opts.badge
+          : parsed.kind === "call" &&
+              parsed.name === "delegate_task" &&
+              opts &&
+              opts.agentId
+            ? "→ " + opts.agentId
+            : "";
+      const block = buildToolInline(title, body, {
+        kind: parsed.kind,
+        name: parsed.name,
+        badge: badge,
+        open: !!(opts && opts.open),
+      });
+      if (opts && opts.callId) {
+        block.dataset.callId = opts.callId;
+        if (parsed.kind === "call") callBlocks.set(opts.callId, block);
+      }
+      toolHost.appendChild(block);
+      scrollToBottom();
+      return block;
+    }
+
+    function ensureRemotePanel(callId, agentId) {
+      if (!els.showTools.checked) return null;
+      if (remoteByCallId.has(callId)) {
+        const existing = remoteByCallId.get(callId);
+        if (agentId && existing.agentId !== agentId) {
+          existing.agentId = agentId;
+          const nameSpan = existing.title.firstElementChild;
+          if (nameSpan) nameSpan.textContent = "远程过程 · " + agentId;
+          const meta = existing.title.querySelector(".remote-process-meta");
+          if (meta) meta.textContent = agentId;
+        }
+        return existing;
+      }
+      showThoughtPanel();
+      const panel = buildRemoteProcessPanel(agentId || "");
+      remoteByCallId.set(callId, panel);
+
+      const parent = callBlocks.get(callId);
+      if (parent) {
+        parent.open = true;
+        parent.classList.add("has-remote");
+        parent.appendChild(panel.wrap);
+      } else {
+        toolHost.appendChild(panel.wrap);
+      }
+      scrollToBottom();
+      return panel;
+    }
+
+    function appendRemoteDelta(data) {
+      const callId = (data && data.call_id) || "";
+      if (!callId) return;
+      const agentId = (data && data.agent_id) || "";
+      const channel = (data && data.channel) || "trace";
+      const status = (data && data.status) || "";
+      const delta = (data && data.delta) || "";
+      const panel = ensureRemotePanel(callId, agentId);
+      if (!panel) return;
+
+      if (channel === "status" || status) {
+        const st = status || delta;
+        if (st === "working" || st === "started") {
+          panel.status.textContent = "进行中";
+          panel.status.classList.add("is-live");
+          panel.status.classList.remove("is-done", "is-fail");
+          panel.wrap.classList.add("is-open");
+        } else if (st === "completed") {
+          panel.status.textContent = "已完成";
+          panel.status.classList.remove("is-live", "is-fail");
+          panel.status.classList.add("is-done");
+        } else if (st === "failed") {
+          panel.status.textContent = "失败";
+          panel.status.classList.remove("is-live", "is-done");
+          panel.status.classList.add("is-fail");
+        }
+      }
+
+      if (channel === "trace" && delta) {
+        panel.buffer += delta;
+        renderRemoteTrace(panel);
+        panel.wrap.classList.add("is-open");
+      }
       scrollToBottom();
     }
 
@@ -624,6 +894,8 @@
       setAgentState,
       appendThoughtDelta,
       appendToolBlock,
+      appendRemoteDelta,
+      ensureRemotePanel,
       beginReply,
       appendAnswerDelta,
       finalize,
@@ -779,15 +1051,29 @@
             data.tool_name || "tool",
             data.args || {}
           );
+          const callId = data.call_id || "";
+          const agentId =
+            (data.args && (data.args.agent_id || data.args.agentId)) || "";
           turn.appendToolBlock(
             "调用 · " + toolName,
-            JSON.stringify(data.args || {}, null, 2)
+            JSON.stringify(data.args || {}, null, 2),
+            {
+              callId: callId,
+              agentId: agentId,
+              open: toolName === "delegate_task",
+            }
           );
+          if (toolName === "delegate_task" || data.tool_name === "delegate_task") {
+            if (callId) turn.ensureRemotePanel(callId, agentId);
+          }
+        } else if (event === "remote_delta") {
+          turn.appendRemoteDelta(data || {});
         } else if (event === "tool_result") {
           const toolName = data.tool_name || "tool";
           turn.appendToolBlock(
             (data.is_error ? "失败 · " : "返回 · ") + toolName,
-            data.result || ""
+            data.result || "",
+            { callId: data.call_id || "" }
           );
         } else if (event === "turn_complete") {
           turn.finalize(data.final_message || "", data.route || "");

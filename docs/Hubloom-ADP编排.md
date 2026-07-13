@@ -24,7 +24,7 @@ Assessor 用 LLM 非流式输出 JSON，判断本轮走 Chat 还是 Thought。
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"background":"#ffffff","primaryColor":"#ffffff","primaryBorderColor":"#cbd5e1","primaryTextColor":"#1e293b","lineColor":"#64748b","fontSize":"14px"}}}%%
 flowchart TD
-    START([用户消息]) --> RECALL[读取会话历史<br/>SQLite]
+    START([用户消息]) --> RECALL[读取会话历史<br/>]
     RECALL --> ASSESS[Assessor 评估<br/>LLM → JSON]
 
     ASSESS --> Q{need_deep_think?}

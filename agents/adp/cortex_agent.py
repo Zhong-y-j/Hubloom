@@ -20,6 +20,7 @@ from agents.events import (
     AgentEvent,
     FinalAnswerEvent,
     PhaseEvent,
+    RemoteProcessEvent,
     ThoughtDeltaEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -133,7 +134,8 @@ class CortexAgent:
         self.namespace = format_session_id(self.session_id)
 
         resolved_graph: GraphBackend = (
-            graph_backend if graph_backend is not None
+            graph_backend
+            if graph_backend is not None
             else ("neo4j" if include_graph_memory else "none")
         )
         resolved_vector: VectorBackend = (
@@ -153,8 +155,13 @@ class CortexAgent:
         self._context_assembler = ContextAssembler(max_tokens=5000, min_relevance=0.3)
 
     def attach_readonly_tools(self, *, knowledge_base=None) -> None:
-        """注册只读内置工具：长期记忆检索、文档 RAG（供 Thought 执行阶段调用）。"""
-        from tools.builtin import SearchDocumentsTool, SearchMemoryTool
+        """注册只读内置工具：长期记忆检索、文档 RAG、A2A 目录（供 Thought 执行阶段调用）。"""
+        from tools.builtin import (
+            DelegateTaskTool,
+            ListAgentsTool,
+            SearchDocumentsTool,
+            SearchMemoryTool,
+        )
         from tools.registry import ToolRegistry
 
         if self.tools is None:
@@ -172,16 +179,22 @@ class CortexAgent:
         if knowledge_base is not None:
             self.tools.register(SearchDocumentsTool(knowledge_base))
 
+        self.tools.register(ListAgentsTool())
+        self.tools.register(DelegateTaskTool())
         memory_log(
             "cortex readonly tools attached",
             search_memory=self._enable_long_term_memory,
             search_documents=knowledge_base is not None,
+            list_agents=True,
+            delegate_task=True,
             total=len(self.tools.list_definitions()),
         )
         cortex_log(
             "readonly tools attached",
             search_memory=self._enable_long_term_memory,
             search_documents=knowledge_base is not None,
+            list_agents=True,
+            delegate_task=True,
             tool_count=len(self.tools.list_definitions()),
         )
 
@@ -225,12 +238,8 @@ class CortexAgent:
     ) -> list[Message]:
         """按路由装配 Chat / Thought 可直接消费的 messages。"""
         if route == Route.CHAT:
-            return self._assemble_chat_messages(
-                task, histories, memory_ctx=memory_ctx
-            )
-        return self._assemble_thought_messages(
-            task, histories, memory_ctx=memory_ctx
-        )
+            return self._assemble_chat_messages(task, histories, memory_ctx=memory_ctx)
+        return self._assemble_thought_messages(task, histories, memory_ctx=memory_ctx)
 
     @staticmethod
     def _dialogue_for_llm(messages: list[Message]) -> list[Message]:
@@ -333,6 +342,15 @@ class CortexAgent:
                     "body": self._compact_tool_result(ev.result),
                 }
             )
+        elif isinstance(ev, RemoteProcessEvent):
+            if ev.channel == "trace" and ev.delta:
+                title = f"远程过程 · {ev.agent_id or 'Agent'}"
+                for item in reversed(tool_log):
+                    if item.get("title") == title:
+                        item["body"] = (item.get("body") or "") + ev.delta
+                        break
+                else:
+                    tool_log.append({"title": title, "body": ev.delta})
 
     async def _persist_conversation_message(self, message: Message) -> None:
         """供 Thought 落库执行期消息（ASSISTANT+tool_calls / TOOL）。"""
@@ -468,9 +486,7 @@ class CortexAgent:
             await self._persist_user(text)
 
             memory_ctx = await self._recall_long_term_context(text)
-            messages = self._assemble_agent_messages(
-                route, text, histories, memory_ctx
-            )
+            messages = self._assemble_agent_messages(route, text, histories, memory_ctx)
             cortex_log(
                 "messages assembled",
                 route=route.value,

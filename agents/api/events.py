@@ -10,6 +10,7 @@ from agents.events import (
     ErrorEvent,
     FinalAnswerDeltaEvent,
     PhaseEvent,
+    RemoteProcessEvent,
     TextDeltaEvent,
     ThoughtDeltaEvent,
     ToolCallEvent,
@@ -47,6 +48,14 @@ def event_to_sse(ev: AgentEvent) -> tuple[str, dict[str, Any]] | None:
             "tool_name": ev.tool_name,
             "result": compact_tool_result(ev.result, max_len=4000),
             "is_error": ev.is_error,
+        }
+    if isinstance(ev, RemoteProcessEvent):
+        return "remote_delta", {
+            "call_id": ev.call_id,
+            "agent_id": ev.agent_id,
+            "channel": ev.channel,
+            "delta": ev.delta,
+            "status": ev.status,
         }
     if isinstance(ev, ErrorEvent):
         return "error", {"error": ev.error}

@@ -74,6 +74,17 @@ class ToolResultEvent(AgentEvent):
 
 
 @dataclass
+class RemoteProcessEvent(AgentEvent):
+    """出站委托时远程 Agent 的过程增量（仅 UI / SSE，不进 LLM tool_result）。"""
+
+    call_id: str
+    agent_id: str
+    channel: str  # status | trace | answer
+    delta: str = ""
+    status: str = ""  # working | completed | failed | started
+
+
+@dataclass
 class PhaseEvent(AgentEvent):
     """编排阶段切换（供前端展示 Agent 状态）。"""
 
