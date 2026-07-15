@@ -7,9 +7,17 @@ from pathlib import Path
 
 from retrieval.rag_bootstrap import is_rag_enabled, parse_rag_doc_paths
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# session.py → app → agents → src → 仓库根
+_SRC_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+# 包根：MCP 子进程 cwd / PYTHONPATH（import agents、mcp_adapter）
+SRC_ROOT = _SRC_ROOT
+# 仓库根：data/、.env、相对文档路径
+REPO_ROOT = _REPO_ROOT
+# 兼容旧名：业务相对路径仍相对仓库根
+PROJECT_ROOT = REPO_ROOT
 RAG_DOCS_RAW = os.getenv("CORTEX_RAG_DOCS", "").strip()
-RAG_DOC_PATHS = parse_rag_doc_paths(RAG_DOCS_RAW, project_root=PROJECT_ROOT)
+RAG_DOC_PATHS = parse_rag_doc_paths(RAG_DOCS_RAW, project_root=REPO_ROOT)
 ENABLE_RAG = is_rag_enabled(RAG_DOCS_RAW)
 
 DEFAULT_SESSION_ID = os.getenv("CORTEX_DEFAULT_SESSION_ID", "mem:tester_id:default")

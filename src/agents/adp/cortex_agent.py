@@ -53,7 +53,8 @@ async def load_knowledge_base_from_env():
         parse_rag_doc_paths,
     )
 
-    project_root = Path(__file__).resolve().parent.parent
+    # adp → agents → src → 仓库根
+    project_root = Path(__file__).resolve().parents[3]
     rag_docs_raw = os.getenv("CORTEX_RAG_DOCS", "").strip()
     if not is_rag_enabled(rag_docs_raw):
         return None

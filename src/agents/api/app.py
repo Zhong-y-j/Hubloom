@@ -120,15 +120,37 @@ def _public_base_url() -> str:
 
 
 async def _mount_a2a_routes(app: FastAPI) -> None:
-    """把 A2A Card + JSON-RPC 挂到主 FastAPI（与 Chat 同进程）。"""
+    """把 A2A Card + JSON-RPC 挂到主 FastAPI（与 Chat 同进程）。
+
+    Catalog / Swagger 不可达时记录错误并跳过挂载，避免阻塞 HTTP 启动。
+    """
     from a2a_adapter.server.app import build_a2a_routes
     from agents.a2a.bridge import run_a2a_turn
     from agents.a2a.card import build_agent_card
-    from mcp_adapter.gateway.catalog import load_catalog
+    from mcp_adapter.gateway.catalog import GatewayCatalog, load_catalog
 
     public_url = _public_base_url()
-    catalog = await load_catalog()
-    card = await build_agent_card(public_url, catalog)
+    try:
+        catalog = await load_catalog()
+    except Exception as exc:
+        a2a_log(
+            "a2a mount skipped",
+            reason="catalog load failed",
+            error=type(exc).__name__,
+            detail=str(exc)[:200],
+        )
+        catalog = GatewayCatalog(groups={})
+
+    try:
+        card = await build_agent_card(public_url, catalog)
+    except Exception as exc:
+        a2a_log(
+            "a2a mount skipped",
+            reason="agent card build failed",
+            error=type(exc).__name__,
+            detail=str(exc)[:200],
+        )
+        return
 
     async def run_turn(query: str, task_id: str, on_stream) -> str:
         # 始终用当前全局 runtime（/v1/config/apply 重建后仍有效）

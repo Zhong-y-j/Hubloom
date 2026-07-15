@@ -20,7 +20,9 @@ from mcp_adapter.auth import auth_trace, build_auth_meta
 from mcp_adapter.discovery import mcp_worker_stdio_cmd
 from mcp_adapter.gateway.catalog import GatewayCatalog
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# gateway → mcp_adapter → src
+SRC_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = SRC_ROOT
 
 # ===== 可配置：预热（空列表 = 不预热，全靠懒加载）=====
 PREWARM_TAGS: list[str] = []

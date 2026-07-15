@@ -19,7 +19,7 @@ from agents.app.session import (
     DEFAULT_MEMORY_DB,
     ENABLE_LONG_TERM_MEMORY,
     ENABLE_RAG,
-    PROJECT_ROOT,
+    SRC_ROOT,
 )
 from core.factory import create_llm
 from mcp_adapter.discovery import MCPBindings
@@ -105,7 +105,7 @@ async def build_runtime_async(*, enable_mcp: bool = True) -> CortexRuntime:
             bindings = await load_mcp_tools(
                 command=command,
                 args=args,
-                cwd=str(PROJECT_ROOT),
+                cwd=str(SRC_ROOT),
             )
             runtime.mcp_bindings = bindings
             runtime._mcp_tools = list(bindings.tools)

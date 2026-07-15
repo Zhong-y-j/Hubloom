@@ -37,3 +37,6 @@ build/
 
 .DS_Store
 **/.DS_Store
+# src 下误生成的运行日志
+src/logs/
+*.log

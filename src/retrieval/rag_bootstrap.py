@@ -10,7 +10,8 @@ from retrieval.knowledge_base import KnowledgeBase
 from observability import log
 
 _SKIP_DIR_NAMES = {".git", "__pycache__", "node_modules", ".venv", "venv"}
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# retrieval → src → 仓库根
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def parse_rag_doc_paths(
