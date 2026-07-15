@@ -95,7 +95,7 @@ else
   CORTEX_MEMORY_DB=data/memory-hotel.db \
   A2A_REMOTE_AGENTS="$A2A_REMOTE_AGENTS" \
   PYTHONPATH=. \
-  uv run python -m agents.api.app \
+  uv run python -m examples.chat.app \
     >"$LOG_DIR/hubloom.log" 2>&1 &
   for _ in $(seq 1 30); do
     if record_listener_pid "$HUBLOOM_PORT" "$PID_DIR/hubloom.pid"; then

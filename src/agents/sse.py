@@ -16,7 +16,7 @@ from agents.events import (
     ToolCallEvent,
     ToolResultEvent,
 )
-from agents.api.display import resolve_tool_display_name
+from agents.display import resolve_tool_display_name
 
 
 def compact_tool_result(result: str, max_len: int = 4000) -> str:

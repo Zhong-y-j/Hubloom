@@ -34,7 +34,7 @@ HUBLOOM_BASE_URL=http://127.0.0.1:8001 HOTEL_PUBLIC_URL=http://127.0.0.1:9001 PY
 
 **终端 2 — Hubloom：**
 ```bash
-CORTEX_API_PORT=8001 CORTEX_MEMORY_DB=data/memory-hotel.db PYTHONPATH=. uv run python -m agents.api.app
+CORTEX_API_PORT=8001 CORTEX_MEMORY_DB=data/memory-hotel.db PYTHONPATH=. uv run python -m examples.chat.app
 ```
 
 - 服务地址：http://127.0.0.1:9001

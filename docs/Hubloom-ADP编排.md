@@ -246,7 +246,7 @@ agents/adp/
 ├── thought.py        # Thought.run_stream() 深思考四阶段
 └── prompts.py        # ASSESSOR_SYSTEM / THOUGHT_CONTEXT_SYSTEM
 
-agents/api/app.py     # HTTP → CortexAgent.run_stream → SSE
+examples/chat/app.py     # HTTP → CortexAgent.run_stream → SSE
 agents/events.py      # ThoughtDeltaEvent / ToolCallEvent / FinalAnswerEvent …
 memory/context.py     # ContextAssembler 上下文装配
 ```

@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
-from agents.api.request_context import (
+from hubloom.context import (
     get_mcp_auth_scheme,
     get_mcp_base_url,
     get_mcp_swagger_url,

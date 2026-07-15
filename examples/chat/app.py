@@ -12,11 +12,11 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.staticfiles import StaticFiles
 
-from agents.api.client_headers import ClientHeaderContext, parse_client_headers
-from agents.api.request_context import clear_request_context, set_request_context
-from agents.api.events import event_to_sse, format_sse, turn_complete_payload
-from agents.api.history import ChatHistoryResponse, messages_for_display
-from agents.api.schemas import (
+from .client_headers import ClientHeaderContext, parse_client_headers
+from hubloom.context import clear_request_context, set_request_context
+from agents.sse import event_to_sse, format_sse, turn_complete_payload
+from .history import ChatHistoryResponse, messages_for_display
+from .schemas import (
     ApplyConfigRequest,
     ApplyConfigResponse,
     ChatRequest,
@@ -461,7 +461,7 @@ def main() -> None:
     host = os.getenv("CORTEX_API_HOST", "0.0.0.0")
     port = int(os.getenv("CORTEX_API_PORT", "8000"))
     uvicorn.run(
-        "agents.api.app:app",
+        "examples.chat.app:app",
         host=host,
         port=port,
         reload=os.getenv("CORTEX_API_RELOAD", "").lower() in ("1", "true", "yes"),

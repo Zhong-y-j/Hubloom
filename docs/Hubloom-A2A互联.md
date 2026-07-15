@@ -115,14 +115,13 @@ tools/builtin/a2a_tool.py
   ListAgentsTool         # list_agents
   DelegateTaskTool       # delegate_task（防环 + on_event）
 
-agents/api/
-  request_context.py     # a2a_inbound · remote_process 旁路队列
-  events.py              # SSE：remote_delta
-  static/chat.js         # 嵌套「远程过程」面板
-  static/a2a-remote-ui-mock.html   # 交互示意页
+examples/chat/ (HTTP 演示)
+  app.py / static/
+hubloom/context.py       # a2a_inbound · remote_process 旁路队列
+agents/sse.py            # SSE：remote_delta
 ```
 
-挂载：主 FastAPI（`agents/api/app.py` lifespan）把 A2A 路由与 Card 挂到**同一进程/端口**（常见 `CORTEX_API_PORT=8001`）。
+挂载：主 FastAPI（`examples/chat/app.py` lifespan）把 A2A 路由与 Card 挂到**同一进程/端口**（常见 `CORTEX_API_PORT=8001`）。
 
 ---
 
@@ -335,7 +334,7 @@ CORTEX_API_PORT=8002 \
 CORTEX_PUBLIC_URL=http://127.0.0.1:8002 \
 A2A_REMOTE_AGENTS='' \
 CORTEX_MEMORY_DB=data/memory-a2.db \
-uv run python -m agents.api.app
+uv run python -m examples.chat.app
 ```
 
 **终端 A1（前端，8001）：**
@@ -344,7 +343,7 @@ uv run python -m agents.api.app
 CORTEX_API_PORT=8001 \
 CORTEX_PUBLIC_URL=http://127.0.0.1:8001 \
 A2A_REMOTE_AGENTS='[{"id":"hubloom-a2","name":"Hubloom-A2","url":"http://127.0.0.1:8002"}]' \
-uv run python -m agents.api.app
+uv run python -m examples.chat.app
 ```
 
 打开 http://127.0.0.1:8001 ，示例提示：

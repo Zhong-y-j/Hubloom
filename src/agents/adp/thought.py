@@ -34,7 +34,7 @@ from agents.events import (
     ToolResultEvent,
 )
 from agents.agent_log import clip, cortex_log
-from agents.api.display import resolve_tool_display_name
+from agents.display import resolve_tool_display_name
 from tools.registry import ToolRegistry
 from tools.runner import ToolRunner
 
@@ -756,7 +756,7 @@ class Thought:
                 results: list[tuple[str, bool]] = []
                 for tc in tool_calls:
                     if tc.name == "delegate_task":
-                        from agents.api.request_context import (
+                        from hubloom.context import (
                             clear_remote_process_sink,
                             set_remote_process_sink,
                         )

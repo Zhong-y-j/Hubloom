@@ -83,7 +83,7 @@ class DelegateTaskTool(BaseTool):
         if not msg:
             return "message 不能为空。请写清要委托的任务。"
 
-        from agents.api.request_context import is_a2a_inbound
+        from hubloom.context import is_a2a_inbound
 
         if is_a2a_inbound():
             a2a_log("tool delegate_task blocked inbound", agent_id=aid)
@@ -98,7 +98,7 @@ class DelegateTaskTool(BaseTool):
             message=clip(msg, 80),
         )
         try:
-            from agents.api.request_context import emit_remote_process
+            from hubloom.context import emit_remote_process
 
             def _on_event(channel: str, text: str) -> None:
                 if channel == "status":

@@ -9,7 +9,7 @@ from typing import Any
 from agents.agent_log import cortex_log
 from agents.adp.assessor import Assessor
 from agents.adp.cortex_agent import CortexAgent, load_knowledge_base_from_env
-from agents.api.request_context import (
+from hubloom.context import (
     get_openai_api_key,
     get_openai_base_url,
     get_openai_model,

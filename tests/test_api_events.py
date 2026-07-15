@@ -1,7 +1,7 @@
 import unittest
 
 from agents.events import TextDeltaEvent, ToolCallEvent
-from agents.api.events import event_to_sse, format_sse, turn_complete_payload
+from agents.sse import event_to_sse, format_sse, turn_complete_payload
 
 
 class ApiEventsTests(unittest.TestCase):

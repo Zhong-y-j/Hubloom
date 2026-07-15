@@ -15,7 +15,7 @@ from core.models import Message, Role
 
 from agents.adp.assessor import AssessResult, Assessor
 from agents.adp.chat import Chat, build_chat_system_prompt
-from agents.api.display import resolve_tool_display_name
+from agents.display import resolve_tool_display_name
 from agents.events import (
     AgentEvent,
     FinalAnswerEvent,

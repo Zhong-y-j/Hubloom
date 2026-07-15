@@ -1,4 +1,4 @@
-"""HTTP 请求上下文：单次 chat 请求内的客户端配置与 MCP 鉴权。"""
+"""请求上下文：单次对话内的客户端配置与 MCP 鉴权（Hubloom / 工具共用）。"""
 
 from __future__ import annotations
 

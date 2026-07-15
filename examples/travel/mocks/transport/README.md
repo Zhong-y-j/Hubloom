@@ -41,7 +41,7 @@ HUBLOOM_BASE_URL=http://127.0.0.1:8003 TRANSPORT_PUBLIC_URL=http://127.0.0.1:900
 
 **终端 2 — Hubloom：**
 ```bash
-CORTEX_API_PORT=8003 CORTEX_MEMORY_DB=data/memory-transport.db PYTHONPATH=. uv run python -m agents.api.app
+CORTEX_API_PORT=8003 CORTEX_MEMORY_DB=data/memory-transport.db PYTHONPATH=. uv run python -m examples.chat.app
 ```
 
 - 服务地址：http://127.0.0.1:9003

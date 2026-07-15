@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agents.api.request_context import get_bearer_token, get_mcp_auth_scheme
+from hubloom.context import get_bearer_token, get_mcp_auth_scheme
 from mcp_adapter import MCPToolClient
 from mcp_adapter.auth import auth_trace, resolve_auth_token
 from tools.base import BaseTool

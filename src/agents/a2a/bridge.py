@@ -14,9 +14,9 @@ from collections.abc import Awaitable, Callable
 
 from agents.a2a.credential import Credential, resolve_credential
 from agents.agent_log import a2a_log, clip
-from agents.api.display import resolve_tool_display_name
-from agents.api.events import compact_tool_result
-from agents.api.request_context import (
+from agents.display import resolve_tool_display_name
+from agents.sse import compact_tool_result
+from hubloom.context import (
     clear_request_context,
     set_a2a_inbound,
     set_request_context,
