@@ -1,33 +1,20 @@
 # Hubloom Skills
 
-本目录用「文件夹 + SKILL.md」存放 Agent Skill。
+本目录存放 **手写** Agent Skill 说明。
 
-## 自动生成（第一版）
+## 当前约定
 
-`HubloomAgent.create` 在 **MCP catalog 加载成功后**：
-
-1. 若本目录（或 `config.skills_dir`）下 **已有任意** `*/SKILL.md` → **整次跳过**生成  
-2. 若一个都没有 → 按 OpenAPI **每个 tag 生成一个** `skills/<tag>/SKILL.md`（可走 LLM，失败用规则模板）
-
-**当前仓库若保留示例 [`hotel-booking/`](hotel-booking/)，会阻止自动生成。**  
-想从 Swagger 生成时：先移走/改名该示例，或把 `skills_dir` 指到空目录。
-
-本步 **只写 `SKILL.md`**，不自动创建 `references/` / `scripts/` / `assets/`。  
-运行时渐进披露 / Thought 注入仍未接通。
+- 公共平台 Skill：[`hubloom/SKILL.md`](hubloom/SKILL.md)
+- **不**按 OpenAPI tag / 业务域自动生成 Skill
+- **未**接入 `HubloomAgent` / Thought（发现与工具仍靠 prompt 中的 API catalog + 元工具）
 
 ## 布局
 
 ```
 skills/
-  <skill-id>/
-    SKILL.md              # 必填
-    references/           # 可选（手写或后续再生成）
-    scripts/
-    assets/
+  hubloom/
+    SKILL.md     # 平台用法（已纳入版本库）
+  README.md
 ```
 
-## 配置
-
-```yaml
-skills_dir: skills   # 相对仓库根；省略则默认 skills
-```
+日后若要接入运行时（渐进披露、定时任务剧本等），再单独改 runtime；本目录先作为文档存放处。

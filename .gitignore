@@ -45,6 +45,8 @@ build/
 src/logs/
 *.log
 
-# 运行时生成的 skill 包（仓库根 skills/）；保留 README
+# 技能说明：仅跟踪公共 hubloom skill；其它本地草案可忽略
 /skills/*
 !/skills/README.md
+!/skills/hubloom/
+!/skills/hubloom/**

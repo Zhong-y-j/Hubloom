@@ -267,24 +267,6 @@ async def build_runtime_async(
                 "runtime api catalog loaded",
                 group_count=len(catalog.list_tags()),
             )
-            try:
-                from hubloom.skills import ensure_skills_from_catalog
-                from hubloom.session import REPO_ROOT
-
-                await ensure_skills_from_catalog(
-                    catalog,
-                    skills_dir=None if config is None else config.skills_dir,
-                    repo_root=REPO_ROOT,
-                    api_key=None if config is None else config.openai_api_key,
-                    model=None if config is None else config.openai_model,
-                    base_url=None if config is None else config.openai_base_url,
-                )
-            except Exception as skill_exc:
-                cortex_log(
-                    "skills generate failed",
-                    error=type(skill_exc).__name__,
-                    detail=str(skill_exc)[:200],
-                )
         except Exception as exc:
             cortex_log("runtime api catalog load failed", error=str(exc))
 
