@@ -13,7 +13,8 @@
 | **BaseTool**            | `tools/base.py`                   | 抽象基类：`name` / `description` / `parameters` / `execute()` |
 | **ToolRegistry**        | `tools/registry.py`               | 注册表：name → tool；生成给 LLM 的 tools 定义                 |
 | **ToolRunner**          | `tools/runner.py`                 | 执行器：白名单校验、重试、错误兜底                            |
-| **MCPTool**             | `tools/builtin/mcp_tool.py`       | 代理 MCP 网关元工具（`list_tools` / `call_tool`）             |
+| **MetaTools**           | `tools/builtin/meta_tools.py`     | 原生 `list_tools` / `call_tool`，转发全量 MCP |
+| **MCPTool**             | `tools/builtin/mcp_tool.py`       | 通用 MCP 工具代理（低层封装，主路径已不依赖） |
 | **SearchDocumentsTool** | `tools/builtin/retrieval_tool.py` | RAG 文档检索（可选 hyde / mqe 查询优化）                      |
 | **SearchMemoryTool**    | `tools/builtin/memory_tool.py`    | 长期记忆检索（情景 + 语义 + 可选联想图）                      |
 | **ListAgentsTool**      | `tools/builtin/a2a_tool.py`       | 出站 A2A：列出 `A2A_REMOTE_AGENTS` 静态目录                   |
@@ -60,12 +61,12 @@ flowchart TB
 
 | 工具                       | 注册时机                                                   | 位置                         |
 | -------------------------- | ---------------------------------------------------------- | ---------------------------- |
-| `list_tools` / `call_tool` | 启动时 `load_mcp_tools()` 发现网关元工具，包装为 `MCPTool` | `agents/app/bootstrap.py`    |
+| `list_tools` / `call_tool` | `HubloomAgent.create` → `build_meta_tools`（原生 Tool，转发全量 MCP） | `tools/builtin/meta_tools.py` · `hubloom/runtime.py` |
 | `search_memory`            | `CortexAgent.attach_readonly_tools()`，需开启长期记忆      | `agents/adp/cortex_agent.py` |
 | `search_documents`         | 同上，需配置 RAG 知识库                                    | 同上                         |
 | `list_agents` / `delegate_task` | 同上，始终注册（出站 A2A）                            | 同上；详解见 [A2A 互联](./Hubloom-A2A互联.md) |
 
-Agent 侧看到的 MCP 工具**只有 2 个元工具**，不是全量业务接口——这是 [MCP 适配层](./Hubloom-MCP适配.md) 的分组网关设计。出站 A2A 另有 2 个 meta-tools，与 MCP 并列。
+Agent 侧看到的 MCP 相关工具**只有 2 个元工具**，不是全量业务接口——见 [MCP 适配层](./Hubloom-MCP适配.md)。出站 A2A 另有 2 个 meta-tools，与之并列。
 
 ---
 
@@ -149,14 +150,15 @@ tools/
 ├── registry.py           # ToolRegistry：register / get / list_definitions
 ├── runner.py             # ToolRunner：白名单 + 重试 + 错误兜底
 └── builtin/
-    ├── mcp_tool.py       # MCPTool：参数过滤、嵌套 JSON 纠正、Token 解析
+    ├── meta_tools.py     # list_tools / call_tool（主路径）
+    ├── mcp_tool.py       # MCPTool：低层 MCP 代理
     ├── retrieval_tool.py # SearchDocumentsTool：RAG 检索 + hyde/mqe 优化
     ├── memory_tool.py    # SearchMemoryTool：情景/语义/联想图检索
     └── a2a_tool.py       # list_agents / delegate_task（出站 A2A + 防环）
 
+hubloom/runtime.py        # create 时：catalog + 全量 MCP + build_meta_tools
 agents/adp/thought.py     # execute() 消费 tool_defs；delegate_task 时旁路 RemoteProcessEvent
 agents/adp/cortex_agent.py # attach_readonly_tools 注册 memory/RAG/A2A
-agents/app/bootstrap.py   # 启动时 load_mcp_tools → ToolRegistry.from_tools
 a2a_adapter/client/       # registry / transport / mapping
 ```
 
@@ -165,7 +167,7 @@ a2a_adapter/client/       # registry / transport / mapping
 ## 相关文档
 
 - [ADP 编排层](./Hubloom-ADP编排.md) — Thought.execute 的 ReAct 循环
-- [MCP 适配层](./Hubloom-MCP适配.md) — MCPTool 背后的网关与 Worker
+- [MCP 适配层](./Hubloom-MCP适配.md) — 全量 worker + 原生元工具
 - [A2A 互联](./Hubloom-A2A互联.md) — 出站委托、双通道 UI、入站防环
 - [记忆系统](./Hubloom-记忆系统.md) — SearchMemoryTool 背后的 MemoryManager
 - [RAG 知识库](./Hubloom-RAG知识库.md) — SearchDocumentsTool 背后的 KnowledgeBase

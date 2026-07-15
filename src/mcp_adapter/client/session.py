@@ -263,22 +263,29 @@ class MCPToolClient:
 async def _demo() -> None:
     from pathlib import Path
 
-    root = Path(__file__).resolve().parents[2]
-    server = root / "mcp_adapter" / "server.py"
+    from hubloom.config import HubloomConfig
+    from mcp_adapter.discovery import connect_full_mcp
+    from mcp_adapter.gateway.catalog import format_catalog_for_prompt, load_catalog
 
-    client = MCPToolClient(
-        command="uv",
-        args=["run", "python", str(server)],
-        cwd=str(root),
+    src = Path(__file__).resolve().parents[2]
+    repo = src.parent
+    cfg = HubloomConfig.from_file(str(repo / "config" / "env.yaml"))
+    swagger = (cfg.mcp_swagger_url or "").strip()
+    if not swagger:
+        raise SystemExit("config/env.yaml 未配置 mcp.swagger_url")
+
+    client = await connect_full_mcp(
+        swagger_url=swagger,
+        base_url=cfg.mcp_base_url,
+        cwd=str(src),
     )
-    await client.connect()
     try:
         tools = await client.list_tools()
-        print(f"发现 {len(tools)} 个元工具:", [t["name"] for t in tools])
+        print(f"全量 MCP 工具数: {len(tools)}（示例前 8 个）")
+        for t in tools[:8]:
+            print(f"  - {t['name']}")
         print()
-        from mcp_adapter.gateway.catalog import format_catalog_for_prompt, load_catalog
-
-        catalog = await load_catalog()
+        catalog = await load_catalog(swagger_url=swagger, base_url=cfg.mcp_base_url)
         print(format_catalog_for_prompt(catalog))
     finally:
         await client.close()

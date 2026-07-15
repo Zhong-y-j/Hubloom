@@ -78,15 +78,16 @@ flowchart TB
     CH --> LLM["LLM API"]
     TH --> LLM
 
-    TH --> TOOLS["ToolRegistry"]
-    TOOLS --> GW["MCP Gateway"] --> POOL["BackendPool"] --> WK["Workers"] --> REST["REST API"]
+    TH --> TOOLS["ToolRegistry<br/>元工具 list_tools / call_tool"]
+    TOOLS --> WK["全量 MCP worker"] --> REST["REST API"]
     TOOLS --> A2AC["A2A Client<br/>registry · transport"] --> RA["远程 A2A Agent"]
 
     AG <--> SQL[("SQLite 会话")]
     TH -.-> MEM["长期记忆 / RAG<br/>可选"]
 
-    SW["Swagger"] --> API
-    SW --> GW
+    SW["Swagger"] --> CAT["API catalog → prompt"]
+    SW --> WK
+    CAT --> TH
     SW -.->|"tag → skills"| A2AS
 
     classDef entry fill:#eff6ff,stroke:#60a5fa,color:#1e40af

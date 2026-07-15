@@ -1,13 +1,13 @@
-from .app import run_gateway
-from .catalog import load_catalog
-from .meta_tools import register_meta_tools
-from .pool import BackendPool
-from .router import BackendRouter
+"""网关包：仅保留 OpenAPI 分组目录（Agent 主路径不再使用按 tag 的 MCP 进程池）。"""
+
+from mcp_adapter.gateway.catalog import (
+    GatewayCatalog,
+    format_catalog_for_prompt,
+    load_catalog,
+)
 
 __all__ = [
-    "run_gateway",
+    "GatewayCatalog",
+    "format_catalog_for_prompt",
     "load_catalog",
-    "register_meta_tools",
-    "BackendPool",
-    "BackendRouter",
 ]

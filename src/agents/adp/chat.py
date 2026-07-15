@@ -133,15 +133,22 @@ class Chat:
 
 
 async def main() -> None:
+    from hubloom.config import HubloomConfig
     from core.factory import create_llm
-    from mcp_adapter import load_mcp_tools
+    from mcp_adapter import load_agent_mcp_bindings
     from tools import ToolRegistry
 
-    bindings = await load_mcp_tools(
-        command="uv",
-        args=["run", "python", "mcp_adapter/server.py"],
+    cfg = HubloomConfig.from_file(str(Path(_ROOT).parent / "config" / "env.yaml"))
+    swagger = (cfg.mcp_swagger_url or "").strip()
+    if not swagger:
+        raise SystemExit("config/env.yaml 未配置 mcp.swagger_url")
+
+    setup = await load_agent_mcp_bindings(
+        swagger_url=swagger,
+        base_url=cfg.mcp_base_url,
         cwd=str(_ROOT),
     )
+    bindings = setup.bindings
     try:
         tools = ToolRegistry.from_tools(bindings.tools)
         chat = Chat(create_llm())

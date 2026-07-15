@@ -1,10 +1,13 @@
+"""全量 OpenAPI MCP 后端（单一子进程，不按 tag 拆分）。"""
+
+from __future__ import annotations
+
 import os
 
 from fastmcp import FastMCP
 
 from mcp_adapter.auth import AuthPassthroughMiddleware
 from mcp_adapter.server.http_client import AuthedHttpClient
-from mcp_adapter.spec.filter import ToolFilter
 from mcp_adapter.spec.pipeline import prepare_openapi
 
 
@@ -13,8 +16,8 @@ def _env(key: str, default: str = "") -> str:
     return (os.getenv(key) or default).strip()
 
 
-async def build_backend_mcp(*, tag: str | None) -> FastMCP:
-    """tag 即分组名，也是 FastMCP 的 server name；None 表示全量。"""
+async def build_backend_mcp() -> FastMCP:
+    """从 MCP_SWAGGER_URL 构建全量 FastMCP OpenAPI 服务。"""
     swagger_url = _env("MCP_SWAGGER_URL")
     if not swagger_url:
         raise ValueError(
@@ -23,13 +26,10 @@ async def build_backend_mcp(*, tag: str | None) -> FastMCP:
         )
     base_url = _env("MCP_BASE_URL") or None
 
-    tool_filter = ToolFilter(tags=[tag]) if tag else None
-    server_name = tag or "full"
-
     openapi, resolved_base = await prepare_openapi(
         swagger_url,
         base_url=base_url,
-        tool_filter=tool_filter,
+        tool_filter=None,
     )
 
     client = AuthedHttpClient(
@@ -41,14 +41,13 @@ async def build_backend_mcp(*, tag: str | None) -> FastMCP:
     mcp = FastMCP.from_openapi(
         openapi_spec=openapi,
         client=client,
-        name=server_name,
+        name="full",
         validate_output=False,
     )
     mcp.add_middleware(AuthPassthroughMiddleware())
     return mcp
 
 
-async def run_backend_stdio(*, tag: str | None) -> None:
-    mcp = await build_backend_mcp(tag=tag)
-    # stdio 子进程不打印 FastMCP 横幅；父进程关闭管道时避免噪音
+async def run_backend_stdio() -> None:
+    mcp = await build_backend_mcp()
     await mcp.run_stdio_async(show_banner=False)

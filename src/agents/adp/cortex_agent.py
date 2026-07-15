@@ -586,8 +586,10 @@ class CortexAgent:
 async def main():
     from pathlib import Path
 
+    from hubloom.config import HubloomConfig
     from core.factory import create_llm
-    from mcp_adapter import load_mcp_tools
+    from mcp_adapter import load_agent_mcp_bindings
+    from mcp_adapter.gateway.catalog import format_catalog_for_prompt
     from tools.registry import ToolRegistry
 
     from agents.events import (
@@ -599,17 +601,27 @@ async def main():
         ToolResultEvent,
     )
 
-    root = Path(__file__).resolve().parents[2]
+    root = Path(__file__).resolve().parents[2]  # src/
+    repo = root.parent
+    cfg = HubloomConfig.from_file(str(repo / "config" / "env.yaml"))
+    swagger = (cfg.mcp_swagger_url or "").strip()
+    if not swagger:
+        raise SystemExit("config/env.yaml 未配置 mcp.swagger_url")
+
     kb = await load_knowledge_base_from_env()
-    bindings = await load_mcp_tools(
-        command="uv",
-        args=["run", "python", "mcp_adapter/server.py"],
+    setup = await load_agent_mcp_bindings(
+        swagger_url=swagger,
+        base_url=cfg.mcp_base_url,
         cwd=str(root),
     )
+    bindings = setup.bindings
     try:
         tools = ToolRegistry.from_tools(bindings.tools)
         cortex_agent = CortexAgent(
-            create_llm(), tools=tools, assessor=Assessor(create_llm())
+            create_llm(),
+            tools=tools,
+            assessor=Assessor(create_llm()),
+            api_catalog_prompt=format_catalog_for_prompt(setup.catalog),
         )
         cortex_agent.attach_readonly_tools(knowledge_base=kb)
         query = "查询下我当前库存"

@@ -271,30 +271,24 @@ async def build_runtime_async(
             cortex_log("runtime api catalog load failed", error=str(exc))
 
         try:
-            from mcp_adapter.client.session import MCPToolClient
-            from mcp_adapter.discovery import (
-                MCPBindings,
-                build_mcp_subprocess_env,
-                mcp_full_stdio_cmd,
-            )
+            from mcp_adapter.discovery import connect_full_mcp
+            from mcp_adapter.discovery import MCPBindings
             from tools.builtin.meta_tools import build_meta_tools
 
             if catalog is None:
                 raise RuntimeError("API catalog unavailable; skip MCP backend")
 
-            command, args = mcp_full_stdio_cmd()
             child_env = (
                 _mcp_child_env(config)
                 if config is not None
                 else {"MCP_SWAGGER_URL": swagger_url}
             )
-            client = MCPToolClient(
-                command=command,
-                args=args,
-                env=build_mcp_subprocess_env(str(SRC_ROOT), child_env),
+            client = await connect_full_mcp(
+                swagger_url=swagger_url,
+                base_url=base_url,
+                env=child_env,
                 cwd=str(SRC_ROOT),
             )
-            await client.connect()
             meta_tools = build_meta_tools(catalog, client)
             runtime.mcp_bindings = MCPBindings(tools=meta_tools, client=client)
             runtime._mcp_tools = list(meta_tools)

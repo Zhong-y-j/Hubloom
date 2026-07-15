@@ -46,40 +46,24 @@ def _tool_map(bindings) -> dict[str, Any]:
 
 async def _load_bindings():
     from hubloom.config import HubloomConfig
-    from mcp_adapter.client.session import MCPToolClient
-    from mcp_adapter.discovery import (
-        MCPBindings,
-        build_mcp_subprocess_env,
-        mcp_full_stdio_cmd,
-    )
-    from mcp_adapter.gateway.catalog import load_catalog
-    from tools.builtin.meta_tools import build_meta_tools
+    from mcp_adapter.discovery import load_agent_mcp_bindings
 
     cfg = HubloomConfig.from_file(str(REPO_ROOT / "config" / "env.yaml"))
     swagger = (cfg.mcp_swagger_url or "").strip()
     if not swagger:
         raise SystemExit("config/env.yaml 未配置 mcp.swagger_url")
 
-    catalog = await load_catalog(
-        swagger_url=swagger,
-        base_url=cfg.mcp_base_url,
-    )
-    command, args = mcp_full_stdio_cmd()
-    child_env: dict[str, str] = {"MCP_SWAGGER_URL": swagger}
-    if cfg.mcp_base_url:
-        child_env["MCP_BASE_URL"] = str(cfg.mcp_base_url).strip()
+    child_env: dict[str, str] = {}
     if cfg.mcp_auth_scheme:
         child_env["MCP_AUTH_SCHEME"] = str(cfg.mcp_auth_scheme).strip()
 
-    client = MCPToolClient(
-        command=command,
-        args=args,
-        env=build_mcp_subprocess_env(str(SRC_ROOT), child_env),
+    setup = await load_agent_mcp_bindings(
+        swagger_url=swagger,
+        base_url=cfg.mcp_base_url,
+        env=child_env or None,
         cwd=str(SRC_ROOT),
     )
-    await client.connect()
-    tools = build_meta_tools(catalog, client)
-    return MCPBindings(tools=tools, client=client), catalog
+    return setup.bindings, setup.catalog
 
 
 async def _run_meta(bindings, name: str, **kwargs: Any) -> str:

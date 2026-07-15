@@ -948,21 +948,33 @@ class Thought:
 
 
 async def main():
+    from hubloom.config import HubloomConfig
     from core.factory import create_llm
-    from mcp_adapter import load_mcp_tools
+    from mcp_adapter import load_agent_mcp_bindings
+    from mcp_adapter.gateway.catalog import format_catalog_for_prompt
     from tools import ToolRegistry
 
     from agents.adp.prompts import THOUGHT_CONTEXT_SYSTEM
     from memory.context import ContextAssembler
 
-    bindings = await load_mcp_tools(
-        command="uv",
-        args=["run", "python", "mcp_adapter/server.py"],
+    cfg = HubloomConfig.from_file(str(Path(_ROOT).parent / "config" / "env.yaml"))
+    swagger = (cfg.mcp_swagger_url or "").strip()
+    if not swagger:
+        raise SystemExit("config/env.yaml 未配置 mcp.swagger_url")
+
+    setup = await load_agent_mcp_bindings(
+        swagger_url=swagger,
+        base_url=cfg.mcp_base_url,
         cwd=str(_ROOT),
     )
+    bindings = setup.bindings
     try:
         tools = ToolRegistry.from_tools(bindings.tools)
-        thought = Thought(create_llm(), tools)
+        thought = Thought(
+            create_llm(),
+            tools,
+            api_catalog_prompt=format_catalog_for_prompt(setup.catalog),
+        )
         # query = "帮我列出当前所有小区，并且每个小区的详情，小区绑定的优惠卷，以及这些小区关联的钥匙柜，钥匙柜的状态是什么"
         query = "你有什么能力呢"
         messages = ContextAssembler().assemble(
