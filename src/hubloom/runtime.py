@@ -251,6 +251,7 @@ async def build_runtime_async(
     if mcp_on:
         swagger_url = _mcp_swagger_url(config)
         base_url = None if config is None else config.mcp_base_url
+        catalog = None
         try:
             from mcp_adapter.gateway.catalog import (
                 format_catalog_for_prompt,
@@ -266,28 +267,60 @@ async def build_runtime_async(
                 "runtime api catalog loaded",
                 group_count=len(catalog.list_tags()),
             )
+            try:
+                from hubloom.skills import ensure_skills_from_catalog
+                from hubloom.session import REPO_ROOT
+
+                await ensure_skills_from_catalog(
+                    catalog,
+                    skills_dir=None if config is None else config.skills_dir,
+                    repo_root=REPO_ROOT,
+                    api_key=None if config is None else config.openai_api_key,
+                    model=None if config is None else config.openai_model,
+                    base_url=None if config is None else config.openai_base_url,
+                )
+            except Exception as skill_exc:
+                cortex_log(
+                    "skills generate failed",
+                    error=type(skill_exc).__name__,
+                    detail=str(skill_exc)[:200],
+                )
         except Exception as exc:
             cortex_log("runtime api catalog load failed", error=str(exc))
 
         try:
-            from mcp_adapter import load_mcp_tools
-            from mcp_adapter.discovery import mcp_gateway_stdio_cmd
+            from mcp_adapter.client.session import MCPToolClient
+            from mcp_adapter.discovery import (
+                MCPBindings,
+                build_mcp_subprocess_env,
+                mcp_full_stdio_cmd,
+            )
+            from tools.builtin.meta_tools import build_meta_tools
 
-            command, args = mcp_gateway_stdio_cmd()
-            child_env = _mcp_child_env(config) if config is not None else {
-                "MCP_SWAGGER_URL": swagger_url,
-            }
-            bindings = await load_mcp_tools(
+            if catalog is None:
+                raise RuntimeError("API catalog unavailable; skip MCP backend")
+
+            command, args = mcp_full_stdio_cmd()
+            child_env = (
+                _mcp_child_env(config)
+                if config is not None
+                else {"MCP_SWAGGER_URL": swagger_url}
+            )
+            client = MCPToolClient(
                 command=command,
                 args=args,
-                env=child_env,
+                env=build_mcp_subprocess_env(str(SRC_ROOT), child_env),
                 cwd=str(SRC_ROOT),
             )
-            runtime.mcp_bindings = bindings
-            runtime._mcp_tools = list(bindings.tools)
+            await client.connect()
+            meta_tools = build_meta_tools(catalog, client)
+            runtime.mcp_bindings = MCPBindings(tools=meta_tools, client=client)
+            runtime._mcp_tools = list(meta_tools)
             cortex_log(
                 "runtime mcp loaded",
+                mode="full-backend+meta-tools",
                 tool_count=len(runtime._mcp_tools),
+                meta=[t.name for t in meta_tools],
             )
         except Exception as exc:
             cortex_log("runtime mcp load failed", error=str(exc))

@@ -50,4 +50,5 @@ async def build_backend_mcp(*, tag: str | None) -> FastMCP:
 
 async def run_backend_stdio(*, tag: str | None) -> None:
     mcp = await build_backend_mcp(tag=tag)
-    await mcp.run_stdio_async()
+    # stdio 子进程不打印 FastMCP 横幅；父进程关闭管道时避免噪音
+    await mcp.run_stdio_async(show_banner=False)

@@ -29,7 +29,7 @@ class ToolRef:
 
 @dataclass
 class GroupCatalog:
-    """一个 tag 分组 = 一个后端 worker（tag 即 worker 参数）。"""
+    """一个 OpenAPI tag 分组（Agent 经元工具按 tag 发现/调用）。"""
 
     tag: str
     description: str

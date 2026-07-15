@@ -1,4 +1,9 @@
-"""网关 MCP：stdio 入口，对外只暴露 meta tools。"""
+"""网关 MCP：stdio 入口（旧链路；Agent 主路径已改为原生元工具 → 全量 worker）。
+
+独立调试仍可运行::
+
+    PYTHONPATH=src MCP_SWAGGER_URL=... uv run python mcp_adapter/server.py
+"""
 
 from __future__ import annotations
 

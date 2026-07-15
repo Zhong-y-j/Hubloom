@@ -1,16 +1,10 @@
-"""人工测试 MCP 网关 — 与 Agent bootstrap 使用相同链路。
-
-启动方式（与 agents/app/bootstrap.py 一致）::
-
-    uv run python mcp_adapter/server.py
-
-本脚本通过 load_mcp_tools 连接网关，用 MCPTool.execute() 调用元工具。
+"""人工测试：与 Agent 相同链路（原生元工具 → 单个全量 MCP）。
 
 示例::
 
-    PYTHONPATH=. uv run python mcp_adapter/test_mcp.py
-    PYTHONPATH=. uv run python mcp_adapter/test_mcp.py -i
-    PYTHONPATH=. uv run python mcp_adapter/test_mcp.py --call pet getPetById --args '{"petId":1}'
+    PYTHONPATH=src uv run python -m mcp_adapter.test_mcp --list
+    PYTHONPATH=src uv run python -m mcp_adapter.test_mcp --tools Banner
+    PYTHONPATH=src uv run python -m mcp_adapter.test_mcp -i
 """
 
 from __future__ import annotations
@@ -22,14 +16,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SERVER_SCRIPT = PROJECT_ROOT / "mcp_adapter" / "server.py"
-
-# 与 bootstrap.py 相同的启动参数
-DEFAULT_COMMAND = "uv"
-DEFAULT_ARGS = ["run", "python", str(SERVER_SCRIPT)]
+SRC_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = SRC_ROOT.parent
 
 
 def _pp(data: Any) -> str:
@@ -57,13 +45,41 @@ def _tool_map(bindings) -> dict[str, Any]:
 
 
 async def _load_bindings():
-    from mcp_adapter import load_mcp_tools
-
-    return await load_mcp_tools(
-        command=DEFAULT_COMMAND,
-        args=DEFAULT_ARGS,
-        cwd=str(PROJECT_ROOT),
+    from hubloom.config import HubloomConfig
+    from mcp_adapter.client.session import MCPToolClient
+    from mcp_adapter.discovery import (
+        MCPBindings,
+        build_mcp_subprocess_env,
+        mcp_full_stdio_cmd,
     )
+    from mcp_adapter.gateway.catalog import load_catalog
+    from tools.builtin.meta_tools import build_meta_tools
+
+    cfg = HubloomConfig.from_file(str(REPO_ROOT / "config" / "env.yaml"))
+    swagger = (cfg.mcp_swagger_url or "").strip()
+    if not swagger:
+        raise SystemExit("config/env.yaml 未配置 mcp.swagger_url")
+
+    catalog = await load_catalog(
+        swagger_url=swagger,
+        base_url=cfg.mcp_base_url,
+    )
+    command, args = mcp_full_stdio_cmd()
+    child_env: dict[str, str] = {"MCP_SWAGGER_URL": swagger}
+    if cfg.mcp_base_url:
+        child_env["MCP_BASE_URL"] = str(cfg.mcp_base_url).strip()
+    if cfg.mcp_auth_scheme:
+        child_env["MCP_AUTH_SCHEME"] = str(cfg.mcp_auth_scheme).strip()
+
+    client = MCPToolClient(
+        command=command,
+        args=args,
+        env=build_mcp_subprocess_env(str(SRC_ROOT), child_env),
+        cwd=str(SRC_ROOT),
+    )
+    await client.connect()
+    tools = build_meta_tools(catalog, client)
+    return MCPBindings(tools=tools, client=client), catalog
 
 
 async def _run_meta(bindings, name: str, **kwargs: Any) -> str:
@@ -74,7 +90,7 @@ async def _run_meta(bindings, name: str, **kwargs: Any) -> str:
 
 
 async def cmd_list(bindings) -> None:
-    print("=== Agent 可见的 MCP 元工具 ===")
+    print("=== Agent 可见的元工具（原生 Tool，非网关 MCP）===")
     for tool in bindings.tools:
         print(f"\n• {tool.name}")
         print(f"  {tool.description}")
@@ -83,11 +99,10 @@ async def cmd_list(bindings) -> None:
             print(f"  参数: {', '.join(params.keys())}")
 
 
-async def cmd_groups() -> None:
-    from mcp_adapter.gateway.catalog import format_catalog_for_prompt, load_catalog
+async def cmd_groups(catalog) -> None:
+    from mcp_adapter.gateway.catalog import format_catalog_for_prompt
 
-    print("=== API 分组目录（来自 Swagger，非 MCP 工具）===")
-    catalog = await load_catalog()
+    print("=== API 分组目录（来自 Swagger）===")
     print(format_catalog_for_prompt(catalog))
 
 
@@ -122,25 +137,26 @@ async def cmd_meta(bindings, name: str, arguments: dict[str, Any]) -> None:
 
 
 async def cmd_smoke(
-    bindings, *, tag: str, tool_name: str, tool_args: dict[str, Any]
+    bindings,
+    catalog,
+    *,
+    tag: str,
+    tool_name: str,
+    tool_args: dict[str, Any],
 ) -> None:
-    print("=== Smoke：模拟 Agent 完整调用链 ===\n")
-
+    print("=== Smoke：元工具 → 全量 MCP ===\n")
     await cmd_list(bindings)
     print()
-
-    await cmd_groups()
+    await cmd_groups(catalog)
     print()
-
     await cmd_tools(bindings, tag)
     print()
-
     await cmd_call(bindings, tag, tool_name, tool_args)
 
 
-async def cmd_interactive(bindings) -> None:
+async def cmd_interactive(bindings, catalog) -> None:
     tools = _tool_map(bindings)
-    print("=== MCP 交互测试（与 Agent 相同 MCPTool 链路）===")
+    print("=== MCP 交互测试（Agent 同款元工具）===")
     print("可用元工具:", ", ".join(sorted(tools.keys())))
     print("输入 q 退出\n")
 
@@ -157,7 +173,7 @@ async def cmd_interactive(bindings) -> None:
 
         try:
             if line == "1":
-                await cmd_groups()
+                await cmd_groups(catalog)
                 continue
 
             parts = line.split(maxsplit=1)
@@ -203,7 +219,7 @@ async def cmd_interactive(bindings) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        description="人工测试 MCP 网关（Agent 同款 load_mcp_tools）"
+        description="人工测试元工具 → 全量 MCP（与 HubloomAgent.create 同款）"
     )
     p.add_argument("-i", "--interactive", action="store_true", help="交互模式")
     p.add_argument("--list", action="store_true", help="列出元工具")
@@ -213,7 +229,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--call",
         nargs=2,
         metavar=("TAG", "TOOL"),
-        help="经 call_tool 调用后端工具，如: --call pet getPetById",
+        help="经 call_tool 调用后端工具，如: --call Banner Banner_GetList",
     )
     p.add_argument(
         "--meta",
@@ -225,39 +241,27 @@ def build_parser() -> argparse.ArgumentParser:
         default="{}",
         help="JSON 参数；--call 时为后端工具参数；--meta 时为元工具 kwargs",
     )
-    p.add_argument("--tag", default="pet", help="smoke 默认 tag（默认 pet）")
+    p.add_argument("--tag", default="Banner", help="smoke 默认 tag")
     p.add_argument(
         "--tool",
-        default="getPetById",
-        help="smoke 默认后端工具名（默认 getPetById）",
+        default="Banner_GetList",
+        help="smoke 默认后端工具名",
     )
     return p
 
 
 async def main() -> int:
-    load_dotenv(PROJECT_ROOT / ".env")
-
-    if not SERVER_SCRIPT.is_file():
-        print(f"找不到网关入口: {SERVER_SCRIPT}", file=sys.stderr)
-        return 1
-
     parser = build_parser()
     args = parser.parse_args()
 
-    print(f"项目根: {PROJECT_ROOT}")
-    print(f"启动: {DEFAULT_COMMAND} {' '.join(DEFAULT_ARGS)}")
-    print(
-        f"MCP_SWAGGER_URL = {( __import__('os').getenv('MCP_SWAGGER_URL') or '(默认 Petstore)')}"
-    )
-    print(
-        f"MCP_BASE_URL     = {( __import__('os').getenv('MCP_BASE_URL') or '(从 spec 推断)')}"
-    )
+    print(f"src: {SRC_ROOT}")
+    print("backend: python -m mcp_adapter.server.worker --full")
     print()
 
-    bindings = await _load_bindings()
+    bindings, catalog = await _load_bindings()
     try:
         if args.interactive:
-            await cmd_interactive(bindings)
+            await cmd_interactive(bindings, catalog)
             return 0
 
         if args.list:
@@ -265,7 +269,7 @@ async def main() -> int:
             return 0
 
         if args.groups:
-            await cmd_groups()
+            await cmd_groups(catalog)
             return 0
 
         if args.tools:
@@ -283,12 +287,10 @@ async def main() -> int:
             await cmd_meta(bindings, args.meta, meta_args)
             return 0
 
-        # 默认 smoke
         tool_args = _parse_json_object(args.args, label="arguments")
-        if tool_args == {} and args.tool == "getPetById":
-            tool_args = {"petId": 1}
         await cmd_smoke(
             bindings,
+            catalog,
             tag=args.tag,
             tool_name=args.tool,
             tool_args=tool_args,

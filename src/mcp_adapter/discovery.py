@@ -1,4 +1,4 @@
-"""启动 MCP 网关子进程，发现工具并包装为 MCPTool。"""
+"""启动 MCP 子进程：全量 backend，或（兼容）网关 / 按 tag worker。"""
 
 from __future__ import annotations
 
@@ -11,13 +11,18 @@ from typing import Any
 from mcp_adapter.client.session import MCPToolClient
 
 
+def mcp_full_stdio_cmd() -> tuple[str, list[str]]:
+    """启动单个全量 OpenAPI MCP（Agent 主路径：元工具转发至此）。"""
+    return sys.executable, ["-m", "mcp_adapter.server.worker", "--full"]
+
+
 def mcp_gateway_stdio_cmd() -> tuple[str, list[str]]:
-    """启动 MCP 网关 stdio 服务。"""
+    """启动 MCP 网关 stdio 服务（旧链路 / 独立调试）。"""
     return sys.executable, ["mcp_adapter/server.py"]
 
 
 def mcp_worker_stdio_cmd(tag: str) -> tuple[str, list[str]]:
-    """启动按 tag 分组的 backend worker。"""
+    """启动按 tag 分组的 backend worker（旧网关池用）。"""
     return sys.executable, ["-m", "mcp_adapter.server.worker", tag]
 
 

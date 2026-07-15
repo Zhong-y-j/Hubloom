@@ -144,6 +144,10 @@ def is_unauthenticated_tool_result(result: str) -> bool:
     except json.JSONDecodeError:
         return False
 
+    # list_tools 等元工具返回 JSON 数组，不是 call_tool 的 dict 信封
+    if not isinstance(data, dict):
+        return False
+
     status = data.get("http_status")
     if status in (401, 403):
         return True

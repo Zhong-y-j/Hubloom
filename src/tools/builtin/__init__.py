@@ -2,6 +2,7 @@ from .a2a_tool import DelegateTaskTool, ListAgentsTool
 from .retrieval_tool import SearchDocumentsTool
 from .memory_tool import SearchMemoryTool
 from .mcp_tool import MCPTool
+from .meta_tools import CallToolMetaTool, ListToolsMetaTool, build_meta_tools
 
 __all__ = [
     "SearchDocumentsTool",
@@ -9,4 +10,7 @@ __all__ = [
     "MCPTool",
     "ListAgentsTool",
     "DelegateTaskTool",
+    "ListToolsMetaTool",
+    "CallToolMetaTool",
+    "build_meta_tools",
 ]

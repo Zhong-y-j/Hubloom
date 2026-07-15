@@ -44,3 +44,7 @@ build/
 # src 下误生成的运行日志
 src/logs/
 *.log
+
+# 运行时生成的 skill 包（仓库根 skills/）；保留 README
+/skills/*
+!/skills/README.md

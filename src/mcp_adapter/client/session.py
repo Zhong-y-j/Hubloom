@@ -1,12 +1,14 @@
-"""MCP stdio 客户端：连接网关 server.py，发现/调用工具。"""
+"""MCP stdio 客户端：连接全量 backend worker（或旧网关），发现/调用工具。"""
 
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import time
 from contextlib import AsyncExitStack
-from typing import Any
+from pathlib import Path
+from typing import Any, TextIO
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -20,11 +22,21 @@ from mcp_adapter.client.result import (
 from mcp_adapter.log import clip_text, dumps_clip, mcp_log
 
 
+def _worker_errlog() -> TextIO:
+    """子进程 stderr 落到 logs/mcp-worker.stderr.log，避免刷父终端。"""
+    log_dir = Path("logs")
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return open(log_dir / "mcp-worker.stderr.log", "a", encoding="utf-8")
+    except OSError:
+        return open(os.devnull, "w", encoding="utf-8")
+
+
 class MCPToolClient:
-    """通过子进程 stdio 与 MCP Server（网关）通信。
+    """通过子进程 stdio 与 MCP Server（全量 worker）通信。
 
     stdio 客户端的 anyio cancel scope 必须在同一 asyncio task 内进入/退出，
-    因此连接生命周期运行在独立后台事件循环中（与 BackendPool 相同策略）。
+    因此连接生命周期运行在独立后台事件循环中。
     """
 
     def __init__(
@@ -44,6 +56,7 @@ class MCPToolClient:
         self.timeout = timeout
         self._session: ClientSession | None = None
         self._exit_stack: AsyncExitStack | None = None
+        self._errlog: TextIO | None = None
         self._bg_loop: asyncio.AbstractEventLoop | None = None
         self._bg_thread: threading.Thread | None = None
         self._bg_ready = threading.Event()
@@ -61,7 +74,7 @@ class MCPToolClient:
 
         self._bg_thread = threading.Thread(
             target=_runner,
-            name="mcp-gateway-client",
+            name="mcp-backend-client",
             daemon=True,
         )
         self._bg_thread.start()
@@ -80,9 +93,21 @@ class MCPToolClient:
         stack = AsyncExitStack()
         await stack.__aenter__()
         try:
-            read, write = await stack.enter_async_context(
-                stdio_client(self.server_params)
-            )
+            # MCP_WORKER_STDERR=1 时把子进程日志打到父终端，便于调试
+            if (os.getenv("MCP_WORKER_STDERR") or "").strip().lower() in {
+                "1",
+                "true",
+                "yes",
+            }:
+                read, write = await stack.enter_async_context(
+                    stdio_client(self.server_params)
+                )
+            else:
+                self._errlog = _worker_errlog()
+                stack.callback(self._errlog.close)
+                read, write = await stack.enter_async_context(
+                    stdio_client(self.server_params, errlog=self._errlog)
+                )
             session = await stack.enter_async_context(ClientSession(read, write))
             await asyncio.wait_for(session.initialize(), timeout=self.timeout)
         except BaseException:

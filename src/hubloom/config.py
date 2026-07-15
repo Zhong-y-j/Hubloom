@@ -120,6 +120,8 @@ class HubloomConfig:
     neo4j_skip_dns_check: bool | None = None
 
     skills: list[dict[str, Any]] | None = None
+    # 本地 Skill 包根目录（相对仓库根）；缺省 skills
+    skills_dir: str | None = None
     source_path: str | None = field(default=None, repr=False)
 
     @classmethod
@@ -155,6 +157,7 @@ class HubloomConfig:
         mcp = _section(data, "mcp")
         a2a = _section(data, "a2a")
         skills_raw = data.get("skills")
+        skills_dir = _clean(data.get("skills_dir"))
 
         enable_mcp = _as_bool(mcp.get("enable"))
         if enable_mcp is None:
@@ -198,5 +201,6 @@ class HubloomConfig:
             neo4j_database=_clean(neo4j.get("database")),
             neo4j_skip_dns_check=_as_bool(neo4j.get("skip_dns_check")),
             skills=skills_raw if isinstance(skills_raw, list) else None,
+            skills_dir=skills_dir,
             source_path=str(cfg_path.resolve()),
         )
