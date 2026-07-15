@@ -184,7 +184,7 @@ async def delegate(
     """目录里按 id 查找再委托。"""
     agent = get_agent(agent_id)
     if agent is None:
-        raise KeyError(f"unknown agent_id: {agent_id!r}（检查 A2A_REMOTE_AGENTS）")
+        raise KeyError(f"unknown agent_id: {agent_id!r}（检查 a2a.remote_agents）")
     return await send_and_wait_answer(
         agent,
         message,

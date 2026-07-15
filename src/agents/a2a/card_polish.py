@@ -104,14 +104,20 @@ def _validate_polish(data: dict[str, Any], catalog: GatewayCatalog) -> dict[str,
     }
 
 
-async def polish_card_copy(catalog: GatewayCatalog) -> dict[str, Any]:
+async def polish_card_copy(
+    catalog: GatewayCatalog,
+    *,
+    api_key: str | None = None,
+    model: str | None = None,
+    base_url: str | None = None,
+) -> dict[str, Any]:
     """一次 LLM 调用，返回校验后的润色结果。"""
     payload = _catalog_payload(catalog)
     user_text = "请基于以下 OpenAPI 能力分组生成 Agent Card 文案：\n" + json.dumps(
         payload, ensure_ascii=False, indent=2
     )
 
-    llm = create_llm()
+    llm = create_llm(api_key=api_key, model=model, base_url=base_url)
     output = await llm.generate(
         [
             Message(role=Role.SYSTEM, content=_SYSTEM),

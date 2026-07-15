@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import socket
 import subprocess
 import uuid
@@ -11,7 +10,6 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
-from dotenv import load_dotenv
 from neo4j import AsyncGraphDatabase, AsyncDriver
 
 from memory.models import (
@@ -23,9 +21,10 @@ from memory.models import (
 from memory.types import EntityType, LongTermMemoryType, MemorySource
 from memory.utils import now_local_str
 
-load_dotenv()
-
 _SCHEMA_FILE = Path(__file__).with_name("neo4j_schema.cypher")
+_DEFAULT_NEO4J_URI = "bolt://localhost:7687"
+_DEFAULT_NEO4J_USER = "neo4j"
+_DEFAULT_NEO4J_DATABASE = "neo4j"
 
 
 def _json_dumps(obj: dict[str, Any]) -> str:
@@ -135,16 +134,21 @@ class Neo4jStore:
         password: str | None = None,
         database: str | None = None,
         auto_init_schema: bool = True,
+        skip_dns_check: bool | None = None,
     ) -> None:
-        self.uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
-        self.user = user or os.getenv("NEO4J_USER", "neo4j")
-        self.password = password or os.getenv("NEO4J_PASSWORD")
-        if not self.password:
-            raise ValueError("NEO4J_PASSWORD is required for Neo4jStore")
-        self.database = database or os.getenv("NEO4J_DATABASE", "neo4j")
+        self.uri = (uri or "").strip() or _DEFAULT_NEO4J_URI
+        self.user = (user or "").strip() or _DEFAULT_NEO4J_USER
+        pwd = (password or "").strip()
+        if not pwd:
+            raise ValueError(
+                "Neo4jStore requires password=... "
+                "(pass HubloomConfig.neo4j_password)"
+            )
+        self.password = pwd
+        self.database = (database or "").strip() or _DEFAULT_NEO4J_DATABASE
         self._auto_init_schema = auto_init_schema
         self._schema_ready = False
-        if os.getenv("NEO4J_SKIP_DNS_CHECK", "").lower() not in ("1", "true", "yes"):
+        if not skip_dns_check:
             _check_dns_or_hint(self.uri)
         self._driver: AsyncDriver = AsyncGraphDatabase.driver(
             self.uri,
@@ -543,9 +547,17 @@ if __name__ == "__main__":
     import asyncio
 
     async def _smoke() -> None:
-        uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
-        print("NEO4J_URI:", uri)
-        store = Neo4jStore()
+        from hubloom.config import HubloomConfig
+
+        cfg = HubloomConfig.from_file("config/env.yaml")
+        print("NEO4J_URI:", cfg.neo4j_uri)
+        store = Neo4jStore(
+            uri=cfg.neo4j_uri,
+            user=cfg.neo4j_user,
+            password=cfg.neo4j_password,
+            database=cfg.neo4j_database,
+            skip_dns_check=bool(cfg.neo4j_skip_dns_check),
+        )
         ns = "mem:store_smoke:neo4j"
         try:
             await store.ensure_schema()
@@ -553,14 +565,14 @@ if __name__ == "__main__":
 
             await store.relate(
                 namespace=ns,
-                from_name="陈艳",
+                from_name="张三",
                 to_name="合同项目A",
                 relation_label="负责",
                 from_entity_type="person",
                 to_entity_type="project",
             )
             result = await store.recall_neighbors(
-                namespace=ns, query="陈艳", hops=1, limit=10
+                namespace=ns, query="张三", hops=1, limit=10
             )
             print("seed:", result.seed.name if result.seed else None)
             print("neighbors:", [e.name for e in result.entities])

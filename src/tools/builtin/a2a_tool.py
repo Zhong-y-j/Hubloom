@@ -11,7 +11,7 @@ from tools.base import BaseTool
 
 
 class ListAgentsTool(BaseTool):
-    """列出 A2A_REMOTE_AGENTS 中已配置的远程 Agent。"""
+    """列出 HubloomConfig.a2a.remote_agents 中已配置的远程 Agent。"""
 
     name = "list_agents"
     description = (
@@ -31,7 +31,7 @@ class ListAgentsTool(BaseTool):
         if not agents:
             return (
                 "当前未配置远程 Agent。"
-                "请在环境变量 A2A_REMOTE_AGENTS 中配置 JSON 数组，"
+                "请在 config/env.yaml 的 a2a.remote_agents 中配置，"
                 '例如 [{"id":"hubloom-self","name":"Hubloom","url":"http://127.0.0.1:8001"}]。'
             )
 

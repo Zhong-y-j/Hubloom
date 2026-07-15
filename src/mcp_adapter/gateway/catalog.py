@@ -5,10 +5,7 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
-
-from dotenv import load_dotenv
 
 from mcp_adapter.spec.filter import summarize_by_tag
 from mcp_adapter.spec.loader import load_spec
@@ -157,30 +154,37 @@ def build_catalog_from_openapi(spec: dict) -> GatewayCatalog:
     return GatewayCatalog(groups=groups)
 
 
-def _env(key: str, default: str = "") -> str:
-    return (os.getenv(key) or default).strip()
+async def load_catalog(
+    *,
+    swagger_url: str | None = None,
+    base_url: str | None = None,  # noqa: ARG001 — 与 Config 对齐，catalog 只用 spec
+) -> GatewayCatalog:
+    """加载 OpenAPI 并生成目录。
 
-
-async def load_catalog() -> GatewayCatalog:
-    """从 .env 的 MCP_SWAGGER_URL 加载 spec 并生成目录。"""
-    load_dotenv()
-    swagger_url = _env(
-        "MCP_SWAGGER_URL",
-        "https://petstore.swagger.io/v2/swagger.json",
-    )
-    raw = await load_spec(swagger_url)
+    必须显式传入 ``swagger_url``（由 ``HubloomConfig.mcp_swagger_url`` 下传），
+    不读 MCP_SWAGGER_URL / dotenv，也不默默回落到 petstore。
+    """
+    url = (swagger_url or "").strip()
+    if not url:
+        raise ValueError(
+            "load_catalog requires swagger_url=... "
+            "(pass HubloomConfig.mcp_swagger_url / config/env.yaml 的 mcp.swagger_url)"
+        )
+    raw = await load_spec(url)
     openapi = normalize_openapi_spec(raw)
     return build_catalog_from_openapi(openapi)
 
 
 async def main() -> None:
-    catalog = await load_catalog()
+    from hubloom.config import HubloomConfig
+
+    cfg = HubloomConfig.from_file("config/env.yaml")
+    url = (cfg.mcp_swagger_url or "").strip()
+    catalog = await load_catalog(swagger_url=url, base_url=cfg.mcp_base_url)
     catalog.print_summary()
 
     # 与 filter.summarize_by_tag 交叉验证数量
-    raw = await load_spec(
-        _env("MCP_SWAGGER_URL", "https://petstore.swagger.io/v2/swagger.json")
-    )
+    raw = await load_spec(url)
     openapi = normalize_openapi_spec(raw)
     counts = summarize_by_tag(openapi)
 
@@ -194,7 +198,10 @@ async def main() -> None:
 
     print()
     print("=== 示例 ===")
-    dic = catalog.get_group(catalog.list_tags()[0])
+    tags = catalog.list_tags()
+    if not tags:
+        return
+    dic = catalog.get_group(tags[0])
     if dic:
         for t in dic.tools[:5]:
             print(f"  - {t.name} ({t.method} {t.path})")

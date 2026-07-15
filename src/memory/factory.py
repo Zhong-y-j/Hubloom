@@ -28,21 +28,21 @@ def create_memory_manager(
     vector_backend: VectorBackend = "qdrant",
     qdrant_url: str | None = None,
     qdrant_collection: str | None = None,
+    qdrant_api_key: str | None = None,
     embedder: Embedder | None = None,
+    embedder_api_key: str | None = None,
+    embedder_base_url: str | None = None,
+    embedder_model: str | None = None,
     graph_backend: GraphBackend = "neo4j",
     neo4j_uri: str | None = None,
+    neo4j_user: str | None = None,
+    neo4j_password: str | None = None,
+    neo4j_database: str | None = None,
+    neo4j_skip_dns_check: bool | None = None,
 ) -> MemoryManager:
     """创建 MemoryManager（conversation 必选；长期记忆按 backend 可选）。
 
-    Args:
-        namespace: 长期记忆命名空间；conversation 使用同一字符串作为 session_id
-        db_path: SQLite 路径（conversation 必选；sqlite 向量后端时 episodic/semantic 也用）
-        vector_backend: ``qdrant`` / ``sqlite`` 启用 episodic+semantic；``none`` 仅会话
-        qdrant_url: Qdrant 地址，默认读环境变量 ``QDRANT_URL``
-        qdrant_collection: 集合名，默认读 ``QDRANT_COLLECTION``
-        embedder: 向量嵌入器，默认 ``OpenAIEmbedder()``
-        graph_backend: ``neo4j`` 注册 associative；``none`` 不启用图记忆
-        neo4j_uri: Neo4j 地址，默认读 ``NEO4J_URI``
+    长期后端参数由调用方（HubloomConfig）显式传入，不读环境变量。
     """
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -55,10 +55,15 @@ def create_memory_manager(
     }
 
     if vector_backend == "qdrant":
-        emb = embedder or OpenAIEmbedder()
+        emb = embedder or OpenAIEmbedder(
+            api_key=embedder_api_key,
+            base_url=embedder_base_url,
+            model=embedder_model,
+        )
         qdrant_store = QdrantMemoryStore(
             url=qdrant_url,
             collection_name=qdrant_collection,
+            api_key=qdrant_api_key,
         )
         handlers["episodic"] = EpisodicQdrantHandler(
             store=qdrant_store,
@@ -72,7 +77,13 @@ def create_memory_manager(
         )
 
     if graph_backend == "neo4j":
-        neo4j_store = Neo4jStore(uri=neo4j_uri)
+        neo4j_store = Neo4jStore(
+            uri=neo4j_uri,
+            user=neo4j_user,
+            password=neo4j_password,
+            database=neo4j_database,
+            skip_dns_check=neo4j_skip_dns_check,
+        )
         handlers["associative"] = AssociativeHandler(
             store=neo4j_store,
             namespace=namespace,

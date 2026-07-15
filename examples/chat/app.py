@@ -199,7 +199,7 @@ async def _mount_a2a_routes(app: FastAPI) -> None:
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     global _hubloom
     setup_log()
-    _hubloom = await HubloomAgent.create(HubloomConfig.from_env())
+    _hubloom = await HubloomAgent.create(HubloomConfig.from_file("config/env.yaml"))
     await _mount_a2a_routes(_app)
     try:
         yield
@@ -459,7 +459,7 @@ def main() -> None:
     import uvicorn
 
     host = os.getenv("CORTEX_API_HOST", "0.0.0.0")
-    port = int(os.getenv("CORTEX_API_PORT", "8000"))
+    port = int(os.getenv("CORTEX_API_PORT", "8001"))
     uvicorn.run(
         "examples.chat.app:app",
         host=host,

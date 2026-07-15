@@ -41,9 +41,16 @@ from memory.factory import GraphBackend, VectorBackend
 from agents.adp.prompts import ASSESSOR_SYSTEM, THOUGHT_CONTEXT_SYSTEM
 
 
-async def load_knowledge_base_from_env():
-    """按环境变量初始化 RAG 知识库（可选入库）。"""
-    import os
+async def load_knowledge_base(
+    *,
+    rag_docs: str | None = None,
+    kb_dir: str | None = None,
+    enabled: bool | None = None,
+    embedder_api_key: str | None = None,
+    embedder_base_url: str | None = None,
+    embedder_model: str | None = None,
+):
+    """初始化 RAG 知识库。全部参数由调用方（HubloomConfig）显式传入。"""
     from pathlib import Path
 
     from retrieval.rag_bootstrap import (
@@ -55,12 +62,19 @@ async def load_knowledge_base_from_env():
 
     # adp → agents → src → 仓库根
     project_root = Path(__file__).resolve().parents[3]
-    rag_docs_raw = os.getenv("CORTEX_RAG_DOCS", "").strip()
-    if not is_rag_enabled(rag_docs_raw):
+    rag_docs_raw = (rag_docs or "").strip()
+    if enabled is False:
+        return None
+    if not is_rag_enabled(rag_docs_raw, enabled=enabled):
         return None
 
-    kb_dir = os.getenv("CORTEX_KB_DIR", "data/knowledge_db")
-    kb = create_knowledge_base(persist_dir=kb_dir)
+    resolved_kb = (kb_dir or "").strip() or "data/knowledge_db"
+    kb = create_knowledge_base(
+        persist_dir=resolved_kb,
+        embedder_api_key=embedder_api_key,
+        embedder_base_url=embedder_base_url,
+        embedder_model=embedder_model,
+    )
     doc_paths = parse_rag_doc_paths(rag_docs_raw, project_root=project_root)
     try:
         indexed = await ingest_rag_sources(kb, doc_paths)
@@ -68,7 +82,7 @@ async def load_knowledge_base_from_env():
             "cortex rag ready",
             indexed=indexed,
             doc_paths=len(doc_paths),
-            kb_dir=kb_dir,
+            kb_dir=resolved_kb,
         )
     except Exception as exc:
         memory_log(
@@ -77,6 +91,10 @@ async def load_knowledge_base_from_env():
             detail=clip(str(exc), 120),
         )
     return kb
+
+
+# 兼容旧名
+load_knowledge_base_from_env = load_knowledge_base
 
 
 class Route(str, Enum):
@@ -116,6 +134,17 @@ class CortexAgent:
         graph_backend: GraphBackend | None = None,
         api_catalog_prompt: str = "",
         memory_db_path: str | None = None,
+        qdrant_url: str | None = None,
+        qdrant_api_key: str | None = None,
+        qdrant_collection: str | None = None,
+        neo4j_uri: str | None = None,
+        neo4j_user: str | None = None,
+        neo4j_password: str | None = None,
+        neo4j_database: str | None = None,
+        neo4j_skip_dns_check: bool | None = None,
+        embedder_api_key: str | None = None,
+        embedder_base_url: str | None = None,
+        embedder_model: str | None = None,
     ) -> None:
         self.llm = llm
         self.tools = tools
@@ -150,6 +179,17 @@ class CortexAgent:
             db_path=resolved_db_path,
             vector_backend=resolved_vector,
             graph_backend=resolved_graph,
+            qdrant_url=qdrant_url,
+            qdrant_api_key=qdrant_api_key,
+            qdrant_collection=qdrant_collection,
+            neo4j_uri=neo4j_uri,
+            neo4j_user=neo4j_user,
+            neo4j_password=neo4j_password,
+            neo4j_database=neo4j_database,
+            neo4j_skip_dns_check=neo4j_skip_dns_check,
+            embedder_api_key=embedder_api_key,
+            embedder_base_url=embedder_base_url,
+            embedder_model=embedder_model,
         )
         self._memory_context = MemoryContextProvider(
             self._memory_manager,

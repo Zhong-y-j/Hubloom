@@ -15,7 +15,7 @@ from memory.memory_context import MemoryContextProvider
 from observability import setup_log
 
 NAMESPACE = "mem:tester_id:default"
-QUERY = "陈艳 合同项目A 付款 违约"
+QUERY = "张三 合同项目A 付款 违约"
 
 SYSTEM_PROMPT = (
     "你是 Hubloom 智能助手。\n"

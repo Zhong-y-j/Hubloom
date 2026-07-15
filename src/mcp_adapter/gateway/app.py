@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 from fastmcp import FastMCP
 
 from mcp_adapter.gateway.catalog import load_catalog
@@ -9,6 +11,17 @@ from mcp_adapter.auth import AuthPassthroughMiddleware
 from mcp_adapter.gateway.meta_tools import register_meta_tools
 from mcp_adapter.gateway.pool import BackendPool
 from mcp_adapter.gateway.router import BackendRouter
+
+
+def _child_swagger_url() -> str:
+    """子进程 env 由 Hubloom ``_mcp_child_env`` 注入。"""
+    url = (os.getenv("MCP_SWAGGER_URL") or "").strip()
+    if not url:
+        raise ValueError(
+            "MCP_SWAGGER_URL is not set in subprocess env "
+            "(Hubloom runtime must inject mcp.swagger_url via child_env)"
+        )
+    return url
 
 
 def build_gateway_mcp(catalog, router: BackendRouter) -> FastMCP:
@@ -26,7 +39,7 @@ def build_gateway_mcp(catalog, router: BackendRouter) -> FastMCP:
 
 
 async def run_gateway() -> None:
-    catalog = await load_catalog()
+    catalog = await load_catalog(swagger_url=_child_swagger_url())
     pool = BackendPool(catalog)
     router = BackendRouter(catalog, pool=pool)
 
@@ -40,7 +53,7 @@ async def run_gateway() -> None:
 
 async def debug_list_meta_tools() -> None:
     """本地调试：打印网关元工具列表（不要和 run_gateway 混用 stdio）。"""
-    catalog = await load_catalog()
+    catalog = await load_catalog(swagger_url=_child_swagger_url())
     router = BackendRouter(catalog)
     mcp = build_gateway_mcp(catalog, router)
     tools = await mcp.list_tools()

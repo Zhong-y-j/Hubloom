@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -22,6 +21,7 @@ from memory.store.consolidation_checkpoint_store import ConsolidationCheckpointS
 
 if TYPE_CHECKING:
     from core.provider import LLMProvider
+    from hubloom.config import HubloomConfig
 
 
 @dataclass(frozen=True)
@@ -32,17 +32,61 @@ class WorkerConfig:
     db_path: str = "data/memory.db"
     vector_backend: VectorBackend = "qdrant"
     graph_backend: GraphBackend = "none"
+    qdrant_url: str | None = None
+    qdrant_api_key: str | None = None
+    qdrant_collection: str | None = None
+    neo4j_uri: str | None = None
+    neo4j_user: str | None = None
+    neo4j_password: str | None = None
+    neo4j_database: str | None = None
+    neo4j_skip_dns_check: bool | None = None
+    embedder_api_key: str | None = None
+    embedder_base_url: str | None = None
+    openai_api_key: str | None = None
+    openai_model: str | None = None
+    openai_base_url: str | None = None
 
     @classmethod
-    def from_env(cls) -> WorkerConfig:
-        vector = os.getenv("CORTEX_ENABLE_LONG_TERM_MEMORY", "1").strip().lower()
-        enable_ltm = vector not in ("0", "false", "no", "off")
+    def from_hubloom_config(cls, cfg: "HubloomConfig") -> WorkerConfig:
+        """从 ``HubloomConfig`` 构造（YAML），不读 CORTEX_* / QDRANT_* env。"""
+        enable_ltm = bool(cfg.enable_long_term_memory)
+        min_turns = cfg.consolidate_min_turns if cfg.consolidate_min_turns is not None else 3
         return cls(
-            min_turns=max(1, int(os.getenv("CORTEX_CONSOLIDATE_MIN_TURNS", "3"))),
-            db_path=os.getenv("CORTEX_MEMORY_DB", "data/memory.db"),
+            min_turns=max(1, int(min_turns)),
+            db_path=(cfg.memory_db_path or "data/memory.db").strip() or "data/memory.db",
             vector_backend="qdrant" if enable_ltm else "none",
-            graph_backend="none",
+            graph_backend="neo4j" if enable_ltm else "none",
+            qdrant_url=cfg.qdrant_url,
+            qdrant_api_key=cfg.qdrant_api_key,
+            qdrant_collection=cfg.qdrant_collection,
+            neo4j_uri=cfg.neo4j_uri,
+            neo4j_user=cfg.neo4j_user,
+            neo4j_password=cfg.neo4j_password,
+            neo4j_database=cfg.neo4j_database,
+            neo4j_skip_dns_check=cfg.neo4j_skip_dns_check,
+            embedder_api_key=cfg.openai_api_key,
+            embedder_base_url=cfg.openai_base_url,
+            openai_api_key=cfg.openai_api_key,
+            openai_model=cfg.openai_model,
+            openai_base_url=cfg.openai_base_url,
         )
+
+    def memory_manager_kwargs(self) -> dict:
+        return {
+            "db_path": self.db_path,
+            "vector_backend": self.vector_backend,
+            "graph_backend": self.graph_backend,
+            "qdrant_url": self.qdrant_url,
+            "qdrant_api_key": self.qdrant_api_key,
+            "qdrant_collection": self.qdrant_collection,
+            "neo4j_uri": self.neo4j_uri,
+            "neo4j_user": self.neo4j_user,
+            "neo4j_password": self.neo4j_password,
+            "neo4j_database": self.neo4j_database,
+            "neo4j_skip_dns_check": self.neo4j_skip_dns_check,
+            "embedder_api_key": self.embedder_api_key,
+            "embedder_base_url": self.embedder_base_url,
+        }
 
 
 @dataclass
@@ -73,10 +117,10 @@ class MemoryMaintenanceWorker:
         self,
         llm: LLMProvider,
         *,
-        config: WorkerConfig | None = None,
+        config: WorkerConfig,
     ) -> None:
         self._llm = llm
-        self._config = config or WorkerConfig.from_env()
+        self._config = config
         self._conversation_store = ConversationSQLitesStore(self._config.db_path)
         self._checkpoint_store = ConsolidationCheckpointStore(self._config.db_path)
 
@@ -186,9 +230,7 @@ class MemoryMaintenanceWorker:
         try:
             mem = create_memory_manager(
                 namespace=session_id,
-                db_path=self._config.db_path,
-                vector_backend=self._config.vector_backend,
-                graph_backend=self._config.graph_backend,
+                **self._config.memory_manager_kwargs(),
             )
             consolidator = MemoryBatchConsolidator(mem, self._llm)
             write_result = await consolidator.consolidate_pending_turns(
@@ -231,9 +273,7 @@ class MemoryMaintenanceWorker:
     async def _run_maintenance(self, namespace: str) -> int:
         mem = create_memory_manager(
             namespace=namespace,
-            db_path=self._config.db_path,
-            vector_backend=self._config.vector_backend,
-            graph_backend=self._config.graph_backend,
+            **self._config.memory_manager_kwargs(),
         )
         evicted = await mem.run_maintenance()
         if evicted:

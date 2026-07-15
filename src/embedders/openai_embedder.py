@@ -1,24 +1,16 @@
 from __future__ import annotations
 
-import os
 from typing import Sequence
 
 from openai import AsyncOpenAI
 
 from .base import Embedder
-from dotenv import load_dotenv
 
-load_dotenv()
+_DEFAULT_EMBEDDING_MODEL = "text-embedding-v3"
 
 
 class OpenAIEmbedder(Embedder):
-    """OpenAI Embeddings 实现（方案 A）。
-
-    依赖环境变量：
-    - OPENAI_API_KEY（必需）
-    - OPENAI_BASE_URL（可选，兼容自建网关/代理）
-    - OPENAI_EMBEDDING_MODEL（可选，默认 text-embedding-3-small）
-    """
+    """OpenAI Embeddings：调用方显式传参，不读 OPENAI_* 环境变量。"""
 
     def __init__(
         self,
@@ -27,14 +19,17 @@ class OpenAIEmbedder(Embedder):
         base_url: str | None = None,
         model: str | None = None,
     ) -> None:
-        api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError("OPENAI_API_KEY is required for OpenAIEmbedder")
-        base_url = base_url or os.getenv("OPENAI_BASE_URL")
-        model = model or os.getenv("OPENAI_EMBEDDING_MODEL") or "text-embedding-v3"
+        key = (api_key or "").strip()
+        if not key:
+            raise ValueError(
+                "OpenAIEmbedder requires api_key=... "
+                "(pass HubloomConfig.openai_api_key)"
+            )
+        resolved_model = (model or "").strip() or _DEFAULT_EMBEDDING_MODEL
+        resolved_base = (base_url or "").strip() or None
 
-        self._model = model
-        self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        self._model = resolved_model
+        self._client = AsyncOpenAI(api_key=key, base_url=resolved_base)
 
     @property
     def model_name(self) -> str:

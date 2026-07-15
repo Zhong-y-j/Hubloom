@@ -14,10 +14,7 @@
     # 仅提炼，不淘汰
     PYTHONPATH=. uv run python -m memory.run_worker --consolidate-only
 
-环境变量：
-- ``CORTEX_CONSOLIDATE_MIN_TURNS``：触发提炼的最少未处理 USER 轮数（默认 3）
-- ``CORTEX_MEMORY_DB``：SQLite 路径
-- ``CORTEX_ENABLE_LONG_TERM_MEMORY``：0 时跳过 Qdrant 相关操作
+配置：``config/env.yaml``（``--config`` 可覆盖），不读 CORTEX_* 环境变量。
 """
 
 from __future__ import annotations
@@ -26,16 +23,21 @@ import argparse
 import asyncio
 
 from core.factory import create_llm
+from hubloom.config import HubloomConfig
 from memory.memory_worker import MemoryMaintenanceWorker, WorkerConfig
 from observability import setup_log
 
 
 async def _async_main(args: argparse.Namespace) -> None:
     setup_log()
-    worker = MemoryMaintenanceWorker(
-        create_llm(),
-        config=WorkerConfig.from_env(),
+    cfg = HubloomConfig.from_file(args.config)
+    worker_cfg = WorkerConfig.from_hubloom_config(cfg)
+    llm = create_llm(
+        api_key=worker_cfg.openai_api_key,
+        model=worker_cfg.openai_model,
+        base_url=worker_cfg.openai_base_url,
     )
+    worker = MemoryMaintenanceWorker(llm, config=worker_cfg)
     try:
         result = await worker.run_once(
             session_id=args.session,
@@ -67,6 +69,11 @@ async def _async_main(args: argparse.Namespace) -> None:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Hubloom 离线记忆 worker")
+    parser.add_argument(
+        "--config",
+        default="config/env.yaml",
+        help="Hubloom YAML 配置路径（默认 config/env.yaml）",
+    )
     parser.add_argument(
         "--session",
         help="只处理指定 session_id / namespace（默认扫描全部）",

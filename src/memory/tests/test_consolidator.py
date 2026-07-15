@@ -15,16 +15,16 @@ from memory.factory import create_memory_manager
 from observability import setup_log
 
 USER_MESSAGE = """\
-我叫陈艳，是法务部的，现在在上海总部办公。
+我叫张三，是法务部的，现在在上海总部办公。
 我们团队在跟「合同项目A」和「供应商B公司」谈采购框架协议，下周三（3月15日）前要出一版审查意见。
 我比较在意付款节点和违约责任，希望你之后帮我：回复尽量简洁、列要点时用编号。
 另外不要把我司内部的报价金额写进对外邮件草稿里。"""
 
 ASSISTANT_MESSAGE = """ """
 
-RECALL_QUERY_HYBRID = "陈艳 合同项目A 付款 违约"
+RECALL_QUERY_HYBRID = "张三 合同项目A 付款 违约"
 RECALL_QUERY_SEMANTIC = "回复风格 简洁 要点"
-RECALL_QUERY_GRAPH = "陈艳"
+RECALL_QUERY_GRAPH = "张三"
 
 NAMESPACE = "mem:tester_id:default"
 

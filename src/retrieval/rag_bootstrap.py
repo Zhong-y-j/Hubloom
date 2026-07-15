@@ -1,10 +1,11 @@
-"""RAG 环境配置与启动入库。"""
+"""RAG 启动入库：显式参数，不读 CORTEX_RAG_* / OPENAI_* 环境变量。"""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
+from embedders.base import Embedder
 from embedders.openai_embedder import OpenAIEmbedder
 from retrieval.knowledge_base import KnowledgeBase
 from observability import log
@@ -19,7 +20,7 @@ def parse_rag_doc_paths(
     *,
     project_root: Path | None = None,
 ) -> list[Path]:
-    """解析 ``CORTEX_RAG_DOCS``（逗号分隔的文件或目录路径）。"""
+    """解析文档路径列表（逗号分隔的文件或目录）。"""
     root = project_root or _PROJECT_ROOT
     paths: list[Path] = []
     for part in (raw or "").split(","):
@@ -33,15 +34,23 @@ def parse_rag_doc_paths(
     return paths
 
 
-def is_rag_enabled(rag_docs_raw: str | None = None) -> bool:
-    """配置了 ``CORTEX_RAG_DOCS`` 则启用；``CORTEX_ENABLE_RAG=0`` 可强制关闭。"""
-    explicit = os.getenv("CORTEX_ENABLE_RAG", "").strip().lower()
-    if explicit in ("0", "false", "no", "off"):
+def is_rag_enabled(
+    rag_docs_raw: str | None = None,
+    *,
+    enabled: bool | None = None,
+) -> bool:
+    """是否启用 RAG。
+
+    - ``enabled is False`` → 关
+    - ``enabled is True`` → 需有非空 docs
+    - ``enabled is None`` → 有非空 docs 则开
+    """
+    if enabled is False:
         return False
-    if explicit in ("1", "true", "yes", "on"):
-        return True
-    raw = rag_docs_raw if rag_docs_raw is not None else os.getenv("CORTEX_RAG_DOCS", "")
-    return bool(raw and raw.strip())
+    has_docs = bool((rag_docs_raw or "").strip())
+    if enabled is True:
+        return has_docs
+    return has_docs
 
 
 def collect_document_files(paths: list[Path]) -> list[Path]:
@@ -95,5 +104,18 @@ async def ingest_rag_sources(kb: KnowledgeBase, paths: list[Path]) -> int:
     return indexed
 
 
-def create_knowledge_base(*, persist_dir: str) -> KnowledgeBase:
-    return KnowledgeBase(embedder=OpenAIEmbedder(), persist_dir=persist_dir)
+def create_knowledge_base(
+    *,
+    persist_dir: str,
+    embedder: Embedder | None = None,
+    embedder_api_key: str | None = None,
+    embedder_base_url: str | None = None,
+    embedder_model: str | None = None,
+) -> KnowledgeBase:
+    """创建知识库；embedder 或 api_key 须由调用方提供。"""
+    resolved = embedder or OpenAIEmbedder(
+        api_key=embedder_api_key,
+        base_url=embedder_base_url,
+        model=embedder_model,
+    )
+    return KnowledgeBase(embedder=resolved, persist_dir=persist_dir)

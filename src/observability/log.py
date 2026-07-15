@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import builtins
-import os
 import sys
 import traceback
 from pathlib import Path
@@ -10,7 +9,7 @@ from loguru import logger
 
 _original_print = builtins.print
 _original_excepthook = sys.excepthook
-_LOG_FILE = Path(os.getenv("CORTEX_LOG_FILE", "logs/debug.log"))
+_DEFAULT_LOG_FILE = Path("logs/debug.log")
 
 # 文件日志含：相对路径、行号、函数名（便于定位代码）
 _FILE_LOG_FORMAT = (
@@ -29,10 +28,11 @@ def setup_log(
 ) -> Path:
     """配置日志：默认只写入 ``logs/debug.log``（不在控制台重复打日志）。
 
-    - ``log_uncaught=True``：未捕获异常（如 NameError）写入日志并保留终端 traceback
+    - ``file``：显式日志路径；缺省为 ``logs/debug.log``（不读环境变量）
+    - ``log_uncaught=True``：未捕获异常写入日志并保留终端 traceback
     - ``capture_print``：``print`` 内容写入日志；终端仍显示 print
     """
-    path = Path(file or _LOG_FILE)
+    path = Path(file or _DEFAULT_LOG_FILE)
     path.parent.mkdir(parents=True, exist_ok=True)
     level = (level or "INFO").upper()
 

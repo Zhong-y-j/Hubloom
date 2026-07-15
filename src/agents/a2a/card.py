@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from a2a.types import (
@@ -108,15 +107,28 @@ def _rule_based_polish(
     }
 
 
-async def build_agent_card(public_url: str, catalog: GatewayCatalog) -> AgentCard:
+async def build_agent_card(
+    public_url: str,
+    catalog: GatewayCatalog,
+    *,
+    openai_api_key: str | None = None,
+    openai_model: str | None = None,
+    openai_base_url: str | None = None,
+) -> AgentCard:
     """根据对外 URL + Swagger catalog 生成 Agent Card（有 Key 时 LLM 润色）。"""
     public_url = public_url.rstrip("/")
     skills = skills_from_catalog(catalog)
 
-    if (os.getenv("OPENAI_API_KEY") or "").strip():
-        polish = await polish_card_copy(catalog)
+    key = (openai_api_key or "").strip()
+    if key:
+        polish = await polish_card_copy(
+            catalog,
+            api_key=key,
+            model=openai_model,
+            base_url=openai_base_url,
+        )
     else:
-        a2a_log("card polish skipped", reason="OPENAI_API_KEY not in env")
+        a2a_log("card polish skipped", reason="openai_api_key not provided")
         polish = _rule_based_polish(skills, catalog)
     description, skills = _apply_polish(skills, polish)
 

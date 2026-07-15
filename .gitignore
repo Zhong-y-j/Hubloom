@@ -7,6 +7,10 @@ __pycache__/
 .env.*
 !.env.example
 
+# 本地 YAML 配置（含密钥）；模板保留 config/env.example.yaml
+config/env.yaml
+!config/env.example.yaml
+
 # 运行时数据（memory.db、knowledge_db、chroma 等）
 data/
 

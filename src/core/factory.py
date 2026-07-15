@@ -1,12 +1,8 @@
-"""根据配置创建具体 LLM 实例"""
+"""根据配置创建具体 LLM 实例（调用方显式传参，不读 OPENAI_* 环境变量）。"""
 
-import os
-from dotenv import load_dotenv
 from observability import log
 from .llm import LLM
 from .provider import LLMProvider
-
-load_dotenv()
 
 
 def _with_thinking_params(params: dict | None, *, enable_thinking: bool) -> dict:
@@ -30,12 +26,14 @@ def create_llm(
 ) -> LLMProvider:
 
     provider = provider.lower()
-    api_key = api_key or os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        log("create_llm failed", provider=provider, reason="OPENAI_API_KEY not set")
-        raise ValueError("OPENAI_API_KEY is not set")
-    base_url = base_url or os.getenv("OPENAI_BASE_URL")
-    model = model or os.getenv("OPENAI_MODEL")
+    key = (api_key or "").strip()
+    if not key:
+        log("create_llm failed", provider=provider, reason="api_key not provided")
+        raise ValueError(
+            "create_llm requires api_key=... "
+            "(pass HubloomConfig.openai_api_key or request context)"
+        )
+    api_key = key
     merged_params = _with_thinking_params(params, enable_thinking=enable_thinking)
     if provider == "openai":
         llm = LLM(
@@ -74,7 +72,14 @@ if __name__ == "__main__":
     import asyncio
 
     async def main():
-        llm = create_llm()
+        from hubloom.config import HubloomConfig
+
+        cfg = HubloomConfig.from_file("config/env.yaml")
+        llm = create_llm(
+            api_key=cfg.openai_api_key,
+            model=cfg.openai_model,
+            base_url=cfg.openai_base_url,
+        )
         messages = [
             Message(role=Role.USER, content="你好啊?"),
         ]

@@ -136,12 +136,8 @@ class HubloomAgent:
 
     @classmethod
     async def create(cls, config: HubloomConfig | None = None) -> HubloomAgent:
-        """异步构造：配置缺省时使用 ``HubloomConfig.from_env()``。
-
-        不要求用户 token；网关发现与 catalog 在此完成。
-        """
-        cfg = config if config is not None else HubloomConfig.from_env()
-        cls._apply_config_to_environ(cfg)
+        """异步构造。``config`` 缺省时读仓库根 ``config/env.yaml``。"""
+        cfg = config if config is not None else HubloomConfig.from_file("config/env.yaml")
 
         runtime = await build_runtime_async(
             enable_mcp=cfg.enable_mcp,
@@ -173,52 +169,22 @@ class HubloomAgent:
         """释放本实例持有的 MCP 等资源。"""
         await self._runtime.close()
 
-    @staticmethod
-    def _apply_config_to_environ(cfg: HubloomConfig) -> None:
-        """将进程级 config 写回 os.environ，供 catalog / 现有加载逻辑读取。
-
-        同进程多实例仍可能互抢全局 env；后续改为显式注入后可移除。
-        """
-        import os
-
-        def _set(key: str, value: str | None) -> None:
-            if value is not None and str(value).strip():
-                os.environ[key] = str(value).strip()
-
-        _set("OPENAI_API_KEY", cfg.openai_api_key)
-        _set("OPENAI_MODEL", cfg.openai_model)
-        _set("OPENAI_BASE_URL", cfg.openai_base_url)
-        _set("MCP_SWAGGER_URL", cfg.mcp_swagger_url)
-        _set("MCP_BASE_URL", cfg.mcp_base_url)
-        _set("MCP_AUTH_SCHEME", cfg.mcp_auth_scheme)
-        _set("MCP_TOKEN", cfg.mcp_token)
-        _set("CORTEX_MEMORY_DB", cfg.memory_db_path)
-        _set("CORTEX_KB_DIR", cfg.kb_dir)
-        _set("CORTEX_RAG_DOCS", cfg.rag_docs)
-        _set("CORTEX_PUBLIC_URL", cfg.public_url)
-        _set("A2A_REMOTE_AGENTS", cfg.a2a_remote_agents)
-        if cfg.enable_long_term_memory is not None:
-            os.environ["CORTEX_ENABLE_LONG_TERM_MEMORY"] = (
-                "1" if cfg.enable_long_term_memory else "0"
-            )
-        if cfg.enable_rag is not None:
-            os.environ["CORTEX_ENABLE_RAG"] = "1" if cfg.enable_rag else "0"
-
     def __repr__(self) -> str:
         mem = self._config.memory_db_path or "(default)"
         return f"HubloomAgent(memory_db_path={mem!r}, enable_mcp={self._config.enable_mcp})"
 
 
 async def main() -> None:
-    """本地冒烟：``uv run python -m hubloom.agent``（token 从 MCP_TOKEN / 参数传入）。"""
-    import os
-
+    """本地冒烟：``uv run python -m hubloom.agent``。"""
     from agents.events import FinalAnswerDeltaEvent, FinalAnswerEvent, TextDeltaEvent
 
-    cfg = HubloomConfig.from_env()
+    cfg = HubloomConfig.from_file("config/env.yaml")
     app = await HubloomAgent.create(cfg)
     try:
-        session = app.session("user-1", token=os.getenv("MCP_TOKEN"))
+        session = app.session(
+            "user-1",
+            token=cfg.mcp_token or cfg.a2a_static_token,
+        )
         async for event in session.run_stream("列出所有小区"):
             if isinstance(event, (FinalAnswerDeltaEvent, TextDeltaEvent)):
                 print(event.delta, end="", flush=True)

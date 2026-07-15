@@ -5,10 +5,6 @@
 
 from __future__ import annotations
 
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
 import uuid
 from typing import Any, Literal, Optional
 
@@ -27,17 +23,19 @@ from memory.models import EpisodicItem, SemanticItem
 from memory.types import LongTermMemoryType, MemorySource
 from memory.utils import content_hash, now_local_str
 
-# 默认相似度下限（cosine）；可按环境变量覆盖
+# 默认相似度下限（cosine）
 _DEFAULT_SCORE_THRESHOLD = 0.55
+_DEFAULT_QDRANT_URL = "http://localhost:6333"
+_DEFAULT_QDRANT_COLLECTION = "agentcortex_memory_v1024"
 
 
 class QdrantMemoryStore:
     """episodic + semantic 的 Qdrant 实现。
 
     Args:
-        url: Qdrant 服务地址，默认环境变量 ``QDRANT_URL`` 或 ``http://localhost:6333``
-        collection_name: 集合名，默认 ``QDRANT_COLLECTION`` 或 ``agentcortex_memory``
-        api_key: 可选 API Key（Qdrant Cloud）
+        url: Qdrant 服务地址（默认 localhost）
+        collection_name: 集合名
+        api_key: API Key（Qdrant Cloud 必需）
         distance: 距离度量，默认 COSINE
     Actions:
         add_episodic: 添加情景记忆
@@ -59,12 +57,16 @@ class QdrantMemoryStore:
         api_key: str | None = None,
         distance: Distance = Distance.COSINE,
     ) -> None:
-        self.api_key = api_key or os.getenv("QDRANT_API_KEY")
-        if not self.api_key:
-            raise ValueError("QDRANT_API_KEY is required for QdrantMemoryStore")
-        self.url = url or os.getenv("QDRANT_URL", "http://localhost:6333")
-        self.collection_name = collection_name or os.getenv(
-            "QDRANT_COLLECTION", "agentcortex_memory_v1024"
+        key = (api_key or "").strip()
+        if not key:
+            raise ValueError(
+                "QdrantMemoryStore requires api_key=... "
+                "(pass HubloomConfig.qdrant_api_key)"
+            )
+        self.api_key = key
+        self.url = (url or "").strip() or _DEFAULT_QDRANT_URL
+        self.collection_name = (
+            (collection_name or "").strip() or _DEFAULT_QDRANT_COLLECTION
         )
         self._distance = distance
         self._client = AsyncQdrantClient(url=self.url, api_key=self.api_key)
@@ -518,7 +520,14 @@ if __name__ == "__main__":
         emb = [0.1] * dim
         emb_alt = [0.11] * dim  # 略不同，用于 semantic 第二条
 
-        store = QdrantMemoryStore()
+        from hubloom.config import HubloomConfig
+
+        cfg = HubloomConfig.from_file("config/env.yaml")
+        store = QdrantMemoryStore(
+            url=cfg.qdrant_url,
+            collection_name=cfg.qdrant_collection,
+            api_key=cfg.qdrant_api_key,
+        )
         print("url:", store.url, "collection:", store.collection_name)
 
         exists_before = await store._client.collection_exists(store.collection_name)

@@ -32,7 +32,7 @@ async def main() -> None:
         memory_type="associative",
         content="居住",
         metadata={
-            "from_name": "陈艳",
+            "from_name": "张三",
             "to_name": "上海",
             "relation_label": "居住",
             "from_entity_type": "person",
@@ -57,7 +57,7 @@ async def main() -> None:
 
     graph_result = await mem.recall(
         memory_type="associative",
-        query="陈艳",
+        query="张三",
         top_k=10,
         filters={"include_memory_refs": False},
     )

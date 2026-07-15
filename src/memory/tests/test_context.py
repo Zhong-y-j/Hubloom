@@ -26,8 +26,8 @@ DOCUMENTS = [
     },
 ]
 
-GRAPH_SUMMARY = """种子实体: 陈艳 (person)
-- 陈艳 --[负责]--> 合同项目A
+GRAPH_SUMMARY = """种子实体: 张三 (person)
+- 张三 --[负责]--> 合同项目A
 - 实体 合同项目A (project)"""
 
 HISTORIES = [
