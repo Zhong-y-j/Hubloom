@@ -11,8 +11,16 @@ mkdir -p "$PID_DIR" "$LOG_DIR"
 
 HUBLOOM_PORT="${HUBLOOM_PORT:-8001}"
 HOTEL_PORT="${HOTEL_PORT:-9001}"
+TRANSPORT_HUBLOOM_PORT="${TRANSPORT_HUBLOOM_PORT:-8003}"
+ATTRACTION_HUBLOOM_PORT="${ATTRACTION_HUBLOOM_PORT:-8004}"
 HUBLOOM_URL="http://127.0.0.1:${HUBLOOM_PORT}"
 HOTEL_URL="http://127.0.0.1:${HOTEL_PORT}"
+TRANSPORT_HUBLOOM_URL="http://127.0.0.1:${TRANSPORT_HUBLOOM_PORT}"
+ATTRACTION_HUBLOOM_URL="http://127.0.0.1:${ATTRACTION_HUBLOOM_PORT}"
+# 酒店 Hubloom 可经 A2A 委托交通 / 景点 Agent（三系统互连）
+if [[ -z "${A2A_REMOTE_AGENTS:-}" ]]; then
+  A2A_REMOTE_AGENTS="[{\"id\":\"travel-transport\",\"name\":\"交通助手\",\"url\":\"${TRANSPORT_HUBLOOM_URL}\"},{\"id\":\"travel-attraction\",\"name\":\"景点助手\",\"url\":\"${ATTRACTION_HUBLOOM_URL}\"}]"
+fi
 
 pids_on_port() {
   # lsof 无匹配时 exit 1；pipefail + set -e 下须吞掉，否则脚本会静默退出
@@ -83,7 +91,9 @@ else
   rm -f "$PID_DIR/hubloom.pid"
   echo "启动 Hubloom → ${HUBLOOM_URL}"
   CORTEX_API_PORT="$HUBLOOM_PORT" \
+  CORTEX_PUBLIC_URL="$HUBLOOM_URL" \
   CORTEX_MEMORY_DB=data/memory-hotel.db \
+  A2A_REMOTE_AGENTS="$A2A_REMOTE_AGENTS" \
   PYTHONPATH=. \
   uv run python -m agents.api.app \
     >"$LOG_DIR/hubloom.log" 2>&1 &
@@ -118,6 +128,10 @@ echo "已启动："
 echo "  酒店登录页       ${HOTEL_URL}/login"
 echo "  酒店聊天页       ${HOTEL_URL}/chat"
 echo "  Hubloom（编排）  ${HUBLOOM_URL}"
+echo "  Agent Card       ${HUBLOOM_URL}/.well-known/agent-card.json"
+echo "  A2A 出站         travel-transport → ${TRANSPORT_HUBLOOM_URL}"
+echo "                   travel-attraction → ${ATTRACTION_HUBLOOM_URL}"
+echo "  （跨系统委托需交通 / 景点 Hubloom 已启动）"
 echo ""
 echo "日志："
 echo "  $LOG_DIR/hotel.log"

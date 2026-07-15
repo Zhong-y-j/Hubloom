@@ -14,12 +14,11 @@ Hubloom 跨系统编排演示：交通通行、酒店预定、旅行景点三个
 
 **预期链路：**
 
-1. Hubloom A1（行程协调）→ Assessor 路由到 Thought
-2. MCP `transport` → 查高铁延误与预计到达时间
-3. MCP `hotel` → 查酒店预订与入住冲突
-4. A2A `delegate_task` → Hubloom A2（景点服务 Agent）
-5. MCP `attraction` → 查故宫门票预约是否仍有效
-6. A1 汇总：能否按计划游玩 + 原因 + 建议
+1. 用户在任一系统聊天页提问 → 本系统 Hubloom 路由到 Thought
+2. 本地 MCP → 查本系统 API（交通 / 酒店 / 景点）
+3. A2A `delegate_task` → 委托另外两个 Hubloom Agent
+4. 对方 Agent 经各自 MCP 查询后返回
+5. 入口 Agent 汇总：能否按计划游玩 + 原因 + 建议
 
 **备用单系统话术（证明各系统可独立查询）：**
 
@@ -32,13 +31,33 @@ Hubloom 跨系统编排演示：交通通行、酒店预定、旅行景点三个
 
 | 系统 | 目录 | 职责 | Hubloom 接入方式 |
 |------|------|------|------------------|
-| 交通通行 | `mocks/transport/` | 行程、高铁/航班状态 | A1 MCP（tag: `transport`） |
-| 酒店预定 | `mocks/hotel/` | 预订、入住政策 | A1 MCP（tag: `hotel`） |
-| 旅行景点 | `mocks/attraction/` | 门票预约、改期政策 | A2 MCP（tag: `attraction`）+ A1 A2A 委托 |
+| 交通通行 | `mocks/transport/` | 行程、高铁/航班状态 | 独立 Hubloom（8003）+ 本地 MCP |
+| 酒店预定 | `mocks/hotel/` | 预订、入住政策 | 独立 Hubloom（8001）+ 本地 MCP |
+| 旅行景点 | `mocks/attraction/` | 门票预约、改期政策 | 独立 Hubloom（8004）+ 本地 MCP |
 
-三个系统**逻辑与代码分治**；联调时经 `gateway/` 聚合为统一 MCP 入口（贴近企业 API 网关）。
+三个系统**逻辑与代码分治**；各 Hubloom 经 **A2A 三向互连**（每个实例出站指向另外两个），可从任一聊天页发起跨系统编排。联调时还可经 `gateway/` 聚合为统一 MCP 入口（贴近企业 API 网关）。
 
-### 单系统演示（当前可用）
+### 一键启动（跨系统 + A2A）
+
+在 **Hubloom 项目根目录** 执行：
+
+```bash
+./examples/travel/scripts/start-travel-demo.sh
+```
+
+停止：
+
+```bash
+./examples/travel/scripts/stop-travel-demo.sh
+```
+
+按 **交通 → 景点 → 酒店** 顺序启动；三个 Hubloom（8001 / 8003 / 8004）**A2A 互连**，可从任一聊天页做跨系统演示：
+
+- 交通 http://127.0.0.1:9003/chat
+- 景点 http://127.0.0.1:9004/chat
+- 酒店 http://127.0.0.1:9001/chat
+
+### 单系统演示
 
 | 系统 | 启动脚本 | 登录页 | Hubloom 端口 |
 |------|----------|--------|--------------|
@@ -46,7 +65,7 @@ Hubloom 跨系统编排演示：交通通行、酒店预定、旅行景点三个
 | 交通 | `./examples/travel/scripts/start-transport-demo.sh` | http://127.0.0.1:9003/login | 8003 |
 | 景点 | `./examples/travel/scripts/start-attraction-demo.sh` | http://127.0.0.1:9004/login | 8004 |
 
-三个演示可独立运行，互不依赖；停止脚本分别为 `stop-hotel-demo.sh`、`stop-transport-demo.sh`、`stop-attraction-demo.sh`。
+三个演示可独立运行；**跨系统编排**需另外两个 Hubloom 也已启动。停止脚本分别为 `stop-hotel-demo.sh`、`stop-transport-demo.sh`、`stop-attraction-demo.sh`。
 
 ---
 

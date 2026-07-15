@@ -11,8 +11,16 @@ mkdir -p "$PID_DIR" "$LOG_DIR"
 
 HUBLOOM_PORT="${HUBLOOM_PORT:-8004}"
 ATTRACTION_PORT="${ATTRACTION_PORT:-9004}"
+HOTEL_HUBLOOM_PORT="${HOTEL_HUBLOOM_PORT:-8001}"
+TRANSPORT_HUBLOOM_PORT="${TRANSPORT_HUBLOOM_PORT:-8003}"
 HUBLOOM_URL="http://127.0.0.1:${HUBLOOM_PORT}"
 ATTRACTION_URL="http://127.0.0.1:${ATTRACTION_PORT}"
+HOTEL_HUBLOOM_URL="http://127.0.0.1:${HOTEL_HUBLOOM_PORT}"
+TRANSPORT_HUBLOOM_URL="http://127.0.0.1:${TRANSPORT_HUBLOOM_PORT}"
+# 景点 Hubloom 可经 A2A 委托酒店 / 交通 Agent（三系统互连）
+if [[ -z "${A2A_REMOTE_AGENTS:-}" ]]; then
+  A2A_REMOTE_AGENTS="[{\"id\":\"travel-hotel\",\"name\":\"酒店助手\",\"url\":\"${HOTEL_HUBLOOM_URL}\"},{\"id\":\"travel-transport\",\"name\":\"交通助手\",\"url\":\"${TRANSPORT_HUBLOOM_URL}\"}]"
+fi
 
 pids_on_port() {
   lsof -tiTCP:"$1" -sTCP:LISTEN 2>/dev/null | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//' || true
@@ -82,7 +90,9 @@ else
   rm -f "$PID_DIR/hubloom-attraction.pid"
   echo "启动 Hubloom → ${HUBLOOM_URL}"
   CORTEX_API_PORT="$HUBLOOM_PORT" \
+  CORTEX_PUBLIC_URL="$HUBLOOM_URL" \
   CORTEX_MEMORY_DB=data/memory-attraction.db \
+  A2A_REMOTE_AGENTS="$A2A_REMOTE_AGENTS" \
   PYTHONPATH=. \
   uv run python -m agents.api.app \
     >"$LOG_DIR/hubloom-attraction.log" 2>&1 &
@@ -117,6 +127,10 @@ echo "已启动："
 echo "  景点登录页       ${ATTRACTION_URL}/login"
 echo "  景点聊天页       ${ATTRACTION_URL}/chat"
 echo "  Hubloom（编排）  ${HUBLOOM_URL}"
+echo "  Agent Card       ${HUBLOOM_URL}/.well-known/agent-card.json"
+echo "  A2A 出站         travel-hotel → ${HOTEL_HUBLOOM_URL}"
+echo "                   travel-transport → ${TRANSPORT_HUBLOOM_URL}"
+echo "  （跨系统委托需酒店 / 交通 Hubloom 已启动）"
 echo ""
 echo "日志："
 echo "  $LOG_DIR/attraction.log"

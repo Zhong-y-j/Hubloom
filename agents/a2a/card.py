@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+from typing import Any
+
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
@@ -10,6 +13,7 @@ from a2a.types import (
 )
 
 from agents.a2a.card_polish import polish_card_copy
+from agents.agent_log import a2a_log
 from mcp_adapter.gateway.catalog import GatewayCatalog, GroupCatalog
 
 _MAX_EXAMPLES = 2
@@ -81,12 +85,39 @@ def _apply_polish(
     return polish["agent_description"], polished_skills
 
 
+def _rule_based_polish(
+    skills: list[AgentSkill],
+    catalog: GatewayCatalog,
+) -> dict[str, Any]:
+    """无 OPENAI_API_KEY 时用规则文案，避免启动阶段依赖 .env。"""
+    tags = catalog.list_tags()
+    if tags:
+        summary = f"Hubloom agent with OpenAPI groups: {', '.join(tags)}"
+    else:
+        summary = "Hubloom agent (configure MCP Swagger to expose skills)"
+    return {
+        "agent_description": summary,
+        "skills": [
+            {
+                "id": skill.id,
+                "description": skill.description,
+                "examples": list(skill.examples),
+            }
+            for skill in skills
+        ],
+    }
+
+
 async def build_agent_card(public_url: str, catalog: GatewayCatalog) -> AgentCard:
-    """根据对外 URL + Swagger catalog 生成 Agent Card（含 LLM 润色）。"""
+    """根据对外 URL + Swagger catalog 生成 Agent Card（有 Key 时 LLM 润色）。"""
     public_url = public_url.rstrip("/")
     skills = skills_from_catalog(catalog)
 
-    polish = await polish_card_copy(catalog)
+    if (os.getenv("OPENAI_API_KEY") or "").strip():
+        polish = await polish_card_copy(catalog)
+    else:
+        a2a_log("card polish skipped", reason="OPENAI_API_KEY not in env")
+        polish = _rule_based_polish(skills, catalog)
     description, skills = _apply_polish(skills, polish)
 
     return AgentCard(
