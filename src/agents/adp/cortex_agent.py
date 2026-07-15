@@ -130,7 +130,7 @@ class CortexAgent:
         self._include_graph_memory = include_graph_memory
         self._last_outcome: TurnOutcome | None = None
 
-        from agents.app.session import DEFAULT_MEMORY_DB, format_session_id
+        from hubloom.session import DEFAULT_MEMORY_DB, format_session_id
 
         self.session_id = (session_id or "").strip() or "tester_id"
         self.namespace = format_session_id(self.session_id)

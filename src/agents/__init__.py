@@ -1,6 +1,6 @@
 """Hubloom 编排层对外入口。
 
-重量级符号（``CortexAgent``、``CortexRuntime`` 等）请从子包显式导入，避免 ``import agents`` 时拉起整条链路。
+重量级符号请从子包显式导入（编排用 ``agents.adp``，运行时装配用 ``hubloom``）。
 """
 
 from agents.events import AgentEvent, ErrorEvent, FinalAnswerEvent, ThoughtDeltaEvent

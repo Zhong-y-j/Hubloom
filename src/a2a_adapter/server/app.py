@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
     from agents.a2a.bridge import run_a2a_turn
     from agents.a2a.card import build_agent_card
-    from agents.app.bootstrap import build_runtime_async
+    from hubloom.runtime import build_runtime_async
     from mcp_adapter.gateway.catalog import load_catalog
 
     async def _make_app() -> Starlette:

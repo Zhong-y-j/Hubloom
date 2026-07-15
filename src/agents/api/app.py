@@ -22,8 +22,9 @@ from agents.api.schemas import (
     ChatRequest,
     ChatResponse,
 )
-from agents.app.bootstrap import CortexRuntime, build_runtime_async
-from agents.app.session import (
+from hubloom import HubloomAgent, HubloomConfig, HubloomSession
+from hubloom.runtime import CortexRuntime, build_runtime_async
+from hubloom.session import (
     DEFAULT_MEMORY_DB,
     DEFAULT_SESSION_ID,
     ENABLE_LONG_TERM_MEMORY,
@@ -32,14 +33,19 @@ from agents.app.session import (
     SESSION_ID_TEMPLATE,
     format_session_id,
 )
-from agents.adp.cortex_agent import CortexAgent
 from agents.agent_log import a2a_log, cortex_log
 from agents.events import ErrorEvent
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log
 
-_runtime: CortexRuntime | None = None
+_hubloom: HubloomAgent | None = None
 _agent_lock = asyncio.Lock()
+
+
+def _runtime() -> CortexRuntime | None:
+    return None if _hubloom is None else _hubloom.runtime
+
+
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _NO_CACHE = "no-cache, no-store, must-revalidate"
 _RUNTIME_CONFIG_KEYS = (
@@ -73,8 +79,22 @@ def _resolve_session_id(body_session: str | None, header_session: str | None) ->
     return format_session_id(_raw_session_key(body_session, header_session))
 
 
-def _apply_client_context(ctx: ClientHeaderContext, *, session_id: str) -> None:
-    set_request_context(session_id=session_id, **ctx)
+def _session_from_client(
+    session_key: str,
+    client_ctx: ClientHeaderContext,
+) -> HubloomSession:
+    """HTTP：先写入演示用 LLM/Swagger 覆盖，再 session(session_id, token)。"""
+    if _hubloom is None:
+        raise RuntimeError("HubloomAgent 尚未就绪")
+    set_request_context(
+        openai_api_key=client_ctx["openai_api_key"],
+        openai_model=client_ctx["openai_model"],
+        openai_base_url=client_ctx["openai_base_url"],
+        mcp_auth_scheme=client_ctx["mcp_auth_scheme"],
+        mcp_swagger_url=client_ctx["mcp_swagger_url"],
+        mcp_base_url=client_ctx["mcp_base_url"],
+    )
+    return _hubloom.session(session_key, token=client_ctx["bearer_token"])
 
 
 def _clean_config_value(value: str | None) -> str | None:
@@ -154,7 +174,7 @@ async def _mount_a2a_routes(app: FastAPI) -> None:
 
     async def run_turn(query: str, task_id: str, on_stream) -> str:
         # 始终用当前全局 runtime（/v1/config/apply 重建后仍有效）
-        runtime = _runtime
+        runtime = _runtime()
         if runtime is None:
             raise RuntimeError("CortexRuntime 尚未就绪")
         return await run_a2a_turn(
@@ -177,16 +197,16 @@ async def _mount_a2a_routes(app: FastAPI) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    global _runtime
+    global _hubloom
     setup_log()
-    _runtime = await build_runtime_async()
+    _hubloom = await HubloomAgent.create(HubloomConfig.from_env())
     await _mount_a2a_routes(_app)
     try:
         yield
     finally:
-        if _runtime is not None:
-            await _runtime.close()
-        _runtime = None
+        if _hubloom is not None:
+            await _hubloom.close()
+        _hubloom = None
 
 
 app = FastAPI(
@@ -230,9 +250,12 @@ async def client_config() -> dict[str, str | bool]:
 @app.post("/v1/config/apply", response_model=ApplyConfigResponse)
 async def apply_client_config(config: ApplyConfigRequest) -> ApplyConfigResponse:
     """应用前端体验配置，并重建 MCP runtime 以加载新的 Swagger。"""
-    global _runtime
+    global _hubloom
 
     async with _agent_lock:
+        if _hubloom is None:
+            raise HTTPException(status_code=503, detail="运行时尚未初始化")
+
         updates = _config_env_updates(config)
         snapshot = {key: os.environ.get(key) for key in _RUNTIME_CONFIG_KEYS}
         os.environ.update(updates)
@@ -250,7 +273,7 @@ async def apply_client_config(config: ApplyConfigRequest) -> ApplyConfigResponse
                 base_url=base_url or None,
             )
             catalog = build_catalog_from_openapi(openapi)
-            new_runtime = await build_runtime_async()
+            new_runtime = await build_runtime_async(config=_hubloom.config)
             if new_runtime.mcp_bindings is None:
                 await new_runtime.close()
                 raise RuntimeError("MCP 网关启动失败，请检查 Swagger / Base URL")
@@ -261,10 +284,9 @@ async def apply_client_config(config: ApplyConfigRequest) -> ApplyConfigResponse
                 detail=f"连接 Swagger 失败：{exc}",
             ) from exc
 
-        old_runtime = _runtime
-        _runtime = new_runtime
-        if old_runtime is not None:
-            await old_runtime.close()
+        old_runtime = _hubloom.runtime
+        _hubloom.replace_runtime(new_runtime)
+        await old_runtime.close()
 
         return ApplyConfigResponse(
             status="ok",
@@ -288,7 +310,7 @@ async def chat(
     x_mcp_swagger_url: str | None = Header(default=None, alias="X-MCP-Swagger-Url"),
     x_mcp_base_url: str | None = Header(default=None, alias="X-MCP-Base-Url"),
 ):
-    if _runtime is None:
+    if _hubloom is None:
         raise HTTPException(status_code=503, detail="运行时尚未初始化")
 
     message = body.message.strip()
@@ -351,11 +373,12 @@ async def chat_history(
     authorization: str | None = Header(default=None),
     x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
 ) -> ChatHistoryResponse:
-    if _runtime is None:
+    if _hubloom is None:
         raise HTTPException(status_code=503, detail="运行时尚未初始化")
 
     resolved = _resolve_session_id(session_id, x_session_id)
-    db_path = _runtime.memory_db_path if _runtime else DEFAULT_MEMORY_DB
+    runtime = _runtime()
+    db_path = runtime.memory_db_path if runtime else DEFAULT_MEMORY_DB
     store = ConversationSQLitesStore(db_path)
     try:
         rows = await asyncio.to_thread(store.get_chat_history, resolved)
@@ -378,12 +401,9 @@ async def _stream_chat(
     client_ctx: ClientHeaderContext,
 ) -> AsyncIterator[str]:
     async with _agent_lock:
-        _apply_client_context(client_ctx, session_id=session_id)
-        runtime = _runtime
-        assert runtime is not None
-        agent = runtime.create_agent(session_key)
+        sess = _session_from_client(session_key, client_ctx)
         try:
-            async for ev in agent.run_stream(message):
+            async for ev in sess.run_stream(message):
                 mapped = event_to_sse(ev)
                 if mapped is not None:
                     name, payload = mapped
@@ -392,7 +412,7 @@ async def _stream_chat(
                 if isinstance(ev, ErrorEvent) and not ev.recoverable:
                     return
 
-            outcome = agent.get_last_outcome()
+            outcome = sess.get_last_outcome()
             if outcome is not None:
                 name, payload = turn_complete_payload(
                     route=outcome.route.value,
@@ -415,18 +435,15 @@ async def _run_chat_once(
     client_ctx: ClientHeaderContext,
 ) -> ChatResponse:
     async with _agent_lock:
-        _apply_client_context(client_ctx, session_id=session_id)
-        runtime = _runtime
-        assert runtime is not None
-        agent: CortexAgent = runtime.create_agent(session_key)
+        sess = _session_from_client(session_key, client_ctx)
         try:
-            async for ev in agent.run_stream(message):
+            async for ev in sess.run_stream(message):
                 if isinstance(ev, ErrorEvent) and not ev.recoverable:
                     raise HTTPException(status_code=500, detail=ev.error)
         finally:
             clear_request_context()
 
-    outcome = agent.get_last_outcome()
+    outcome = sess.get_last_outcome()
     if outcome is None:
         raise HTTPException(status_code=500, detail="未收到编排结果")
 
