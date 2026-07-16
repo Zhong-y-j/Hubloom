@@ -52,7 +52,7 @@ flowchart LR
 | 模块 | 作用 |
 |------|------|
 | Web 对话页 | 填写 API Key / Swagger；密钥仅存浏览器；展示工具与远程过程 |
-| FastAPI | `/v1/chat`、`/v1/config/apply`、会话历史、**A2A 路由与 Agent Card** |
+| FastAPI | `/v1/chat`、`/v1/mcp/status`、会话历史、**A2A 路由与 Agent Card** |
 | CortexAgent | Assessor 路由 → Chat 快答 / Thought 深思考；入站 A2A 复用同一编排 |
 | MCP 层 | Swagger 转工具，代理调用企业 API |
 | A2A Client | Thought 工具 `list_agents` / `delegate_task` → 远程 Agent |

@@ -13,17 +13,12 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 from starlette.staticfiles import StaticFiles
 
 from .client_headers import ClientHeaderContext, parse_client_headers
-from hubloom.context import clear_request_context, set_request_context
+from hubloom.context import clear_request_context
 from agents.sse import event_to_sse, format_sse, turn_complete_payload
 from .history import ChatHistoryResponse, messages_for_display
-from .schemas import (
-    ApplyConfigRequest,
-    ApplyConfigResponse,
-    ChatRequest,
-    ChatResponse,
-)
+from .schemas import ChatRequest, ChatResponse, McpStatusResponse
 from hubloom import HubloomAgent, HubloomConfig, HubloomSession
-from hubloom.runtime import CortexRuntime, build_runtime_async
+from hubloom.runtime import CortexRuntime
 from hubloom.session import (
     DEFAULT_MEMORY_DB,
     DEFAULT_SESSION_ID,
@@ -48,14 +43,6 @@ def _runtime() -> CortexRuntime | None:
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 _NO_CACHE = "no-cache, no-store, must-revalidate"
-_RUNTIME_CONFIG_KEYS = (
-    "OPENAI_MODEL",
-    "OPENAI_BASE_URL",
-    "MCP_SWAGGER_URL",
-    "MCP_BASE_URL",
-    "MCP_AUTH_SCHEME",
-)
-_DEFAULT_SWAGGER_URL = "https://petstore.swagger.io/v2/swagger.json"
 
 
 class NoCacheStaticFiles(StaticFiles):
@@ -83,51 +70,10 @@ def _session_from_client(
     session_key: str,
     client_ctx: ClientHeaderContext,
 ) -> HubloomSession:
-    """HTTP：先写入演示用 LLM/Swagger 覆盖，再 session(session_id, token)。"""
+    """HTTP：仅透传业务 Token；LLM / Swagger 来自启动时的 HubloomConfig。"""
     if _hubloom is None:
         raise RuntimeError("HubloomAgent 尚未就绪")
-    set_request_context(
-        openai_api_key=client_ctx["openai_api_key"],
-        openai_model=client_ctx["openai_model"],
-        openai_base_url=client_ctx["openai_base_url"],
-        mcp_auth_scheme=client_ctx["mcp_auth_scheme"],
-        mcp_swagger_url=client_ctx["mcp_swagger_url"],
-        mcp_base_url=client_ctx["mcp_base_url"],
-    )
     return _hubloom.session(session_key, token=client_ctx["bearer_token"])
-
-
-def _clean_config_value(value: str | None) -> str | None:
-    text = (value or "").strip()
-    return text or None
-
-
-def _env_value(key: str, default: str = "") -> str:
-    return (os.getenv(key) or default).strip()
-
-
-def _config_env_updates(config: ApplyConfigRequest) -> dict[str, str]:
-    """Only non-secret runtime settings are applied to process env."""
-    pairs = {
-        "OPENAI_MODEL": config.openai_model,
-        "OPENAI_BASE_URL": config.openai_base_url,
-        "MCP_SWAGGER_URL": config.mcp_swagger_url,
-        "MCP_BASE_URL": config.mcp_base_url,
-        "MCP_AUTH_SCHEME": config.mcp_auth_scheme,
-    }
-    return {
-        key: value
-        for key, raw in pairs.items()
-        if (value := _clean_config_value(raw)) is not None
-    }
-
-
-def _restore_env(snapshot: dict[str, str | None]) -> None:
-    for key, value in snapshot.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
 
 
 def _public_base_url() -> str:
@@ -150,8 +96,11 @@ async def _mount_a2a_routes(app: FastAPI) -> None:
     from mcp_adapter.gateway.catalog import GatewayCatalog, load_catalog
 
     public_url = _public_base_url()
+    cfg = None if _hubloom is None else _hubloom.config
+    swagger_url = "" if cfg is None else (cfg.mcp_swagger_url or "").strip()
+    base_url = None if cfg is None else cfg.mcp_base_url
     try:
-        catalog = await load_catalog()
+        catalog = await load_catalog(swagger_url=swagger_url, base_url=base_url)
     except Exception as exc:
         a2a_log(
             "a2a mount skipped",
@@ -173,7 +122,6 @@ async def _mount_a2a_routes(app: FastAPI) -> None:
         return
 
     async def run_turn(query: str, task_id: str, on_stream) -> str:
-        # 始终用当前全局 runtime（/v1/config/apply 重建后仍有效）
         runtime = _runtime()
         if runtime is None:
             raise RuntimeError("CortexRuntime 尚未就绪")
@@ -247,54 +195,56 @@ async def client_config() -> dict[str, str | bool]:
     }
 
 
-@app.post("/v1/config/apply", response_model=ApplyConfigResponse)
-async def apply_client_config(config: ApplyConfigRequest) -> ApplyConfigResponse:
-    """应用前端体验配置，并重建 MCP runtime 以加载新的 Swagger。"""
-    global _hubloom
+@app.get("/v1/mcp/status", response_model=McpStatusResponse)
+async def mcp_status() -> McpStatusResponse:
+    """返回启动时从 env.yaml 加载的 MCP / 运行时状态（不接受前端覆盖）。"""
+    if _hubloom is None:
+        raise HTTPException(status_code=503, detail="运行时尚未初始化")
 
-    async with _agent_lock:
-        if _hubloom is None:
-            raise HTTPException(status_code=503, detail="运行时尚未初始化")
+    runtime = _runtime()
+    cfg = _hubloom.config
+    swagger_url = (cfg.mcp_swagger_url or "").strip()
+    base_url = (cfg.mcp_base_url or "").strip()
+    mcp_ready = runtime is not None and runtime.mcp_bindings is not None
 
-        updates = _config_env_updates(config)
-        snapshot = {key: os.environ.get(key) for key in _RUNTIME_CONFIG_KEYS}
-        os.environ.update(updates)
-
-        swagger_url = _env_value("MCP_SWAGGER_URL", _DEFAULT_SWAGGER_URL)
-        base_url = _env_value("MCP_BASE_URL")
-
+    group_count = 0
+    tool_count = 0
+    detail = ""
+    if mcp_ready and swagger_url:
         try:
-            from mcp_adapter.gateway.catalog import build_catalog_from_openapi
+            from mcp_adapter.gateway.catalog import load_catalog
             from mcp_adapter.spec.filter import count_operations
-            from mcp_adapter.spec.pipeline import prepare_openapi
 
-            openapi, resolved_base_url = await prepare_openapi(
-                swagger_url,
+            catalog = await load_catalog(
+                swagger_url=swagger_url,
                 base_url=base_url or None,
             )
-            catalog = build_catalog_from_openapi(openapi)
-            new_runtime = await build_runtime_async(config=_hubloom.config)
-            if new_runtime.mcp_bindings is None:
-                await new_runtime.close()
-                raise RuntimeError("MCP 网关启动失败，请检查 Swagger / Base URL")
+            group_count = len(catalog.groups)
+            tool_count = sum(len(g.tools) for g in catalog.groups.values())
+            if tool_count == 0:
+                # catalog 无 tools 时退回 operations 计数
+                from mcp_adapter.spec.pipeline import prepare_openapi
+
+                openapi, resolved = await prepare_openapi(
+                    swagger_url, base_url=base_url or None
+                )
+                tool_count = count_operations(openapi)
+                if resolved:
+                    base_url = resolved
         except Exception as exc:
-            _restore_env(snapshot)
-            raise HTTPException(
-                status_code=400,
-                detail=f"连接 Swagger 失败：{exc}",
-            ) from exc
+            detail = f"MCP 已连接，但读取目录失败：{exc}"
+    elif not mcp_ready:
+        detail = "服务端 MCP 未就绪，请检查 config/env.yaml 中的 mcp.swagger_url"
 
-        old_runtime = _hubloom.runtime
-        _hubloom.replace_runtime(new_runtime)
-        await old_runtime.close()
-
-        return ApplyConfigResponse(
-            status="ok",
-            swagger_url=swagger_url,
-            base_url=resolved_base_url,
-            group_count=len(catalog.groups),
-            tool_count=count_operations(openapi),
-        )
+    return McpStatusResponse(
+        status="ok" if mcp_ready else "error",
+        mcp_ready=mcp_ready,
+        swagger_url=swagger_url,
+        base_url=base_url,
+        group_count=group_count,
+        tool_count=tool_count,
+        detail=detail,
+    )
 
 
 @app.post("/v1/chat")
@@ -302,13 +252,7 @@ async def chat(
     body: ChatRequest,
     authorization: str | None = Header(default=None),
     x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
-    x_openai_api_key: str | None = Header(default=None, alias="X-OpenAI-Api-Key"),
-    x_openai_model: str | None = Header(default=None, alias="X-OpenAI-Model"),
-    x_openai_base_url: str | None = Header(default=None, alias="X-OpenAI-Base-Url"),
     x_mcp_token: str | None = Header(default=None, alias="X-MCP-Token"),
-    x_mcp_auth_scheme: str | None = Header(default=None, alias="X-MCP-Auth-Scheme"),
-    x_mcp_swagger_url: str | None = Header(default=None, alias="X-MCP-Swagger-Url"),
-    x_mcp_base_url: str | None = Header(default=None, alias="X-MCP-Base-Url"),
 ):
     if _hubloom is None:
         raise HTTPException(status_code=503, detail="运行时尚未初始化")
@@ -321,30 +265,28 @@ async def chat(
     session_id = format_session_id(raw_key)
     client_ctx = parse_client_headers(
         authorization=authorization,
-        x_openai_api_key=x_openai_api_key,
-        x_openai_model=x_openai_model,
-        x_openai_base_url=x_openai_base_url,
         x_mcp_token=x_mcp_token,
-        x_mcp_auth_scheme=x_mcp_auth_scheme,
-        x_mcp_swagger_url=x_mcp_swagger_url,
-        x_mcp_base_url=x_mcp_base_url,
     )
-    if not client_ctx["openai_api_key"]:
+    if not client_ctx["bearer_token"]:
         raise HTTPException(
             status_code=400,
-            detail="请在前端填写 OPENAI_API_KEY，或在服务端配置环境变量",
+            detail="请在前端填写业务 Token（X-MCP-Token / Authorization）",
         )
+    session_key = (raw_key or "").strip()
+    if not session_key:
+        raise HTTPException(status_code=400, detail="请填写用户 ID（session_id）")
+
     cortex_log(
         "chat client auth",
-        has_bearer=bool(client_ctx["bearer_token"]),
-        scheme=client_ctx["mcp_auth_scheme"],
+        has_bearer=True,
+        session_key=session_key[:32],
     )
 
     if body.stream:
         return StreamingResponse(
             _stream_chat(
                 message,
-                session_key=raw_key or "tester_id",
+                session_key=session_key,
                 session_id=session_id,
                 client_ctx=client_ctx,
             ),
@@ -358,7 +300,7 @@ async def chat(
 
     result = await _run_chat_once(
         message,
-        session_key=raw_key or "tester_id",
+        session_key=session_key,
         session_id=session_id,
         client_ctx=client_ctx,
     )

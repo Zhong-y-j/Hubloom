@@ -5,12 +5,6 @@
   const LEGACY_STORAGE_CONNECTION = "cortex_connection_meta";
 
   const CONFIG_KEYS = {
-    openaiApiKey: "cortex_openai_api_key",
-    openaiModel: "cortex_openai_model",
-    openaiBaseUrl: "cortex_openai_base_url",
-    mcpSwaggerUrl: "cortex_mcp_swagger_url",
-    mcpBaseUrl: "cortex_mcp_base_url",
-    mcpAuthScheme: "cortex_mcp_auth_scheme",
     mcpToken: "cortex_mcp_token",
   };
 
@@ -32,25 +26,13 @@
     showTools: document.getElementById("show-tools"),
     status: document.getElementById("status"),
     routeBadge: document.getElementById("route-badge"),
-    connectWarning: document.getElementById("connect-warning"),
-    connectBtn: document.getElementById("connect-btn"),
-    configStatus: document.getElementById("config-status"),
-    connectDetail: document.getElementById("connect-detail"),
-    openaiApiKey: document.getElementById("openai-api-key"),
-    openaiModel: document.getElementById("openai-model"),
-    openaiBaseUrl: document.getElementById("openai-base-url"),
-    mcpSwaggerUrl: document.getElementById("mcp-swagger-url"),
-    mcpBaseUrl: document.getElementById("mcp-base-url"),
-    mcpAuthScheme: document.getElementById("mcp-auth-scheme"),
     mcpToken: document.getElementById("mcp-token"),
   };
 
   let busy = false;
-  let swaggerConnected = false;
-  let connectState = "idle";
 
-  const CHAT_PLACEHOLDER_CONNECTED = "输入消息，Enter 发送，Shift+Enter 换行";
-  const CHAT_PLACEHOLDER_DISCONNECTED = "请先连接 Swagger 后再开始对话";
+  const CHAT_PLACEHOLDER_READY = "输入消息，Enter 发送，Shift+Enter 换行";
+  const CHAT_PLACEHOLDER_NEED_CREDS = "请先填写 Token 与用户 ID";
 
   if (typeof marked !== "undefined") {
     marked.use({ breaks: true, gfm: true });
@@ -94,6 +76,12 @@
     return "web-" + uuid();
   }
 
+  function hasCredentials() {
+    const token = els.mcpToken && els.mcpToken.value.trim();
+    const sessionKey = normalizeSessionKey(els.sessionId && els.sessionId.value);
+    return Boolean(token && sessionKey);
+  }
+
   function loadSettings() {
     let sid =
       localStorage.getItem(STORAGE_SESSION) ||
@@ -101,40 +89,21 @@
     if (sid) els.sessionId.value = normalizeSessionKey(sid);
 
     const legacyToken = localStorage.getItem(LEGACY_STORAGE_TOKEN);
-    const fields = {
-      openaiApiKey: els.openaiApiKey,
-      openaiModel: els.openaiModel,
-      openaiBaseUrl: els.openaiBaseUrl,
-      mcpSwaggerUrl: els.mcpSwaggerUrl,
-      mcpBaseUrl: els.mcpBaseUrl,
-      mcpAuthScheme: els.mcpAuthScheme,
-      mcpToken: els.mcpToken,
-    };
-    for (const [key, el] of Object.entries(fields)) {
-      if (!el) continue;
-      let value = localStorage.getItem(CONFIG_KEYS[key]);
-      if (!value && key === "mcpToken" && legacyToken) value = legacyToken;
-      if (value) el.value = value;
-    }
-    if (!els.mcpAuthScheme.value.trim()) {
-      els.mcpAuthScheme.value = "Bearer";
-    }
-    localStorage.removeItem(LEGACY_STORAGE_CONNECTION);
-    setConnectStatus("idle", "未连接", "");
-  }
+    let token = localStorage.getItem(CONFIG_KEYS.mcpToken);
+    if (!token && legacyToken) token = legacyToken;
+    if (token && els.mcpToken) els.mcpToken.value = token;
 
-  function formatConnectDetail(data) {
-    const parts = [];
-    if (data.group_count != null && data.tool_count != null) {
-      parts.push(data.group_count + " 个分组 · " + data.tool_count + " 个接口");
-    }
-    if (data.base_url) parts.push("API " + data.base_url);
-    if (data.swagger_url) parts.push(data.swagger_url);
-    return parts.join("\n");
-  }
-
-  function markConfigStale() {
-    setConnectStatus("idle", "未连接", "配置已变更，请重新连接");
+    [
+      "cortex_openai_api_key",
+      "cortex_openai_model",
+      "cortex_openai_base_url",
+      "cortex_mcp_swagger_url",
+      "cortex_mcp_base_url",
+      "cortex_mcp_auth_scheme",
+      LEGACY_STORAGE_CONNECTION,
+    ].forEach(function (key) {
+      localStorage.removeItem(key);
+    });
   }
 
   function saveSettings() {
@@ -143,140 +112,30 @@
       normalizeSessionKey(els.sessionId.value)
     );
     localStorage.removeItem(LEGACY_STORAGE_SESSION);
-
-    const fields = {
-      openaiApiKey: els.openaiApiKey,
-      openaiModel: els.openaiModel,
-      openaiBaseUrl: els.openaiBaseUrl,
-      mcpSwaggerUrl: els.mcpSwaggerUrl,
-      mcpBaseUrl: els.mcpBaseUrl,
-      mcpAuthScheme: els.mcpAuthScheme,
-      mcpToken: els.mcpToken,
-    };
-    for (const [key, el] of Object.entries(fields)) {
-      if (!el) continue;
-      localStorage.setItem(CONFIG_KEYS[key], el.value.trim());
+    if (els.mcpToken) {
+      localStorage.setItem(CONFIG_KEYS.mcpToken, els.mcpToken.value.trim());
     }
-  }
-
-  function configPayload() {
-    return {
-      openai_model: els.openaiModel && els.openaiModel.value.trim(),
-      openai_base_url: els.openaiBaseUrl && els.openaiBaseUrl.value.trim(),
-      mcp_swagger_url: els.mcpSwaggerUrl && els.mcpSwaggerUrl.value.trim(),
-      mcp_base_url: els.mcpBaseUrl && els.mcpBaseUrl.value.trim(),
-      mcp_auth_scheme: els.mcpAuthScheme && els.mcpAuthScheme.value.trim(),
-    };
-  }
-
-  async function applyConfig() {
-    const res = await fetch("/v1/config/apply", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(configPayload()),
-    });
-
-    if (!res.ok) {
-      let message = "HTTP " + res.status;
-      try {
-        const data = await res.json();
-        message = data.detail || message;
-      } catch (_) {
-        message = (await res.text()) || message;
-      }
-      throw new Error(message);
-    }
-
-    return await res.json();
-  }
-
-  function setPill(pillEl, state, text) {
-    if (!pillEl) return;
-    pillEl.setAttribute("data-state", state);
-    pillEl.querySelector(".pill-text").textContent = text;
-  }
-
-  function setConnectDetail(text) {
-    if (!els.connectDetail) return;
-    const value = (text || "").trim();
-    if (!value) {
-      els.connectDetail.textContent = "";
-      els.connectDetail.classList.add("hidden");
-      return;
-    }
-    els.connectDetail.textContent = value;
-    els.connectDetail.classList.remove("hidden");
-  }
-
-  function connectWarningText() {
-    if (connectState === "loading") return "正在连接 Swagger…";
-    if (connectState === "error") return "Swagger 连接失败，请重新连接";
-    return "未连接 Swagger，请先在左侧完成连接";
-  }
-
-  function setConnectStatus(state, pillText, detail) {
-    setPill(els.configStatus, state, pillText);
-    setConnectDetail(detail);
-    connectState = state;
-    swaggerConnected = state === "ok";
-    updateChatInputState();
   }
 
   function updateChatInputState() {
-    const canChat = swaggerConnected && !busy;
+    const ready = hasCredentials();
+    const canChat = ready && !busy;
     if (els.input) {
       els.input.disabled = !canChat;
-      els.input.placeholder = swaggerConnected
-        ? CHAT_PLACEHOLDER_CONNECTED
-        : CHAT_PLACEHOLDER_DISCONNECTED;
+      els.input.placeholder = ready
+        ? CHAT_PLACEHOLDER_READY
+        : CHAT_PLACEHOLDER_NEED_CREDS;
     }
     if (els.sendBtn) {
       els.sendBtn.disabled = !canChat;
     }
     if (els.form) {
-      els.form.classList.toggle("composer-disabled", !swaggerConnected);
+      els.form.classList.toggle("composer-disabled", !ready);
     }
-    if (els.connectWarning) {
-      if (swaggerConnected) {
-        els.connectWarning.classList.add("hidden");
-      } else {
-        els.connectWarning.textContent = connectWarningText();
-        els.connectWarning.setAttribute("data-state", connectState);
-        els.connectWarning.classList.remove("hidden");
-      }
+    if (!busy) {
+      setStatus(ready ? "就绪" : "请填写 Token 与用户 ID");
     }
     refreshEmptyState();
-  }
-
-  function setConnectButtonBusy(connecting) {
-    if (!els.connectBtn) return;
-    els.connectBtn.disabled = connecting;
-    els.connectBtn.textContent = connecting ? "连接中…" : "连接 Swagger";
-  }
-
-  async function onConnect() {
-    saveSettings();
-    setConnectButtonBusy(true);
-    setConnectStatus("loading", "连接中…", "正在加载 Swagger 并重建 MCP…");
-    setStatus("正在连接 Swagger…");
-
-    try {
-      const data = await applyConfig();
-      const meta = {
-        swagger_url: data.swagger_url || "",
-        base_url: data.base_url || "",
-        group_count: data.group_count,
-        tool_count: data.tool_count,
-      };
-      setConnectStatus("ok", "已连接", formatConnectDetail(meta));
-      setStatus("Swagger 已连接，可以开始对话");
-    } catch (err) {
-      const message = String(err.message || err);
-      setConnectStatus("error", "连接失败", message);
-      setStatus(message);
-    } finally {
-      setConnectButtonBusy(false);
-    }
   }
 
   function setStatus(text) {
@@ -298,7 +157,7 @@
   }
 
   function getEmptyStateHtml() {
-    if (swaggerConnected) {
+    if (hasCredentials()) {
       return (
         '<p class="empty-title">开始对话</p>' +
         '<p class="empty-desc">用自然语言查询、操作已接入的 API。</p>' +
@@ -307,15 +166,15 @@
       );
     }
     return (
-      '<p class="empty-title">请先连接 Swagger</p>' +
-      '<p class="empty-desc">在左侧填写模型与 API 接入配置，点击「连接 Swagger」后即可开始对话。</p>'
+      '<p class="empty-title">请填写凭证</p>' +
+      '<p class="empty-desc">在左侧填写业务 Token 与用户 ID 后即可开始对话。模型与 Swagger 由服务端配置加载。</p>'
     );
   }
 
   function renderEmptyState(empty) {
     empty.className =
       "empty-state" +
-      (swaggerConnected ? " empty-state-ready" : " empty-state-disconnected");
+      (hasCredentials() ? " empty-state-ready" : " empty-state-disconnected");
     empty.innerHTML = getEmptyStateHtml();
   }
 
@@ -977,25 +836,10 @@
     const headers = { "Content-Type": "application/json" };
     if (sessionKey) headers["X-Session-Id"] = sessionKey;
 
-    const apiKey = els.openaiApiKey && els.openaiApiKey.value.trim();
-    if (apiKey) headers["X-OpenAI-Api-Key"] = apiKey;
-    const model = els.openaiModel && els.openaiModel.value.trim();
-    if (model) headers["X-OpenAI-Model"] = model;
-    const baseUrl = els.openaiBaseUrl && els.openaiBaseUrl.value.trim();
-    if (baseUrl) headers["X-OpenAI-Base-Url"] = baseUrl;
-
-    const swaggerUrl = els.mcpSwaggerUrl && els.mcpSwaggerUrl.value.trim();
-    if (swaggerUrl) headers["X-MCP-Swagger-Url"] = swaggerUrl;
-    const mcpBaseUrl = els.mcpBaseUrl && els.mcpBaseUrl.value.trim();
-    if (mcpBaseUrl) headers["X-MCP-Base-Url"] = mcpBaseUrl;
-
     const token = els.mcpToken && els.mcpToken.value.trim();
-    const scheme =
-      (els.mcpAuthScheme && els.mcpAuthScheme.value.trim()) || "Bearer";
-    if (scheme) headers["X-MCP-Auth-Scheme"] = scheme;
     if (token) {
       headers["X-MCP-Token"] = token;
-      headers["Authorization"] = scheme + " " + token;
+      headers["Authorization"] = "Bearer " + token;
     }
     return headers;
   }
@@ -1124,7 +968,7 @@
 
   async function onSubmit(e) {
     e.preventDefault();
-    if (busy || !swaggerConnected) return;
+    if (busy || !hasCredentials()) return;
 
     const message = els.input.value.trim();
     if (!message) return;
@@ -1158,7 +1002,7 @@
     } finally {
       busy = false;
       updateChatInputState();
-      if (swaggerConnected) els.input.focus();
+      if (hasCredentials()) els.input.focus();
       scrollToBottom();
     }
   }
@@ -1178,38 +1022,23 @@
     clearMessages();
     ensureEmptyState();
     setRoute("");
+    updateChatInputState();
     setStatus("已创建新会话");
   });
 
   els.sessionId.addEventListener("change", () => {
     saveSettings();
+    updateChatInputState();
     loadHistory();
   });
-  if (els.connectBtn) {
-    els.connectBtn.addEventListener("click", onConnect);
-  }
-
-  [
-    els.openaiApiKey,
-    els.openaiModel,
-    els.openaiBaseUrl,
-    els.mcpSwaggerUrl,
-    els.mcpBaseUrl,
-    els.mcpAuthScheme,
-    els.mcpToken,
-  ].forEach(function (el) {
-    if (!el) return;
-    el.addEventListener("change", function () {
+  els.sessionId.addEventListener("input", updateChatInputState);
+  if (els.mcpToken) {
+    els.mcpToken.addEventListener("change", function () {
       saveSettings();
-      if (
-        el === els.mcpSwaggerUrl ||
-        el === els.mcpBaseUrl ||
-        el === els.mcpAuthScheme
-      ) {
-        markConfigStale();
-      }
+      updateChatInputState();
     });
-  });
+    els.mcpToken.addEventListener("input", updateChatInputState);
+  }
 
   loadSettings();
   if (!els.sessionId.value.trim()) {
@@ -1219,5 +1048,5 @@
   setupScrollbarReveal();
   loadHistory();
   updateChatInputState();
-  if (swaggerConnected) els.input.focus();
+  if (hasCredentials()) els.input.focus();
 })();

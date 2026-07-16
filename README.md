@@ -10,7 +10,7 @@
 
 **[https://hubloom.onrender.com](https://hubloom.onrender.com)** 免费实例闲置后会休眠，首次打开可能需要等待约 30～60 秒。
 
-在左侧填写模型 API Key 与 Swagger 接入信息，点击「连接 Swagger」即可开始对话。密钥仅保存在浏览器本地，不会上传服务端。
+模型与 Swagger 在服务端 `config/env.yaml` 中配置；页面左侧只需填写业务 Token 与用户 ID 即可开始对话。Token 仅保存在浏览器本地。
 
 ---
 
@@ -104,10 +104,11 @@ curl http://127.0.0.1:8000/health
 curl -s http://127.0.0.1:8000/v1/chat \
   -H "Content-Type: application/json" \
   -H "X-Session-Id: demo-session" \
+  -H "X-MCP-Token: your-business-token" \
   -d '{"message":"你好，你能做什么？","stream":false}'
 ```
 
-默认开启 SSE 流式（`"stream": true`）。生产接入时，建议由业务后端验签后转发请求，并透传 `Authorization` 与 `X-Session-Id`。
+默认开启 SSE 流式（`"stream": true`）。生产接入时，建议由业务后端验签后转发请求，并透传 `Authorization`（或 `X-MCP-Token`）与 `X-Session-Id`。
 
 ---
 

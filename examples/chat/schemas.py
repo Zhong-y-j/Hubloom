@@ -9,7 +9,7 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, description="用户本轮输入")
     session_id: str | None = Field(
         default=None,
-        description="多轮会话 ID；不传则使用默认 session",
+        description="多轮会话 ID / 用户 ID；不传则使用默认 session",
     )
     stream: bool = Field(default=True, description="是否 SSE 流式返回")
 
@@ -21,20 +21,13 @@ class ChatResponse(BaseModel):
     reason: str = ""
 
 
-class ApplyConfigRequest(BaseModel):
-    openai_api_key: str | None = None
-    openai_model: str | None = None
-    openai_base_url: str | None = None
-    mcp_swagger_url: str | None = None
-    mcp_base_url: str | None = None
-    mcp_auth_scheme: str | None = None
-    mcp_token: str | None = None
+class McpStatusResponse(BaseModel):
+    """服务端已加载的 MCP / 运行时状态（来自 env.yaml，非前端传入）。"""
 
-
-class ApplyConfigResponse(BaseModel):
     status: str
-    swagger_url: str
-    base_url: str
-    group_count: int
-    tool_count: int
-    secret_persisted: bool = False
+    mcp_ready: bool
+    swagger_url: str = ""
+    base_url: str = ""
+    group_count: int = 0
+    tool_count: int = 0
+    detail: str = ""
