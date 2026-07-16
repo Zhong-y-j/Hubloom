@@ -49,8 +49,10 @@ node_modules/
 src/logs/
 *.log
 
-# 技能说明：仅跟踪公共 hubloom skill；其它本地草案可忽略
+# 技能说明：跟踪公共 Skill；其它本地草案可忽略
 /skills/*
 !/skills/README.md
 !/skills/hubloom/
 !/skills/hubloom/**
+!/skills/a2ui/
+!/skills/a2ui/**

@@ -48,6 +48,13 @@ class FinalAnswerDeltaEvent(AgentEvent):
 
 
 @dataclass
+class A2uiMessagesEvent(AgentEvent):
+    """从最终回复中切出的 A2UI 消息数组（结果区，非流式整包下发）。"""
+
+    messages: list[dict[str, Any]]
+
+
+@dataclass
 class ErrorEvent(AgentEvent):
     """本轮出错（对外以事件表达，而不是直接 raise）。"""
 

@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useChat } from "@/composables/useChat";
 import { renderMarkdownToHtml } from "@/utils/markdown";
+import ChatA2uiBlock from "@/components/ChatA2uiBlock.vue";
 
 const {
   token,
@@ -101,8 +102,8 @@ onMounted(async () => {
       </div>
 
       <p class="chat-intro">
-        与 <code>examples/chat</code> 同源：前端只传 Token + 用户 ID；模型与
-        Swagger 由 <code>config/env.yaml</code> 加载。A2UI 输出形态稍后设计。
+        与 <code>examples/chat</code> 同源：前端只传 Token + 用户 ID。最终回复的
+        Markdown 流式展示；若有 A2UI，由后端 <code>event: a2ui</code> 下发并在此渲染。
       </p>
 
       <div class="config-card">
@@ -176,7 +177,11 @@ onMounted(async () => {
       </header>
 
       <div ref="listRef" class="chat-messages">
-        <div v-if="!messages.length" class="empty-state" :class="ready ? 'empty-state-ready' : 'empty-state-disconnected'">
+        <div
+          v-if="!messages.length"
+          class="empty-state"
+          :class="ready ? 'empty-state-ready' : 'empty-state-disconnected'"
+        >
           <p class="empty-title">{{ ready ? "开始对话" : "请填写凭证" }}</p>
           <p class="empty-desc">
             {{
@@ -195,7 +200,12 @@ onMounted(async () => {
             :class="{ error: m.error }"
           >
             <div
-              v-if="m.streaming && agentPhase && !m.content"
+              v-if="
+                m.streaming &&
+                agentPhase &&
+                !m.content &&
+                !m.a2uiMessages?.length
+              "
               class="agent-status"
               :data-state="agentPhase"
             >
@@ -241,14 +251,18 @@ onMounted(async () => {
             </details>
 
             <div
+              v-if="m.content"
               class="answer-body"
               :class="{
-                'markdown-body': Boolean(m.content),
-                typing: m.streaming && Boolean(m.content),
+                'markdown-body': true,
+                typing: m.streaming,
               }"
-              v-html="
-                m.content ? renderMarkdownToHtml(m.content) : ''
-              "
+              v-html="renderMarkdownToHtml(m.content)"
+            />
+
+            <ChatA2uiBlock
+              v-if="m.a2uiMessages?.length"
+              :messages="m.a2uiMessages"
             />
           </div>
         </template>

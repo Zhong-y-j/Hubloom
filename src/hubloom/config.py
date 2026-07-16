@@ -63,6 +63,25 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _as_str_list(value: Any) -> list[str]:
+    """解析 YAML 字符串列表；也接受逗号分隔的单个字符串。"""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text == "...":
+            return []
+        return [part.strip() for part in text.split(",") if part.strip()]
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            cleaned = _clean(item)
+            if cleaned:
+                out.append(cleaned)
+        return out
+    return []
+
+
 @dataclass
 class HubloomConfig:
     """单个 HubloomAgent 实例的配置（对应 config/*.yaml）。"""
@@ -119,7 +138,9 @@ class HubloomConfig:
     neo4j_database: str | None = None
     neo4j_skip_dns_check: bool | None = None
 
-    skills: list[dict[str, Any]] | None = None
+    # skills：默认注入 skills_dir 下全部 SKILL.md；skills_exclude 为目录名黑名单
+    skills_dir: str | None = "skills"
+    skills_exclude: list[str] = field(default_factory=list)
     source_path: str | None = field(default=None, repr=False)
 
     @classmethod
@@ -154,11 +175,12 @@ class HubloomConfig:
         neo4j = _section(data, "neo4j")
         mcp = _section(data, "mcp")
         a2a = _section(data, "a2a")
-        skills_raw = data.get("skills")
 
         enable_mcp = _as_bool(mcp.get("enable"))
         if enable_mcp is None:
             enable_mcp = True
+
+        skills_dir = _clean(data.get("skills_dir")) or "skills"
 
         return cls(
             openai_api_key=_clean(llm.get("api_key")),
@@ -197,6 +219,7 @@ class HubloomConfig:
             neo4j_password=_clean(neo4j.get("password")),
             neo4j_database=_clean(neo4j.get("database")),
             neo4j_skip_dns_check=_as_bool(neo4j.get("skip_dns_check")),
-            skills=skills_raw if isinstance(skills_raw, list) else None,
+            skills_dir=skills_dir,
+            skills_exclude=_as_str_list(data.get("skills_exclude")),
             source_path=str(cfg_path.resolve()),
         )

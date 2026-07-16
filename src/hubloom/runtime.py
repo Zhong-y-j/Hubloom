@@ -24,6 +24,7 @@ from hubloom.session import (
     DEFAULT_MEMORY_DB,
     ENABLE_LONG_TERM_MEMORY,
     ENABLE_RAG,
+    PROJECT_ROOT,
     SRC_ROOT,
 )
 from mcp_adapter.discovery import MCPBindings
@@ -166,6 +167,7 @@ class CortexRuntime:
     enable_mcp: bool = True
     memory_db_path: str = DEFAULT_MEMORY_DB
     api_catalog_prompt: str = ""
+    skills_prompt: str = ""
     enable_long_term_memory: bool = False
     config: HubloomConfig | None = None
     _mcp_tools: list[Any] = field(default_factory=list)
@@ -196,6 +198,7 @@ class CortexRuntime:
             enable_long_term_memory=long_term,
             include_graph_memory=long_term,
             api_catalog_prompt=self.api_catalog_prompt,
+            skills_prompt=self.skills_prompt,
             memory_db_path=self.memory_db_path,
             **_memory_backend_kwargs(self.config),
         )
@@ -228,6 +231,7 @@ async def build_runtime_async(
         from a2a_adapter.client.registry import configure_agents
         from agents.a2a.credential.static import configure_credential
         from agents.agent_log import configure_agent_logging
+        from skills.loader import format_skills_prompt, load_skills
 
         configure_agents(config.a2a_remote_agents)
         if config.a2a_static_token:
@@ -237,6 +241,21 @@ async def build_runtime_async(
             cortex_log=config.cortex_log,
             a2a_log=config.a2a_log,
             memory_log=config.memory_log,
+        )
+
+        skills_dir = (config.skills_dir or "skills").strip() or "skills"
+        loaded_skills = load_skills(
+            skills_dir,
+            exclude=config.skills_exclude,
+            project_root=PROJECT_ROOT,
+        )
+        runtime.skills_prompt = format_skills_prompt(loaded_skills)
+        cortex_log(
+            "runtime skills loaded",
+            skills_dir=skills_dir,
+            skill_ids=[s.skill_id for s in loaded_skills],
+            excluded=list(config.skills_exclude or []),
+            prompt_chars=len(runtime.skills_prompt),
         )
 
     if rag_on:
@@ -307,6 +326,7 @@ async def build_runtime_async(
         mcp_tools=len(runtime._mcp_tools),
         rag_enabled=rag_on and runtime.knowledge_base is not None,
         long_term_memory=runtime.enable_long_term_memory,
+        skills_chars=len(runtime.skills_prompt),
         memory_db=runtime.memory_db_path,
         kb_dir=kb_dir,
     )

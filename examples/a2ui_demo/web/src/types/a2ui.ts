@@ -32,6 +32,10 @@ export type A2uiMessage =
         path: string;
         value: unknown;
       };
+    }
+  | {
+      version: A2uiVersion;
+      deleteSurface: { surfaceId: string };
     };
 
 export type Scenario = {

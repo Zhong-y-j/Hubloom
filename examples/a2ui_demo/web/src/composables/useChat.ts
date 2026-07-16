@@ -5,6 +5,7 @@ import type {
   HistoryMessage,
   ToolBlock,
 } from "@/types/chat";
+import type { A2uiMessage } from "@/types/a2ui";
 
 const STORAGE_SESSION = "cortex_session_key";
 const STORAGE_TOKEN = "cortex_mcp_token";
@@ -229,6 +230,12 @@ export function useChat() {
           } else if (event === "text_delta" && data.delta) {
             agentPhase.value = "replying";
             current.content += String(data.delta);
+          } else if (event === "a2ui") {
+            const raw = data.messages;
+            if (Array.isArray(raw) && raw.length) {
+              current.a2uiMessages = raw as A2uiMessage[];
+            }
+            agentPhase.value = "replying";
           } else if (event === "tool_call") {
             const toolName = String(data.tool_name || "tool");
             const block: ToolBlock = {
@@ -245,7 +252,8 @@ export function useChat() {
             };
             current.tools = [...(current.tools || []), block];
           } else if (event === "turn_complete") {
-            if (data.final_message && !current.content) {
+            if (data.final_message != null && data.final_message !== "") {
+              // 与后端权威 Markdown 对齐（已切掉 A2UI JSON）
               current.content = String(data.final_message);
             }
             if (data.route) route.value = String(data.route);

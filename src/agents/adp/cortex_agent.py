@@ -25,6 +25,7 @@ from agents.events import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from agents.a2ui_split import map_a2ui_events
 from agents.agent_log import clip, cortex_log, memory_log, clear_turn_id, set_turn_id
 from memory.memory_context import MemoryContextProvider, MemoryRecallContext
 
@@ -133,6 +134,7 @@ class CortexAgent:
         vector_backend: VectorBackend = "qdrant",
         graph_backend: GraphBackend | None = None,
         api_catalog_prompt: str = "",
+        skills_prompt: str = "",
         memory_db_path: str | None = None,
         qdrant_url: str | None = None,
         qdrant_api_key: str | None = None,
@@ -149,6 +151,7 @@ class CortexAgent:
         self.llm = llm
         self.tools = tools
         self.api_catalog_prompt = (api_catalog_prompt or "").strip()
+        self.skills_prompt = (skills_prompt or "").strip()
         self.assessor = assessor
         self.chat = chat
         self.thought = thought
@@ -444,6 +447,7 @@ class CortexAgent:
             system_prompt=build_chat_system_prompt(
                 self.tools,
                 catalog_snippet=self.api_catalog_prompt,
+                skills_snippet=self.skills_prompt,
             ),
             memories=ctx.memories or None,
             documents=None,
@@ -493,6 +497,7 @@ class CortexAgent:
                 tools=self.tools,
                 persist_message=self._persist_conversation_message,
                 api_catalog_prompt=self.api_catalog_prompt,
+                skills_prompt=self.skills_prompt,
             )
         async for ev in self.thought.run_stream(messages):
             yield ev
@@ -547,15 +552,15 @@ class CortexAgent:
             tool_log: list[dict[str, str]] = []
 
             if route == Route.CHAT:
-                async for ev in self._run_chat(messages):
+                async for ev in map_a2ui_events(self._run_chat(messages)):
                     self._collect_turn_extra(ev, thought_parts, tool_log)
-                    if isinstance(ev, FinalAnswerEvent) and ev.content:
+                    if isinstance(ev, FinalAnswerEvent):
                         final_answer = ev.content
                     yield ev
             else:
-                async for ev in self._run_thought(messages):
+                async for ev in map_a2ui_events(self._run_thought(messages)):
                     self._collect_turn_extra(ev, thought_parts, tool_log)
-                    if isinstance(ev, FinalAnswerEvent) and ev.content:
+                    if isinstance(ev, FinalAnswerEvent):
                         final_answer = ev.content
                     yield ev
 

@@ -15,6 +15,8 @@ export type ChatMessage = {
   content: string;
   thought?: string;
   tools?: ToolBlock[];
+  /** 本轮 SSE `a2ui` 事件中的消息数组（可选） */
+  a2uiMessages?: import("@/types/a2ui").A2uiMessage[];
   streaming?: boolean;
   error?: boolean;
 };

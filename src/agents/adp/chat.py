@@ -49,9 +49,16 @@ def build_chat_system_prompt(
     base: str | None = None,
     *,
     catalog_snippet: str = "",
+    skills_snippet: str = "",
 ) -> str:
-    """快答 system prompt（含 API 分组目录与工具能力简表），供编排层 ``assemble`` 使用。"""
+    """快答 system prompt（Skills + API 分组 + 工具简表），供编排层 ``assemble`` 使用。
+
+    拼接顺序：角色基座 → Skills → API 分组目录 → 可用工具简表。
+    """
     parts = [(base or _CHAT_SYSTEM).strip()]
+    skills = (skills_snippet or "").strip()
+    if skills:
+        parts.append(skills)
     snippet = (catalog_snippet or "").strip()
     if snippet:
         parts.append(snippet)

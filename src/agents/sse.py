@@ -7,6 +7,7 @@ from typing import Any
 
 from agents.events import (
     AgentEvent,
+    A2uiMessagesEvent,
     ErrorEvent,
     FinalAnswerDeltaEvent,
     PhaseEvent,
@@ -32,6 +33,8 @@ def event_to_sse(ev: AgentEvent) -> tuple[str, dict[str, Any]] | None:
         return "text_delta", {"delta": ev.delta}
     if isinstance(ev, FinalAnswerDeltaEvent):
         return "text_delta", {"delta": ev.delta}
+    if isinstance(ev, A2uiMessagesEvent):
+        return "a2ui", {"messages": ev.messages}
     if isinstance(ev, ThoughtDeltaEvent):
         return "thought_delta", {"phase": ev.phase, "delta": ev.delta}
     if isinstance(ev, PhaseEvent):
