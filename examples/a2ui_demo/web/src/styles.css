@@ -1164,6 +1164,17 @@ h1 {
   font-size: 0.85rem;
 }
 
+.chat-a2ui-sent {
+  margin: 0.45rem 0 0;
+  font-size: 0.78rem;
+  color: var(--accent-hover);
+}
+
+.chat-a2ui-disabled {
+  opacity: 0.85;
+  pointer-events: none;
+}
+
 .chat-a2ui-action {
   margin-top: 0.55rem;
   border: 1px dashed var(--border);

@@ -25,5 +25,5 @@ npm run dev
 
 - 前端只传业务 Token + 用户 ID；LLM / Swagger 由服务端 `env.yaml` 加载
 - Agent 最终回复若含 `---a2ui_JSON---`：后端流式切分，Markdown 继续 `text_delta`，JSON 整包 `event: a2ui`；前端在气泡内用 `<a2ui-surface>` 渲染
-- 按钮等 action 暂只在本地展示，尚未回传 Agent
+- 按钮等 action：前端拼成 `[A2UI:<name>]` + 字段，作为新一轮用户消息走 `/v1/chat`
 - 场景实验室用于摸 Catalog 与样式，与对话链路独立

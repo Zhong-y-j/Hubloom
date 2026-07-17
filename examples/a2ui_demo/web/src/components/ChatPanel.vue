@@ -3,6 +3,8 @@ import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useChat } from "@/composables/useChat";
 import { renderMarkdownToHtml } from "@/utils/markdown";
 import ChatA2uiBlock from "@/components/ChatA2uiBlock.vue";
+import { formatA2uiActionAsChat } from "@/utils/a2uiAction";
+import type { A2uiClientAction } from "@/utils/a2uiAction";
 
 const {
   token,
@@ -49,6 +51,11 @@ watch(messages, () => scrollBottom(), { deep: true });
 async function onSubmit() {
   const text = draft.value;
   draft.value = "";
+  await send(text);
+}
+
+async function onA2uiAction(action: A2uiClientAction) {
+  const text = formatA2uiActionAsChat(action);
   await send(text);
 }
 
@@ -263,6 +270,8 @@ onMounted(async () => {
             <ChatA2uiBlock
               v-if="m.a2uiMessages?.length"
               :messages="m.a2uiMessages"
+              :disabled="busy"
+              @action="onA2uiAction"
             />
           </div>
         </template>
