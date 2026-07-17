@@ -12,7 +12,9 @@ from hubloom.config import HubloomConfig
 from skills.loader import load_skills, load_skills_prompt, resolve_skills_root
 
 
-def _write_skill(root: Path, skill_id: str, body: str, *, with_frontmatter: bool = True) -> None:
+def _write_skill(
+    root: Path, skill_id: str, body: str, *, with_frontmatter: bool = True
+) -> None:
     skill_dir = root / skill_id
     skill_dir.mkdir(parents=True, exist_ok=True)
     if with_frontmatter:
@@ -65,6 +67,39 @@ class SkillsLoaderTests(unittest.TestCase):
             root = Path(tmp)
             self.assertEqual(load_skills("skills", project_root=root), [])
             self.assertEqual(load_skills_prompt("skills", project_root=root), "")
+
+    def test_references_templates_injected_examples_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skills_root = root / "skills"
+            _write_skill(skills_root, "a2ui", "# A2UI\n\nRules.")
+            refs = skills_root / "a2ui" / "references"
+            (refs / "templates").mkdir(parents=True)
+            (refs / "examples").mkdir(parents=True)
+            (refs / "catalog-subset.md").write_text(
+                "# Catalog\n\nColumn only.", encoding="utf-8"
+            )
+            (refs / "patterns.md").write_text(
+                "# Patterns\n\nUse form mode.", encoding="utf-8"
+            )
+            (refs / "templates" / "form_missing_params.json").write_text(
+                '[{"version":"v0.9.1","createSurface":{"surfaceId":"x","catalogId":"c"}}]',
+                encoding="utf-8",
+            )
+            (refs / "examples" / "wash.md").write_text(
+                "# Wash example\n\nSHOULD_NOT_INJECT",
+                encoding="utf-8",
+            )
+
+            loaded = load_skills("skills", project_root=root)
+            self.assertEqual(len(loaded), 1)
+            body = loaded[0].body
+            self.assertIn("Rules.", body)
+            self.assertIn("Column only.", body)
+            self.assertIn("Use form mode.", body)
+            self.assertIn("form_missing_params", body)
+            self.assertIn("createSurface", body)
+            self.assertNotIn("SHOULD_NOT_INJECT", body)
 
     def test_config_skills_exclude_from_yaml(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

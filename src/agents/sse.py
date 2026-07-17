@@ -34,7 +34,11 @@ def event_to_sse(ev: AgentEvent) -> tuple[str, dict[str, Any]] | None:
     if isinstance(ev, FinalAnswerDeltaEvent):
         return "text_delta", {"delta": ev.delta}
     if isinstance(ev, A2uiMessagesEvent):
-        return "a2ui", {"messages": ev.messages}
+        payload: dict[str, Any] = {"messages": ev.messages}
+        if ev.replace:
+            payload["replace"] = True
+        return "a2ui", payload
+
     if isinstance(ev, ThoughtDeltaEvent):
         return "thought_delta", {"phase": ev.phase, "delta": ev.delta}
     if isinstance(ev, PhaseEvent):

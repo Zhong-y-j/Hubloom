@@ -1,0 +1,73 @@
+[
+  {
+    "version": "v0.9.1",
+    "createSurface": {
+      "surfaceId": "formMain",
+      "catalogId": "https://a2ui.org/specification/v0_9/catalogs/basic/catalog.json"
+    }
+  },
+  {
+    "version": "v0.9.1",
+    "updateComponents": {
+      "surfaceId": "formMain",
+      "components": [
+        {
+          "id": "root",
+          "component": "Column",
+          "children": ["title", "field_a", "field_b", "actions"]
+        },
+        {
+          "id": "title",
+          "component": "Text",
+          "text": "请补充以下信息",
+          "variant": "h3"
+        },
+        {
+          "id": "field_a",
+          "component": "TextField",
+          "label": "字段 A",
+          "value": { "path": "/form/fieldA" }
+        },
+        {
+          "id": "field_b",
+          "component": "DateTimeInput",
+          "label": "日期",
+          "value": { "path": "/form/date" },
+          "enableDate": true,
+          "enableTime": false
+        },
+        {
+          "id": "actions",
+          "component": "Row",
+          "children": ["submit_btn", "cancel_btn"]
+        },
+        { "id": "submit_label", "component": "Text", "text": "确认" },
+        {
+          "id": "submit_btn",
+          "component": "Button",
+          "child": "submit_label",
+          "variant": "primary",
+          "action": { "event": { "name": "submit_form" } }
+        },
+        { "id": "cancel_label", "component": "Text", "text": "取消" },
+        {
+          "id": "cancel_btn",
+          "component": "Button",
+          "child": "cancel_label",
+          "action": { "event": { "name": "dismiss" } }
+        }
+      ]
+    }
+  },
+  {
+    "version": "v0.9.1",
+    "updateDataModel": {
+      "surfaceId": "formMain",
+      "path": "/form",
+      "value": {
+        "fieldA": "",
+        "date": ""
+      }
+    }
+  }
+]

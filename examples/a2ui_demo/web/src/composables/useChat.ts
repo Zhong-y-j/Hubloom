@@ -147,6 +147,10 @@ export function useChat() {
         content: m.content || "",
         thought: m.thought || undefined,
         tools: (m.tools as ToolBlock[] | null) || undefined,
+        a2uiMessages:
+          Array.isArray(m.a2ui) && m.a2ui.length
+            ? (m.a2ui as A2uiMessage[])
+            : undefined,
       }));
       status.value = rows.length ? `已加载 ${rows.length} 条历史` : "就绪";
     } catch {
@@ -233,7 +237,16 @@ export function useChat() {
           } else if (event === "a2ui") {
             const raw = data.messages;
             if (Array.isArray(raw) && raw.length) {
-              current.a2uiMessages = raw as A2uiMessage[];
+              const batch = raw as A2uiMessage[];
+              if (data.replace) {
+                current.a2uiMessages = batch;
+                current.a2uiReloadKey = (current.a2uiReloadKey || 0) + 1;
+              } else {
+                current.a2uiMessages = [
+                  ...(current.a2uiMessages || []),
+                  ...batch,
+                ];
+              }
             }
             agentPhase.value = "replying";
           } else if (event === "tool_call") {
@@ -252,8 +265,8 @@ export function useChat() {
             };
             current.tools = [...(current.tools || []), block];
           } else if (event === "turn_complete") {
-            if (data.final_message != null && data.final_message !== "") {
-              // 与后端权威 Markdown 对齐（已切掉 A2UI JSON）
+            if (data.final_message != null) {
+              // 与后端权威 Markdown 对齐（纯 A2UI 时为空，清掉标签外误流式文本）
               current.content = String(data.final_message);
             }
             if (data.route) route.value = String(data.route);

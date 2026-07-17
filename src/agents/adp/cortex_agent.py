@@ -547,12 +547,16 @@ class CortexAgent:
                 phase="thinking" if route == Route.THOUGHT else "replying",
                 route=route.value,
             )
+            from agents.events import A2uiMessagesEvent
+
             final_answer = ""
+            a2ui_messages: list | None = None
             thought_parts: list[str] = []
             tool_log: list[dict[str, str]] = []
 
             if route == Route.CHAT:
-                async for ev in map_a2ui_events(self._run_chat(messages)):
+                # Chat：纯 Markdown，不做 A2UI 切分
+                async for ev in self._run_chat(messages):
                     self._collect_turn_extra(ev, thought_parts, tool_log)
                     if isinstance(ev, FinalAnswerEvent):
                         final_answer = ev.content
@@ -560,23 +564,35 @@ class CortexAgent:
             else:
                 async for ev in map_a2ui_events(self._run_thought(messages)):
                     self._collect_turn_extra(ev, thought_parts, tool_log)
+                    if isinstance(ev, A2uiMessagesEvent):
+                        batch = list(ev.messages or [])
+                        if ev.replace or not a2ui_messages:
+                            a2ui_messages = batch
+                        else:
+                            a2ui_messages = list(a2ui_messages) + batch
+
                     if isinstance(ev, FinalAnswerEvent):
                         final_answer = ev.content
                     yield ev
 
-            if final_answer:
+            persist_text = (final_answer or "").strip()
+            if not persist_text and a2ui_messages:
+                persist_text = "（交互界面）"
+            if persist_text:
                 turn_meta: dict = {"route": route.value}
                 thought_text = "".join(thought_parts).strip()
                 if thought_text:
                     turn_meta["thought"] = thought_text
                 if tool_log:
                     turn_meta["tools"] = tool_log
-                await self._persist_assistant(final_answer, metadata=turn_meta)
+                if a2ui_messages:
+                    turn_meta["a2ui"] = a2ui_messages
+                await self._persist_assistant(persist_text, metadata=turn_meta)
 
             self._last_outcome = TurnOutcome(
                 route=route,
                 assess=assess_result,
-                final_answer=final_answer,
+                final_answer=persist_text or final_answer,
             )
             cortex_log(
                 "turn done",

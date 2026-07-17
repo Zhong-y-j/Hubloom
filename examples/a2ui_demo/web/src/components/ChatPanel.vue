@@ -35,6 +35,11 @@ const phaseLabel = computed(() => {
   return "";
 });
 
+/** 纯 A2UI 落库时的占位正文，有界面时不重复展示 */
+function isA2uiPlaceholder(content: string): boolean {
+  return content.trim() === "（交互界面）";
+}
+
 function onCredChange() {
   persist();
   status.value = ready.value ? "就绪" : "请填写 Token 与用户 ID";
@@ -110,7 +115,7 @@ onMounted(async () => {
 
       <p class="chat-intro">
         与 <code>examples/chat</code> 同源：前端只传 Token + 用户 ID。最终回复的
-        Markdown 流式展示；若有 A2UI，由后端 <code>event: a2ui</code> 下发并在此渲染。
+        Markdown 流式展示；A2UI 由后端 <code>event: a2ui</code> 按消息增量下发并渐进渲染。
       </p>
 
       <div class="config-card">
@@ -258,7 +263,7 @@ onMounted(async () => {
             </details>
 
             <div
-              v-if="m.content"
+              v-if="m.content && !(m.a2uiMessages?.length && isA2uiPlaceholder(m.content))"
               class="answer-body"
               :class="{
                 'markdown-body': true,
@@ -270,6 +275,7 @@ onMounted(async () => {
             <ChatA2uiBlock
               v-if="m.a2uiMessages?.length"
               :messages="m.a2uiMessages"
+              :reload-key="m.a2uiReloadKey || 0"
               :disabled="busy"
               @action="onA2uiAction"
             />

@@ -81,17 +81,24 @@
 
   /* Card */
   --a2ui-card-background: var(--surface);
-  --a2ui-card-border: 1px solid var(--border);
-  --a2ui-card-border-radius: var(--radius);
-  --a2ui-card-padding: 0.9rem 1rem;
-  --a2ui-card-box-shadow: var(--shadow-sm);
-  --a2ui-card-margin: 0.45rem 0;
+  --a2ui-card-border: 1px solid #d5e5e2;
+  --a2ui-card-border-radius: 12px;
+  --a2ui-card-padding: 0.95rem 1.05rem;
+  --a2ui-card-box-shadow: 0 4px 16px rgba(13, 148, 136, 0.07), var(--shadow-sm);
+  --a2ui-card-margin: 0.5rem 0;
+
+  /* List */
+  --a2ui-list-gap: 0.7rem;
+  --a2ui-list-padding: 0.15rem 0;
 
   /* Button */
-  --a2ui-button-border-radius: var(--radius-sm);
-  --a2ui-button-padding: 0.55rem 0.85rem;
+  --a2ui-button-border-radius: 10px;
+  --a2ui-button-padding: 0.55rem 1rem;
   --a2ui-button-margin: 0;
-  --a2ui-button-border: 1px solid var(--border);
+  --a2ui-button-border: 1px solid transparent;
+  --a2ui-button-background: var(--surface);
+  --a2ui-button-box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --a2ui-button-font-weight: 600;
 
   /* Text */
   --a2ui-text-color-text: var(--text);
@@ -543,6 +550,61 @@ h1 {
   min-height: 0;
 }
 
+.paste-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.paste-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 180px;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.paste-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12);
+}
+
+.paste-actions {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+}
+
+.paste-error {
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.85rem;
+}
+
+.paste-hint {
+  margin: 0;
+  padding: 0.55rem 0.75rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid #fde68a;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
 /* ── Chat layout（对齐 examples/chat） ── */
 
 .chat-layout {
@@ -899,6 +961,13 @@ h1 {
   white-space: normal;
 }
 
+/* 含 A2UI 的回复需要更宽，否则列表/按钮会挤成窄条 */
+.msg.assistant.turn:has(.chat-a2ui) {
+  max-width: min(860px, 96%);
+  width: 100%;
+  padding: 0.95rem 1.05rem 1.05rem;
+}
+
 .msg.assistant.turn.error {
   border-color: #fecaca;
   background: #fef2f2;
@@ -1144,58 +1213,101 @@ h1 {
   background: none;
 }
 
+/* —— Chat 内嵌 A2UI：更宽、更像交互面板 —— */
 .chat-a2ui {
-  margin-top: 0.75rem;
+  margin-top: 0.55rem;
+  width: 100%;
+  min-width: 0;
+  /* 聊天场景下再抬一档对比度与间距 */
+  --a2ui-color-background: transparent;
+  --a2ui-color-surface: #ffffff;
+  --a2ui-color-border: #cce7e2;
+  --a2ui-column-gap: 0.7rem;
+  --a2ui-row-gap: 0.55rem;
+  --a2ui-list-gap: 0.75rem;
+  --a2ui-card-border: 1px solid #c5e4de;
+  --a2ui-card-background: linear-gradient(180deg, #ffffff 0%, #f7fffd 100%);
+  --a2ui-card-box-shadow: 0 6px 20px rgba(13, 148, 136, 0.09);
+  --a2ui-card-padding: 0.9rem 1.05rem;
+  --a2ui-button-padding: 0.5rem 1rem;
+  animation: chat-a2ui-in 0.28s ease-out;
 }
 
+.chat-a2ui a2ui-basic-image,
+.chat-a2ui img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  margin-top: 0.35rem;
+}
+
+@keyframes chat-a2ui-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 覆盖 ScenarioLab 的 .render-host（避免双层边框 + 限高） */
 .chat-a2ui .render-host {
   margin: 0;
+  padding: 0.1rem 0 0;
   min-height: 0;
-  padding: 0.85rem 1rem;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  max-height: none;
+  flex: none;
+  overflow: visible;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.chat-a2ui .placeholder {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-strong);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .chat-a2ui-error {
   margin: 0;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid #fecaca;
+  background: #fef2f2;
   color: #b91c1c;
   font-size: 0.85rem;
 }
 
 .chat-a2ui-sent {
-  margin: 0.45rem 0 0;
-  font-size: 0.78rem;
+  margin: 0.5rem 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  background: var(--accent-light);
+  border: 1px solid #99f6e4;
+  font-size: 0.75rem;
+  font-weight: 500;
   color: var(--accent-hover);
 }
 
 .chat-a2ui-disabled {
-  opacity: 0.85;
+  opacity: 0.78;
   pointer-events: none;
 }
 
-.chat-a2ui-action {
-  margin-top: 0.55rem;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface-2);
-}
-
-.chat-a2ui-action summary {
-  cursor: pointer;
-  padding: 0.45rem 0.65rem;
-  font-size: 0.78rem;
-  color: var(--text-secondary);
-}
-
-.chat-a2ui-action pre {
-  margin: 0;
-  padding: 0 0.65rem 0.55rem;
-  font-size: 0.72rem;
-  color: var(--text-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
+.chat-a2ui-disabled .render-host {
+  filter: grayscale(0.08);
 }
 
 .composer {
@@ -1260,5 +1372,9 @@ h1 {
   .msg,
   .msg.assistant.turn {
     max-width: 92%;
+  }
+
+  .msg.assistant.turn:has(.chat-a2ui) {
+    max-width: 100%;
   }
 }

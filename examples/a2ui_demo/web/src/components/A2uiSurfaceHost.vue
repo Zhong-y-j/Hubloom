@@ -1,17 +1,21 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from "vue";
+import { ref, watch, onMounted, nextTick } from "vue";
 import "@/a2uiMarkdownHost";
 
 const props = defineProps<{
   surface: unknown;
 }>();
 
-const hostEl = ref<HTMLElement & { surface?: unknown } | null>(null);
+const hostEl = ref<(HTMLElement & { surface?: unknown; requestUpdate?: () => void }) | null>(
+  null
+);
 
-function sync() {
-  if (hostEl.value) {
-    hostEl.value.surface = props.surface;
-  }
+async function sync() {
+  await nextTick();
+  const el = hostEl.value;
+  if (!el) return;
+  el.surface = props.surface;
+  el.requestUpdate?.();
 }
 
 onMounted(sync);

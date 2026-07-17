@@ -1,9 +1,9 @@
 <script setup lang="ts">
 /**
  * 单条助手消息内的 A2UI 渲染块。
- * 每条消息独立 MessageProcessor；Button action 向上抛出，由 Chat 拼成用户消息发送。
+ * 流式：messages 变长则只 processMessages 增量；reloadKey 变化则整包重载。
  */
-import { onBeforeUnmount, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { MessageProcessor } from "@a2ui/web_core/v0_9";
 import { basicCatalog } from "@a2ui/lit/v0_9";
 import type { A2uiMessage } from "@/types/a2ui";
@@ -12,7 +12,8 @@ import A2uiSurfaceHost from "@/components/A2uiSurfaceHost.vue";
 
 const props = defineProps<{
   messages: A2uiMessage[];
-  /** 忙碌时仍可展示上次 action，但不重复点击发送（由父级 send 门禁） */
+  /** replace 权威全量时递增，强制 MessageProcessor 重建 */
+  reloadKey?: number;
   disabled?: boolean;
 }>();
 
@@ -28,6 +29,8 @@ const sentHint = ref("");
 let processor: MessageProcessor | null = null;
 let surfaceModel: { dataModel?: { get: (path: string) => unknown } } | null =
   null;
+let appliedCount = 0;
+let lastReloadKey = -1;
 
 function asClientAction(raw: unknown): A2uiClientAction | null {
   if (!raw || typeof raw !== "object") return null;
@@ -47,7 +50,6 @@ function asClientAction(raw: unknown): A2uiClientAction | null {
   };
 }
 
-/** 按钮未声明 context 时，用 surface Data Model 根对象补字段 */
 function enrichContext(action: A2uiClientAction): A2uiClientAction {
   const ctx = action.context || {};
   if (Object.keys(ctx).length > 0) return action;
@@ -74,15 +76,14 @@ function patchCatalog(messages: A2uiMessage[]): A2uiMessage[] {
   });
 }
 
-function load(messages: A2uiMessage[]) {
-  processor = null;
-  surfaceModel = null;
-  surface.value = null;
+function resetUiHints() {
   lastAction.value = null;
   errorText.value = "";
   sentHint.value = "";
-  if (!messages?.length) return;
+}
 
+function ensureProcessor(): MessageProcessor {
+  if (processor) return processor;
   const mp = new MessageProcessor([basicCatalog], (raw: unknown) => {
     const parsed = asClientAction(raw);
     if (!parsed) return;
@@ -95,29 +96,96 @@ function load(messages: A2uiMessage[]) {
     sentHint.value = `已发送操作：${action.name}`;
     emit("action", action);
   });
-  processor = mp;
   mp.onSurfaceCreated((s: unknown) => {
     surface.value = s;
     surfaceModel = s as { dataModel?: { get: (path: string) => unknown } };
   });
+  processor = mp;
+  return mp;
+}
 
+function loadAll(messages: A2uiMessage[]) {
+  processor = null;
+  surfaceModel = null;
+  surface.value = null;
+  resetUiHints();
+  appliedCount = 0;
+  if (!messages?.length) return;
   try {
-    mp.processMessages(patchCatalog(messages));
+    ensureProcessor().processMessages(patchCatalog(messages));
+    appliedCount = messages.length;
   } catch (err) {
     console.error(err);
     errorText.value = String((err as Error)?.message || err);
   }
 }
 
+function appendSlice(slice: A2uiMessage[]) {
+  if (!slice.length) return;
+  try {
+    ensureProcessor().processMessages(patchCatalog(slice));
+    appliedCount += slice.length;
+  } catch (err) {
+    console.error(err);
+    loadAll([...(props.messages || [])]);
+  }
+}
+
+function syncFromProps() {
+  const msgs = props.messages || [];
+  const rk = props.reloadKey ?? 0;
+
+  if (rk !== lastReloadKey) {
+    lastReloadKey = rk;
+    loadAll(msgs);
+    return;
+  }
+
+  if (!msgs.length) {
+    if (appliedCount > 0 || surface.value) loadAll([]);
+    return;
+  }
+
+  if (!processor || appliedCount === 0) {
+    loadAll(msgs);
+    return;
+  }
+
+  if (msgs.length > appliedCount) {
+    appendSlice(msgs.slice(appliedCount));
+    return;
+  }
+
+  if (msgs.length < appliedCount) {
+    loadAll(msgs);
+  }
+}
+
 watch(
-  () => props.messages,
-  (msgs) => load(msgs || []),
-  { immediate: true, deep: true }
+  () => [props.reloadKey ?? 0, props.messages?.length ?? 0] as const,
+  () => syncFromProps(),
+  { immediate: true }
 );
 
+/** 混排备注时非图片 URL 会得到坏图，直接隐藏 */
+function onImgError(ev: Event) {
+  const t = ev.target;
+  if (!(t instanceof HTMLImageElement)) return;
+  if (!t.closest(".chat-a2ui")) return;
+  t.style.display = "none";
+  const host = t.closest("a2ui-basic-image");
+  if (host instanceof HTMLElement) host.style.display = "none";
+}
+
+onMounted(() => {
+  window.addEventListener("error", onImgError, true);
+});
+
 onBeforeUnmount(() => {
+  window.removeEventListener("error", onImgError, true);
   processor = null;
   surface.value = null;
+  appliedCount = 0;
 });
 </script>
 
@@ -129,9 +197,5 @@ onBeforeUnmount(() => {
       <p v-else class="placeholder">正在构建界面…</p>
     </div>
     <p v-if="sentHint" class="chat-a2ui-sent">{{ sentHint }}</p>
-    <details v-if="lastAction" class="chat-a2ui-action">
-      <summary>最近一次操作载荷</summary>
-      <pre>{{ JSON.stringify(lastAction, null, 2) }}</pre>
-    </details>
   </div>
 </template>

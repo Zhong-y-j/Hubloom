@@ -40,6 +40,7 @@ _CHAT_SYSTEM = """你是 **Hubloom**，面向用户的智能助手。
 - 自我介绍或能力介绍时：根据下方「可用工具」与「API 分组」各条 description 归纳 2～5 条用户可发起的任务示例
 - 禁止编造未出现在工具列表中的能力或服务
 - 本路径不调用外部工具；若用户需要查询或修改业务数据，友好说明可以协助，并引导其说出具体需求
+- **只用 Markdown 纯文本回复**；禁止输出 A2UI、`<a2ui-json>`、`---a2ui_JSON---` 或任何 UI JSON
 - 不要提及内部架构、评估器、快慢路径、ReAct 等术语
 """
 
@@ -51,9 +52,9 @@ def build_chat_system_prompt(
     catalog_snippet: str = "",
     skills_snippet: str = "",
 ) -> str:
-    """快答 system prompt（Skills + API 分组 + 工具简表），供编排层 ``assemble`` 使用。
+    """快答 system prompt（可选 Skills + API 分组 + 工具简表）。
 
-    拼接顺序：角色基座 → Skills → API 分组目录 → 可用工具简表。
+    拼接顺序：角色基座 → Skills（非 A2UI）→ API 分组目录 → 可用工具简表。
     """
     parts = [(base or _CHAT_SYSTEM).strip()]
     skills = (skills_snippet or "").strip()

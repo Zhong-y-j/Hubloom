@@ -24,6 +24,7 @@ npm run dev
 ## 说明
 
 - 前端只传业务 Token + 用户 ID；LLM / Swagger 由服务端 `env.yaml` 加载
-- Agent 最终回复若含 `---a2ui_JSON---`：后端流式切分，Markdown 继续 `text_delta`，JSON 整包 `event: a2ui`；前端在气泡内用 `<a2ui-surface>` 渲染
-- 按钮等 action：前端拼成 `[A2UI:<name>]` + 字段，作为新一轮用户消息走 `/v1/chat`
+- Thought 最终回复为 A2UI（`<a2ui-json>` 块）；List 场景可用 `$hubloom_tool` 哨兵，由运行时把本轮 `tool_result` 填进 `updateDataModel`
+- Chat 快答仍为 Markdown，不产出 A2UI
+- 按钮 action：前端拼成 `[A2UI:<name>]` 用户消息走 `/v1/chat`（删除建议两步确认）
 - 场景实验室用于摸 Catalog 与样式，与对话链路独立

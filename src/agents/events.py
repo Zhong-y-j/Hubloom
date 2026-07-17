@@ -49,9 +49,14 @@ class FinalAnswerDeltaEvent(AgentEvent):
 
 @dataclass
 class A2uiMessagesEvent(AgentEvent):
-    """从最终回复中切出的 A2UI 消息数组（结果区，非流式整包下发）。"""
+    """从最终回复中切出的 A2UI 消息（结果区）。
+
+    - ``replace=False``：流式追加已闭合的消息（如单个 ``</a2ui-json>``）
+    - ``replace=True``：权威全量（turn 结束，含工具数据绑定）
+    """
 
     messages: list[dict[str, Any]]
+    replace: bool = False
 
 
 @dataclass

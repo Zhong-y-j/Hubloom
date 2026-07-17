@@ -4,6 +4,8 @@
 - skill id = 子目录名（如 ``a2ui``）
 - 每个子目录需有 ``SKILL.md`` 才会被加载
 - ``skills_exclude`` 匹配目录名（大小写不敏感）
+- 若存在 ``references/``：注入 ``catalog-subset.md``、``patterns.md``、
+  ``templates/*.json``；**不**注入 ``examples/``（领域示例，避免绑死业务）
 """
 
 from __future__ import annotations
@@ -58,6 +60,38 @@ def _normalize_exclude(exclude: Sequence[str] | None) -> set[str]:
     return {item.strip().lower() for item in exclude if item and str(item).strip()}
 
 
+def _load_references_appendix(skill_dir: Path) -> str:
+    """加载 ``references/`` 中供运行时注入的附录（跳过 examples/）。"""
+    refs = skill_dir / "references"
+    if not refs.is_dir():
+        return ""
+
+    parts: list[str] = []
+
+    for name in ("catalog-subset.md", "patterns.md"):
+        path = refs / name
+        if path.is_file():
+            text = path.read_text(encoding="utf-8").strip()
+            if text:
+                parts.append(f"### Reference: `{name}`\n\n{text}")
+
+    templates_dir = refs / "templates"
+    if templates_dir.is_dir():
+        for path in sorted(templates_dir.glob("*.json")):
+            text = path.read_text(encoding="utf-8").strip()
+            if not text:
+                continue
+            parts.append(
+                f"### Template: `{path.stem}`\n\n"
+                f"照抄结构后按本轮业务替换文案 / path / action 名：\n\n"
+                f"```json\n{text}\n```"
+            )
+
+    if not parts:
+        return ""
+    return "## References（运行时注入）\n\n" + "\n\n".join(parts)
+
+
 def load_skills(
     skills_dir: str | Path = "skills",
     *,
@@ -85,6 +119,9 @@ def load_skills(
         body = _strip_frontmatter(raw).strip()
         if not body:
             continue
+        appendix = _load_references_appendix(child)
+        if appendix:
+            body = f"{body}\n\n{appendix}"
         loaded.append(LoadedSkill(skill_id=skill_id, path=skill_file, body=body))
 
     return loaded
