@@ -2,11 +2,15 @@
 
 本文档描述 Hubloom 的系统分层与主对话 / A2A 链路。在 VS Code、GitHub、Typora 中可预览 Mermaid 图。
 
+产品目标与交付形态见 [产品定位](./Hubloom产品定位.md)；包边界与 MCP/A2A/A2UI 收敛见 [架构边界](./Hubloom架构边界.md)。
+
+Hubloom 是**可嵌入的运行时模板**（非 Agent 平台）：示例站负责开箱演示，Runtime（`/v1/chat` 等）负责企业嵌入；业务留在企业 API，二次开发以配置与 Skill 为主。
+
 ---
 
 ## 1. 总览架构
 
-用户与外部 Agent 均可进入 Hubloom；对内走 MCP 调企业 API，对外可作 A2A Server / Client。
+用户与外部 Agent 均可进入 Hubloom；对内走 MCP 调企业 API；A2A 为可选协作（入站 Server / 出站 Client）。
 
 ```mermaid
 %%{init: {"theme":"base","themeVariables":{"background":"#ffffff","primaryColor":"#ffffff","primaryBorderColor":"#cbd5e1","primaryTextColor":"#1e293b","secondaryColor":"#f8fafc","secondaryBorderColor":"#e2e8f0","tertiaryColor":"#f0fdfa","lineColor":"#64748b","clusterBkg":"#fafbfc","clusterBorder":"#e2e8f0","titleColor":"#475569","fontSize":"14px"}}}%%
