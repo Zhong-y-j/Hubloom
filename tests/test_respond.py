@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 
 from agent.events import (
+    A2uiMessagesEvent,
     ErrorEvent,
     FinalAnswerDeltaEvent,
     FinalAnswerEvent,
@@ -39,6 +40,13 @@ from tools.builtin.memory_tool import SearchMemoryTool
 from tools.registry import ToolRegistry
 from tools.runner import ToolRunner
 
+from a2ui.basic_catalog.provider import BasicCatalog
+from a2ui.schema.constants import VERSION_0_9
+from a2ui.schema.manager import A2uiSchemaManager
+
+# 可选：环境变量切呈现模式
+_PRESENT_MODE = "a2ui"  # markdown | a2ui
+
 _ROOT = Path(__file__).resolve().parents[1]
 _SRC = _ROOT / "src"
 _MAX_THINK_ROUNDS = 5
@@ -48,6 +56,28 @@ _CLEAR_SESSION = os.getenv("CLEAR_SESSION", "").strip().lower() in {
     "true",
     "yes",
 }
+
+
+def build_respond_a2ui_system(*, ui_description: str = "") -> str:
+    """Respond(A2UI) 的 system：SchemaManager 生成（含 schema + 标签约定）。"""
+    manager = A2uiSchemaManager(
+        version=VERSION_0_9,
+        catalogs=[BasicCatalog.get_config(version=VERSION_0_9)],
+    )
+    return manager.generate_system_prompt(
+        role_description=(
+            "你处于 Hubloom 的 Respond 阶段：直接对用户呈现最终界面。\n"
+            "依据本轮上下文（用户意图、工具结果）作答；不编造未出现的事实；"
+            "不要输出 Think/Execute/tool_calls 等实现细节。"
+        ),
+        workflow_description=(
+            "缺必填信息时用表单收集；有结果时用列表/卡片展示；"
+            "说明性短句可放在 <a2ui-json> 块外的普通文本里。"
+        ),
+        ui_description=ui_description,  # v1 可空；以后可从本轮意图填
+        include_schema=True,
+        include_examples=False,
+    )
 
 
 def _db_path(cfg: HubloomConfig) -> str:
@@ -132,6 +162,36 @@ async def assemble_from_memory(
     )
 
 
+def assemble_respond_from_turn(
+    *,
+    system_prompt: str,
+    turn_messages: list[Message],
+) -> list[Message]:
+    """Respond(Markdown) 专用：system + 本轮 turn_messages。
+
+    不走 ``ContextAssembler`` token 预算，避免超长 system 裁掉 history。
+    """
+    print(f"【Respond 本轮窗】run 内 {len(turn_messages)} 条（非按 USER 切片）")
+    return [Message(role=Role.SYSTEM, content=system_prompt), *turn_messages]
+
+
+def assemble_respond_a2ui(
+    *,
+    system_prompt: str,
+    think_content: str,
+) -> list[Message]:
+    """Respond(A2UI) 专用：仅官方 A2UI system + 本轮最后一条 Think 正文。
+
+    不注入 USER 触发句、也不注入 tool 轨迹；由 Think 摘要承载本轮意图与缺参等信息。
+    """
+    body = (think_content or "").strip()
+    print(f"【Respond A2UI 窗】仅 system + 末轮 Think（{len(body)} chars）")
+    return [
+        Message(role=Role.SYSTEM, content=system_prompt),
+        Message(role=Role.USER, content=body),
+    ]
+
+
 async def load_tools(
     cfg: HubloomConfig,
     memory: MemoryManager,
@@ -203,8 +263,14 @@ def _print_tools(registry: ToolRegistry) -> None:
 
 def _print_messages(messages: list[Message]) -> None:
     print("【装配后的 messages】")
+    print(f"  共 {len(messages)} 条")
     for i, m in enumerate(messages):
         preview = m.content if isinstance(m.content, str) else str(m.content)
+        # system（尤其 A2UI schema）极长，只印头尾以免刷掉后面的本轮上下文
+        if m.role == Role.SYSTEM and len(preview) > 240:
+            preview = preview[:120] + f"…({len(preview)} chars)…" + preview[-80:]
+        elif len(preview) > 400:
+            preview = preview[:400] + "…"
         extra = ""
         if m.tool_calls:
             names = ", ".join(f"{tc.name}({tc.id})" for tc in m.tool_calls)
@@ -257,6 +323,7 @@ async def _run_execute(
     decision: ThinkDecision,
     runner: ToolRunner,
     memory: MemoryManager,
+    turn_messages: list[Message],
 ) -> ExecuteResult | None:
     print("=" * 60)
     print("【Execute】")
@@ -283,6 +350,7 @@ async def _run_execute(
 
     for msg in result.messages:
         await save_message(memory, msg, source="agent")
+        turn_messages.append(msg)
     print(f"  已写入 conversation：{len(result.messages)} 条（ASSISTANT + TOOL）")
     await print_stored_conversation(memory, title="Execute 后库内会话")
     return result
@@ -292,15 +360,24 @@ async def _run_respond(
     llm,
     messages: list[Message],
     memory: MemoryManager,
+    *,
+    present_mode: str = "markdown",
 ) -> RespondResult | None:
     print("=" * 60)
-    print("【Respond Markdown】")
+    print(f"【Respond {present_mode}】")
     _print_messages(messages)
     print("【最终回复】")
     result: RespondResult | None = None
-    async for item in respond(llm, messages, present_mode="markdown"):
+    async for item in respond(llm, messages, present_mode=present_mode):
         if isinstance(item, FinalAnswerDeltaEvent):
             print(item.delta, end="", flush=True)
+        elif isinstance(item, A2uiMessagesEvent):
+            print()
+            print("-" * 60)
+            print(
+                f"【A2uiMessagesEvent】replace={item.replace} "
+                f"n={len(item.messages)}"
+            )
         elif isinstance(item, ErrorEvent):
             print(f"\n[error] {item.error}")
         elif isinstance(item, FinalAnswerEvent):
@@ -342,7 +419,7 @@ async def test_respond() -> None:
     )
 
     # 固定 session，便于续跑与查库；可用环境变量 SESSION_ID 覆盖
-    session_id = (os.getenv("SESSION_ID") or "").strip() or "test-respond-8390ec77"
+    session_id = "test-respond-8390ec88"
     db_path = _db_path(cfg)
     memory = create_memory_manager(
         namespace=session_id,
@@ -377,18 +454,19 @@ async def test_respond() -> None:
         if existing:
             await print_stored_conversation(memory, title="已有会话（续跑）")
 
-        task = "帮我查一下当前的库存"
-        await save_message(
-            memory,
-            Message(role=Role.USER, content=task),
-            source="user",
-        )
-        await print_stored_conversation(memory, title="写入 USER 后")
+        # 本轮 Agent run 的消息窗（Respond 只用这个，不按 USER 切片）
+        # 定时任务场景：触发句可以是 SYSTEM / 其它角色，同样 append 进 turn_messages
+        turn_messages: list[Message] = []
+
+        task = "我还是想要添加一个宠物"
+        trigger = Message(role=Role.USER, content=task)
+        await save_message(memory, trigger, source="user")
+        turn_messages.append(trigger)
+        await print_stored_conversation(memory, title="写入触发消息后")
 
         for round_i in range(1, _MAX_THINK_ROUNDS + 1):
             print()
-            # 首轮：USER 已落库，assemble 去重后再拼 current_task
-            # 后续：仅从库召回（含 tool 轨迹）
+            # Think 仍可从库召回更长历史做规划；首轮 task 去重
             task_arg = task if round_i == 1 else ""
             messages = await assemble_from_memory(
                 memory,
@@ -407,20 +485,34 @@ async def test_respond() -> None:
 
             if decision.should_execute:
                 print()
-                exec_result = await _run_execute(decision, runner, memory)
+                exec_result = await _run_execute(
+                    decision, runner, memory, turn_messages
+                )
                 if exec_result is None:
                     return
                 continue
 
             if decision.should_respond:
                 print()
-                # Respond：换 system，历史全部从 conversation 召回
-                respond_messages = await assemble_from_memory(
-                    memory,
-                    system_prompt=RESPOND_MARKDOWN_SYSTEM.strip(),
-                    task="",
+                think_text = (decision.content or "").strip()
+                # 落库便于续跑；A2UI 装配只用 think_text，不塞整段 turn_messages
+                think_msg = Message(role=Role.ASSISTANT, content=think_text)
+                await save_message(memory, think_msg, source="agent")
+                turn_messages.append(think_msg)
+
+                if _PRESENT_MODE == "a2ui":
+                    respond_messages = assemble_respond_a2ui(
+                        system_prompt=build_respond_a2ui_system(),
+                        think_content=think_text,
+                    )
+                else:
+                    respond_messages = assemble_respond_from_turn(
+                        system_prompt=RESPOND_MARKDOWN_SYSTEM.strip(),
+                        turn_messages=turn_messages,
+                    )
+                await _run_respond(
+                    llm, respond_messages, memory, present_mode=_PRESENT_MODE
                 )
-                await _run_respond(llm, respond_messages, memory)
                 return
 
             print("既不 execute 也不 respond，结束")
