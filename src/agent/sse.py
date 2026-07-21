@@ -29,9 +29,10 @@ def compact_tool_result(result: str, max_len: int = 4000) -> str:
 def event_to_sse(ev: AgentEvent) -> tuple[str, dict[str, Any]] | None:
     """返回 ``(event_name, payload)``；``None`` 表示不对外推送。"""
     if isinstance(ev, TextDeltaEvent):
-        return "text_delta", {"delta": ev.delta}
+        return "text_delta", {"delta": ev.delta, "source": "markdown"}
     if isinstance(ev, FinalAnswerDeltaEvent):
-        return "text_delta", {"delta": ev.delta}
+        source = (ev.source or "markdown").strip() or "markdown"
+        return "text_delta", {"delta": ev.delta, "source": source}
     if isinstance(ev, A2uiMessagesEvent):
         payload: dict[str, Any] = {"messages": ev.messages}
         if ev.replace:

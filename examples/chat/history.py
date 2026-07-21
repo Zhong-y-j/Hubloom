@@ -74,7 +74,11 @@ def _coerce_answer_parts(raw: Any) -> list[dict[str, Any]] | None:
         if kind == "text":
             text = str(item.get("text") or "").strip()
             if text:
-                out.append({"type": "text", "text": text})
+                part: dict[str, Any] = {"type": "text", "text": text}
+                channel = str(item.get("channel") or "").strip()
+                if channel in ("markdown", "a2ui"):
+                    part["channel"] = channel
+                out.append(part)
         elif kind == "a2ui":
             out.append({"type": "a2ui"})
     return out or None

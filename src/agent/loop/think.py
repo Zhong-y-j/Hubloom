@@ -4,11 +4,11 @@
 这里只做一轮 LLM 决策。Execute 写回历史后，再次调用即可做「工具后的思考」。
 
 Think 不执行工具，只接收工具定义（``tools=``），供模型选择是否发起 tool_calls。
+呈现（要不要 A2UI）由单独的 Present 阶段决定，不在此处标记。
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
@@ -24,27 +24,6 @@ from core.provider import (
 from agent.agent_log import agent_trace
 from agent.events import AgentEvent, ErrorEvent, ThoughtDeltaEvent
 
-_NEED_A2UI_RE = re.compile(r"(?im)^\s*NEED_A2UI\s*:\s*(yes|no)\s*$")
-
-
-def parse_need_a2ui(content: str) -> bool | None:
-    """从 Think 正文解析交班标记；未写则 None。"""
-    found: bool | None = None
-    for m in _NEED_A2UI_RE.finditer(content or ""):
-        found = m.group(1).lower() == "yes"
-    return found
-
-
-def strip_need_a2ui_marker(content: str) -> str:
-    """去掉标记行，避免进 Respond / 落库展示。"""
-    lines = [ln for ln in (content or "").splitlines() if not _NEED_A2UI_RE.match(ln)]
-    return "\n".join(lines).strip()
-
-
-def _finalize_think_content(raw: str) -> tuple[str, bool | None]:
-    need = parse_need_a2ui(raw)
-    return strip_need_a2ui_marker(raw), need
-
 
 @dataclass
 class ThinkDecision:
@@ -52,7 +31,6 @@ class ThinkDecision:
 
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
-    need_a2ui: bool | None = None  # None=未标明
 
     @property
     def should_execute(self) -> bool:
@@ -76,7 +54,7 @@ async def think(
     流式产出 ``ThoughtDeltaEvent`` / ``ErrorEvent``，最后产出 ``ThinkDecision``。
 
     - ``decision.should_execute`` → 交给 Execute，写回历史后再 ``think(...)``
-    - ``decision.should_respond`` → 交给 Respond（可用 ``decision.content``）
+    - ``decision.should_respond`` → 交给 Present（auto）/ Respond
     """
     if not messages:
         agent_trace("think abort", error="empty messages")
@@ -99,7 +77,6 @@ async def think(
         tools=tools or None,
     ):
         if isinstance(ev, ReasoningDeltaEvent):
-            # 模型原生「思考链」通道（若开启 enable_thinking）
             if ev.delta:
                 content_parts.append(ev.delta)
                 yield ThoughtDeltaEvent(phase="think", delta=ev.delta)
@@ -110,8 +87,7 @@ async def think(
         elif isinstance(ev, StreamErrorEvent):
             agent_trace("think llm error", error=str(ev.error)[:200])
             yield ErrorEvent(error=str(ev.error))
-            cleaned, need = _finalize_think_content("".join(content_parts))
-            yield ThinkDecision(content=cleaned, need_a2ui=need)
+            yield ThinkDecision(content="".join(content_parts).strip())
             return
         elif isinstance(ev, StreamEndEvent):
             stop = ev.output.stop_reason
@@ -126,8 +102,7 @@ async def think(
                     yield ThoughtDeltaEvent(phase="think", delta=thinking)
             break
 
-    raw = "".join(content_parts).strip()
-    cleaned, need = _finalize_think_content(raw)
+    cleaned = "".join(content_parts).strip()
     if stop == StopReason.TOOL_CALLS and tool_calls:
         agent_trace(
             "think llm done",
@@ -136,13 +111,8 @@ async def think(
             content_len=len(cleaned),
             tool_calls=len(tool_calls),
             tools=",".join(tc.name for tc in tool_calls),
-            need_a2ui=need,
         )
-        yield ThinkDecision(
-            content=cleaned,
-            tool_calls=tool_calls,
-            need_a2ui=need,
-        )
+        yield ThinkDecision(content=cleaned, tool_calls=tool_calls)
     else:
         agent_trace(
             "think llm done",
@@ -150,6 +120,5 @@ async def think(
             stop=stop.value if stop else None,
             content_len=len(cleaned),
             tool_calls=0,
-            need_a2ui=need,
         )
-        yield ThinkDecision(content=cleaned, tool_calls=[], need_a2ui=need)
+        yield ThinkDecision(content=cleaned, tool_calls=[])

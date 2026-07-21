@@ -42,9 +42,15 @@ class FinalAnswerEvent(AgentEvent):
 
 @dataclass
 class FinalAnswerDeltaEvent(AgentEvent):
-    """最终结果区流式文本增量（仅 respond 阶段）。"""
+    """最终结果区流式文本增量（仅 respond 阶段）。
+
+    ``source``：
+    - ``markdown``：对话气泡正文
+    - ``a2ui``：交互面板侧文案（与 ``a2ui`` 事件同属 A2UI 链路）
+    """
 
     delta: str
+    source: str = "markdown"
 
 
 @dataclass
@@ -101,7 +107,7 @@ class RemoteProcessEvent(AgentEvent):
 class PhaseEvent(AgentEvent):
     """编排阶段切换（供前端展示 Agent 状态）。"""
 
-    phase: str  # thinking | replying
+    phase: str  # thinking | presenting | replying
     route: str = ""
 
 

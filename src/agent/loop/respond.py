@@ -20,7 +20,13 @@ from agent.events import (
     FinalAnswerDeltaEvent,
     FinalAnswerEvent,
 )
-from agent.loop.a2ui_stream import A2uiStreamEmit, A2uiStreamSplitter
+from agent.loop.a2ui_stream import (
+    A2uiStreamEmit,
+    A2uiStreamSplitter,
+    dump_a2ui_parse_failure,
+    neutralize_smart_quotes,
+    parse_a2ui_json_block,
+)
 
 from a2ui.parser.parser import has_a2ui_parts, parse_response
 
@@ -50,7 +56,7 @@ async def _stream_markdown(
         if isinstance(ev, DeltaEvent):
             if ev.delta:
                 content_parts.append(ev.delta)
-                yield FinalAnswerDeltaEvent(delta=ev.delta)
+                yield FinalAnswerDeltaEvent(delta=ev.delta, source="markdown")
         elif isinstance(ev, StreamErrorEvent):
             agent_trace("respond llm error", present_mode=present_mode, error=str(ev.error)[:200])
             yield ErrorEvent(error=str(ev.error))
@@ -62,7 +68,7 @@ async def _stream_markdown(
             usage = ev.output.usage
             if not content_parts and ev.output.content:
                 content_parts.append(ev.output.content)
-                yield FinalAnswerDeltaEvent(delta=ev.output.content)
+                yield FinalAnswerDeltaEvent(delta=ev.output.content, source="markdown")
             break
 
     content = "".join(content_parts).strip()
@@ -77,18 +83,47 @@ async def _stream_markdown(
 
 
 def _extract_a2ui_messages(content: str) -> list[dict[str, Any]]:
-    """从完整回复正文切出 A2UI messages（权威全量）。"""
+    """从完整回复正文切出 A2UI messages（权威全量）。
+
+    先中和弯引号，再按块解析；单块失败会落盘并抛出。
+    """
     if not content or not has_a2ui_parts(content):
         return []
-    messages: list[dict[str, Any]] = []
-    for part in parse_response(content):
-        if part.a2ui_json is None:
-            continue
-        if isinstance(part.a2ui_json, list):
-            messages.extend(m for m in part.a2ui_json if isinstance(m, dict))
-        elif isinstance(part.a2ui_json, dict):
-            messages.append(part.a2ui_json)
-    return messages
+    safe = neutralize_smart_quotes(content)
+    try:
+        messages: list[dict[str, Any]] = []
+        for part in parse_response(safe):
+            if part.a2ui_json is None:
+                continue
+            if isinstance(part.a2ui_json, list):
+                messages.extend(m for m in part.a2ui_json if isinstance(m, dict))
+            elif isinstance(part.a2ui_json, dict):
+                messages.append(part.a2ui_json)
+        return messages
+    except Exception as exc:
+        import re
+
+        from a2ui.schema.constants import A2UI_CLOSE_TAG, A2UI_OPEN_TAG
+
+        pattern = re.compile(
+            re.escape(A2UI_OPEN_TAG) + r"(.*?)" + re.escape(A2UI_CLOSE_TAG),
+            re.DOTALL,
+        )
+        recovered: list[dict[str, Any]] = []
+        last_err: BaseException | None = None
+        for i, m in enumerate(pattern.finditer(safe)):
+            try:
+                recovered.extend(
+                    parse_a2ui_json_block(m.group(1), stage=f"extract_block_{i}")
+                )
+            except Exception as block_exc:
+                last_err = block_exc
+        if recovered and last_err is None:
+            return recovered
+        if last_err is not None:
+            raise last_err from exc
+        dump_a2ui_parse_failure(raw=safe, error=exc, stage="extract_full")
+        raise
 
 
 def user_visible_content(
@@ -100,14 +135,26 @@ def user_visible_content(
 
     多段正文会拼成一段（顺序信息见 ``answer_display_parts``）。
     """
+    import re
+
     text = (content or "").strip()
     if text and has_a2ui_parts(text):
-        chunks: list[str] = []
-        for part in parse_response(text):
-            piece = (getattr(part, "text", None) or "").strip()
-            if piece:
-                chunks.append(piece)
-        text = "\n\n".join(chunks).strip()
+        try:
+            safe = neutralize_smart_quotes(text)
+            chunks: list[str] = []
+            for part in parse_response(safe):
+                piece = (getattr(part, "text", None) or "").strip()
+                if piece:
+                    chunks.append(piece)
+            text = "\n\n".join(chunks).strip()
+        except Exception:
+            text = re.sub(
+                r"<a2ui-json>[\s\S]*?</a2ui-json>",
+                "",
+                text,
+                flags=re.IGNORECASE,
+            )
+            text = re.sub(r"\n{3,}", "\n\n", text).strip()
     if not text and a2ui_messages:
         return "（交互界面）"
     return text
@@ -117,34 +164,43 @@ def answer_display_parts(
     content: str,
     *,
     a2ui_messages: list[dict[str, Any]] | None = None,
+    channel: str | None = None,
 ) -> list[dict[str, Any]]:
-    """从原始 Respond 输出拆出 text / a2ui 交错段，供前端按序渲染。
-
-    形状::
-        [{"type": "text", "text": "..."}, {"type": "a2ui"}, {"type": "text", "text": "..."}]
-
-    - ``content`` 列仍存 ``user_visible_content`` 合并正文（兼容旧逻辑 / Think）
-    - 本列表仅写入 metadata / SSE，不影响已有行的读取
-    - 多个 ``<a2ui-json>`` 只插一个 ``a2ui`` 标记（同一 surface）
-    """
+    """从原始 Respond 输出拆出 text / a2ui 交错段，供前端按序渲染。"""
     raw = content or ""
     parts: list[dict[str, Any]] = []
+
+    def _text_part(piece: str) -> dict[str, Any]:
+        item: dict[str, Any] = {"type": "text", "text": piece}
+        if channel:
+            item["channel"] = channel
+        return item
+
     if raw and has_a2ui_parts(raw):
-        saw_a2ui = False
-        for part in parse_response(raw):
-            piece = (getattr(part, "text", None) or "").strip()
-            if piece:
-                parts.append({"type": "text", "text": piece})
-            if getattr(part, "a2ui_json", None) is not None and not saw_a2ui:
+        try:
+            safe = neutralize_smart_quotes(raw)
+            saw_a2ui = False
+            for part in parse_response(safe):
+                piece = (getattr(part, "text", None) or "").strip()
+                if piece:
+                    parts.append(_text_part(piece))
+                if getattr(part, "a2ui_json", None) is not None and not saw_a2ui:
+                    parts.append({"type": "a2ui"})
+                    saw_a2ui = True
+            if a2ui_messages and not saw_a2ui:
                 parts.append({"type": "a2ui"})
-                saw_a2ui = True
-        if a2ui_messages and not saw_a2ui:
-            parts.append({"type": "a2ui"})
-        return parts
+            return parts
+        except Exception:
+            visible = user_visible_content(raw, a2ui_messages=a2ui_messages)
+            if visible and visible != "（交互界面）":
+                parts.append(_text_part(visible))
+            if a2ui_messages:
+                parts.append({"type": "a2ui"})
+            return parts
 
     visible = (raw or "").strip()
     if visible:
-        parts.append({"type": "text", "text": visible})
+        parts.append(_text_part(visible))
     if a2ui_messages:
         parts.append({"type": "a2ui"})
     return parts
@@ -155,7 +211,7 @@ async def _emit_splitter_items(
 ) -> AsyncIterator[AgentEvent]:
     for item in emits:
         if item.kind == "text" and item.text:
-            yield FinalAnswerDeltaEvent(delta=item.text)
+            yield FinalAnswerDeltaEvent(delta=item.text, source="a2ui")
         elif item.kind == "a2ui" and item.messages:
             yield A2uiMessagesEvent(
                 messages=list(item.messages),

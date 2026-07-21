@@ -10,6 +10,7 @@ from a2ui.schema.constants import VERSION_0_9
 from a2ui.schema.manager import A2uiSchemaManager
 from agent.agent_log import agent_trace
 from agent.prompts import (
+    PRESENT_SYSTEM,
     RESPOND_A2UI_UI_DESCRIPTION,
     RESPOND_MARKDOWN_SYSTEM,
     THINK_SYSTEM_AFTER_TOOLS,
@@ -228,5 +229,15 @@ def assemble_respond_a2ui(
     )
     return [
         Message(role=Role.SYSTEM, content=system_prompt),
+        Message(role=Role.USER, content=body),
+    ]
+
+
+def assemble_present(*, think_content: str) -> list[Message]:
+    """Present：system + Think 正文，判断 NEED_A2UI。"""
+    body = (think_content or "").strip() or "（空 Think）"
+    agent_trace("assemble present", think_len=len(body))
+    return [
+        Message(role=Role.SYSTEM, content=PRESENT_SYSTEM.strip()),
         Message(role=Role.USER, content=body),
     ]

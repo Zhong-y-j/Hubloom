@@ -20,6 +20,7 @@ from tools.runner import ToolRunner
 
 from agent.agent_log import agent_trace, clip
 from agent.assemble import (
+    assemble_present,
     assemble_respond_a2ui,
     assemble_respond_markdown,
     assemble_think,
@@ -36,6 +37,7 @@ from agent.events import (
 )
 from agent.llm_context_log import dump_llm_context
 from agent.loop.execute import ExecuteResult, execute
+from agent.loop.present import PresentDecision, present
 from agent.loop.respond import (
     PresentMode,
     RespondResult,
@@ -140,7 +142,7 @@ def plan_respond_passes(
 
     - ``markdown``：只 Markdown
     - ``a2ui``：只 A2UI（强制）
-    - ``auto``：Markdown **始终**有；``NEED_A2UI: yes`` 时再追加 A2UI（可并行）
+    - ``auto``：Markdown **始终**有；Present 判定 need_a2ui 后再追加 A2UI（可并行）
     """
     if requested == "markdown":
         return RespondPassPlan(run_markdown=True, run_a2ui=False)
@@ -192,7 +194,7 @@ async def run_stream(
 
     ``think_system``：工具前提示（含 skills/catalog）。
     ``think_system_after``：工具后短提示；缺省则全程用 ``think_system``。
-    ``present_mode=auto``：由 Think 的 NEED_A2UI 标记选择 Markdown / A2UI Respond。
+    ``present_mode=auto``：Think 交班后跑 Present（NEED_A2UI），再决定 Markdown / A2UI Respond。
     """
     started = time.monotonic()
     tool_calls = 0
@@ -283,7 +285,6 @@ async def run_stream(
             content_len=len(decision.content or ""),
             tool_calls=len(tool_names),
             tools=",".join(tool_names) if tool_names else "-",
-            need_a2ui=decision.need_a2ui,
             round_ms=_elapsed_ms(round_started),
         )
 
@@ -366,11 +367,37 @@ async def run_stream(
             )
             turn_messages.append(think_msg)
 
-            plan = plan_respond_passes(present_mode, decision.need_a2ui)
+            # auto：Present 单独判要不要 A2UI；强制模式跳过
+            need_a2ui: bool | None = None
+            if present_mode == "auto":
+                present_messages = assemble_present(think_content=think_text)
+                dump_llm_context(
+                    phase="present",
+                    messages=present_messages,
+                    round_i=round_i,
+                    present_mode="auto",
+                )
+                present_decision: PresentDecision | None = None
+                async for item in present(llm, present_messages):
+                    if isinstance(item, AgentEvent):
+                        yield item
+                    elif isinstance(item, PresentDecision):
+                        present_decision = item
+                if present_decision is None:
+                    need_a2ui = False
+                    agent_trace(
+                        "present fail",
+                        round=round_i,
+                        error="no PresentDecision",
+                    )
+                else:
+                    need_a2ui = bool(present_decision.need_a2ui)
+
+            plan = plan_respond_passes(present_mode, need_a2ui)
             agent_trace(
                 "respond plan",
                 requested=present_mode,
-                need_a2ui=decision.need_a2ui,
+                need_a2ui=need_a2ui,
                 run_markdown=plan.run_markdown,
                 run_a2ui=plan.run_a2ui,
                 parallel=bool(plan.run_markdown and plan.run_a2ui),
@@ -580,7 +607,7 @@ async def run_stream(
             elapsed = _elapsed_ms(started)
             result_mode = plan.result_present_mode
 
-            # 长期正文以 Markdown 为准；A2UI 进 metadata
+            # 长期正文以 Markdown 为准；A2UI 全文（含侧栏文案）进 metadata
             md_visible = ""
             if md_result is not None:
                 md_visible = user_visible_content(md_result.content)
@@ -588,7 +615,13 @@ async def run_stream(
                 (a2ui_result.a2ui_messages if a2ui_result else None) or []
             )
             a2ui_visible = ""
+            a2ui_parts: list[dict[str, Any]] = []
             if a2ui_result is not None:
+                a2ui_parts = answer_display_parts(
+                    a2ui_result.content,
+                    a2ui_messages=a2ui_messages,
+                    channel="a2ui",
+                )
                 a2ui_visible = user_visible_content(
                     a2ui_result.content,
                     a2ui_messages=a2ui_messages,
@@ -596,44 +629,57 @@ async def run_stream(
                 if a2ui_visible == "（交互界面）":
                     a2ui_visible = ""
 
-            visible = md_visible or a2ui_visible
+            if plan.run_markdown:
+                stored_content = md_visible or (
+                    "（交互界面）" if a2ui_messages else ""
+                )
+            else:
+                stored_content = a2ui_visible or (
+                    "（交互界面）" if a2ui_messages else ""
+                )
+
             parts: list[dict[str, Any]] = []
             if md_visible:
-                parts.append({"type": "text", "text": md_visible})
-            if a2ui_messages:
+                parts.append(
+                    {"type": "text", "text": md_visible, "channel": "markdown"}
+                )
+            parts.extend(a2ui_parts)
+            if a2ui_messages and not any(p.get("type") == "a2ui" for p in parts):
                 parts.append({"type": "a2ui"})
-            if a2ui_visible and a2ui_visible != md_visible:
-                parts.append({"type": "text", "text": a2ui_visible})
 
             agent_trace(
                 "respond done",
                 round=round_i,
                 present_mode=result_mode,
-                content_len=len(visible),
+                content_len=len(stored_content),
+                md_len=len(md_visible),
+                a2ui_text_len=len(a2ui_visible),
                 a2ui=len(a2ui_messages),
                 answer_parts=len(parts),
                 respond_ms=_elapsed_ms(respond_started),
             )
-            if visible or a2ui_messages:
+            if stored_content or a2ui_messages:
                 turn_meta: dict[str, Any] = {
                     "route": result_mode,
                     "requested_present_mode": present_mode,
                 }
-                if decision.need_a2ui is not None:
-                    turn_meta["need_a2ui"] = decision.need_a2ui
+                if need_a2ui is not None:
+                    turn_meta["need_a2ui"] = need_a2ui
                 if think_text:
                     turn_meta["thought"] = think_text
                 if tool_log:
                     turn_meta["tools"] = tool_log
                 if a2ui_messages:
                     turn_meta["a2ui"] = a2ui_messages
+                if a2ui_visible:
+                    turn_meta["a2ui_text"] = a2ui_visible
                 if parts:
                     turn_meta["answer_parts"] = parts
                 await _remember(
                     memory,
                     Message(
                         role=Role.ASSISTANT,
-                        content=visible or "（交互界面）",
+                        content=stored_content or "（交互界面）",
                     ),
                     source="agent",
                     metadata=turn_meta,
@@ -645,7 +691,7 @@ async def run_stream(
                 think_rounds=round_i,
                 tool_calls=tool_calls,
                 tool_errors=tool_errors,
-                content_len=len(visible),
+                content_len=len(stored_content),
                 present_mode=result_mode,
                 elapsed_ms=elapsed,
             )
@@ -656,7 +702,7 @@ async def run_stream(
                 elapsed_ms=elapsed,
             )
             yield RunResult(
-                content=visible or "（交互界面）",
+                content=stored_content or "（交互界面）",
                 present_mode=result_mode,
                 a2ui_messages=a2ui_messages,
                 answer_parts=parts,

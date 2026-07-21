@@ -5,6 +5,7 @@ import { renderMarkdownToHtml } from "@/utils/markdown";
 import ChatA2uiBlock from "@/components/ChatA2uiBlock.vue";
 import { formatA2uiActionAsChat } from "@/utils/a2uiAction";
 import type { A2uiClientAction } from "@/utils/a2uiAction";
+import type { AnswerPart, ChatMessage } from "@/types/chat";
 
 const {
   token,
@@ -28,23 +29,47 @@ const {
 
 const draft = ref("");
 const listRef = ref<HTMLElement | null>(null);
+const panelMessageId = ref<string | null>(null);
+const panelOpen = ref(false);
+const autoOpenedForId = ref<string | null>(null);
 
 const phaseLabel = computed(() => {
   if (agentPhase.value === "understanding") return "理解中";
   if (agentPhase.value === "thinking") return "思考中";
+  if (agentPhase.value === "presenting") return "呈现决策中";
   if (agentPhase.value === "replying") return "回复中";
   return "";
 });
 
-/** 纯 A2UI 落库时的占位正文，有界面时不重复展示 */
+const panelMessage = computed(() => {
+  const id = panelMessageId.value;
+  if (!id) return null;
+  return messages.value.find((m) => m.id === id) || null;
+});
+
+function messageHasA2ui(m: ChatMessage): boolean {
+  return Boolean(
+    m.a2uiMessages?.length ||
+      m.a2uiProse?.trim() ||
+      m.answerParts?.some(
+        (p) => p.type === "a2ui" || (p.type === "text" && p.channel === "a2ui"),
+      ),
+  );
+}
+
+const panelHasA2ui = computed(() => {
+  const m = panelMessage.value;
+  return m ? messageHasA2ui(m) : false;
+});
+
 function isA2uiPlaceholder(content: string): boolean {
   return content.trim() === "（交互界面）";
 }
 
-/** 展示用正文：去掉泄漏的 a2ui-json 标签块（后端正常已不会流式下发） */
 function visibleAnswerText(content: string): string {
   const raw = (content || "").trim();
   if (!raw) return "";
+  if (isA2uiPlaceholder(raw)) return "";
   if (!raw.includes("<a2ui-json>")) return raw;
   return raw
     .replace(/<a2ui-json>[\s\S]*?<\/a2ui-json>/gi, "")
@@ -52,9 +77,72 @@ function visibleAnswerText(content: string): string {
     .trim();
 }
 
+/** 气泡：仅 Markdown 通道 */
+function answerMarkdown(m: ChatMessage): string {
+  if (m.answerParts?.length) {
+    const joined = m.answerParts
+      .filter(
+        (p): p is { type: "text"; text: string; channel?: "markdown" | "a2ui" } =>
+          p.type === "text" && (p.channel || "markdown") === "markdown",
+      )
+      .map((p) => p.text)
+      .join("\n\n");
+    return visibleAnswerText(joined);
+  }
+  return visibleAnswerText(m.content);
+}
+
+/** 右侧：A2UI 通道全文（文案 + 表单） */
+function a2uiPanelParts(m: ChatMessage): AnswerPart[] {
+  if (m.answerParts?.length) {
+    const parts = m.answerParts.filter(
+      (p) =>
+        p.type === "a2ui" || (p.type === "text" && p.channel === "a2ui"),
+    );
+    if (parts.length) return parts;
+  }
+  const fallback: AnswerPart[] = [];
+  if (m.a2uiProse?.trim()) {
+    fallback.push({ type: "text", text: m.a2uiProse.trim(), channel: "a2ui" });
+  }
+  if (m.a2uiMessages?.length) fallback.push({ type: "a2ui" });
+  return fallback;
+}
+
+function openA2uiPanel(messageId: string) {
+  panelMessageId.value = messageId;
+  panelOpen.value = true;
+}
+
+function closeA2uiPanel() {
+  panelOpen.value = false;
+}
+
+function toggleA2uiPanel(messageId: string) {
+  if (panelOpen.value && panelMessageId.value === messageId) {
+    closeA2uiPanel();
+    return;
+  }
+  openA2uiPanel(messageId);
+}
+
 function onCredChange() {
   persist();
   status.value = ready.value ? "就绪" : "请填写 Token 与用户 ID";
+}
+
+function onNewSession() {
+  closeA2uiPanel();
+  panelMessageId.value = null;
+  autoOpenedForId.value = null;
+  newSession();
+}
+
+async function onLoadHistory() {
+  closeA2uiPanel();
+  panelMessageId.value = null;
+  autoOpenedForId.value = null;
+  await loadHistory();
 }
 
 async function scrollBottom() {
@@ -63,7 +151,6 @@ async function scrollBottom() {
   if (el) el.scrollTop = el.scrollHeight;
 }
 
-/** 思考过程默认停在最新；流式时持续跟随，历史消息首次展示也滚到底 */
 async function scrollThoughtToLatest() {
   await nextTick();
   const root = listRef.value;
@@ -81,10 +168,23 @@ async function scrollThoughtToLatest() {
   }
 }
 
-watch(messages, () => {
-  void scrollBottom();
-  void scrollThoughtToLatest();
-}, { deep: true });
+watch(
+  messages,
+  () => {
+    void scrollBottom();
+    void scrollThoughtToLatest();
+    const streaming = [...messages.value]
+      .reverse()
+      .find(
+        (m) => m.role === "assistant" && m.streaming && messageHasA2ui(m),
+      );
+    if (streaming && autoOpenedForId.value !== streaming.id) {
+      autoOpenedForId.value = streaming.id;
+      openA2uiPanel(streaming.id);
+    }
+  },
+  { deep: true },
+);
 
 async function onSubmit() {
   const text = draft.value;
@@ -128,7 +228,6 @@ function toolName(title: string): string {
     .trim();
 }
 
-/** 从工具 body JSON 解析 MCP 的 tag / 业务 tool_name（兼容 call 的 args 与返回里的 tool 字段） */
 function parseToolTarget(body: string): { tag?: string; apiTool?: string } {
   const raw = (body || "").trim();
   if (!raw.startsWith("{") && !raw.startsWith("[")) return {};
@@ -149,10 +248,6 @@ function parseToolTarget(body: string): { tag?: string; apiTool?: string } {
   }
 }
 
-/**
- * 标题旁展示的 tag / 业务工具名。
- * 返回/失败卡片常没有 tag，向前找同名「调用」卡片补全。
- */
 function toolTargetMeta(
   tools: { title: string; body: string }[],
   index: number,
@@ -188,7 +283,10 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="chat-layout">
+  <div
+    class="chat-layout"
+    :class="{ 'chat-layout-panel-open': panelOpen && panelHasA2ui }"
+  >
     <aside class="chat-sidebar">
       <div class="chat-brand">
         <div class="chat-brand-mark">A</div>
@@ -199,8 +297,8 @@ onMounted(async () => {
       </div>
 
       <p class="chat-intro">
-        与 <code>examples/chat</code> 同源：前端只传 Token + 用户 ID。最终回复的
-        Markdown 流式展示；A2UI 由后端 <code>event: a2ui</code> 按消息增量下发并渐进渲染。
+        气泡展示 Markdown；交互在右侧面板。推荐
+        <strong>Auto</strong>：Think → Present → Respond（按需并行 A2UI）。
       </p>
 
       <div class="config-card">
@@ -226,10 +324,10 @@ onMounted(async () => {
           />
         </label>
         <div class="chat-actions">
-          <button type="button" class="btn primary block" @click="loadHistory">
+          <button type="button" class="btn primary block" @click="onLoadHistory">
             加载历史
           </button>
-          <button type="button" class="btn ghost" @click="newSession">
+          <button type="button" class="btn ghost" @click="onNewSession">
             新会话
           </button>
         </div>
@@ -256,8 +354,9 @@ onMounted(async () => {
         <label class="field">
           <span>呈现模式</span>
           <select v-model="presentMode" @change="persist">
+            <option value="auto">Auto（Markdown + 按需 A2UI）</option>
             <option value="markdown">Markdown（纯文本）</option>
-            <option value="a2ui">A2UI（表单 / 列表）</option>
+            <option value="a2ui">A2UI（仅交互界面）</option>
           </select>
         </label>
         <label class="checkbox">
@@ -272,199 +371,243 @@ onMounted(async () => {
       <p class="chat-status">{{ status }}</p>
     </aside>
 
-    <section class="chat-main">
-      <header class="chat-top">
-        <h2>对话</h2>
-        <span v-if="route" class="badge">{{
-          route === "thought" ? "深度思考" : route === "chat" ? "快答" : route
-        }}</span>
-      </header>
-
-      <div ref="listRef" class="chat-messages">
-        <div
-          v-if="!messages.length"
-          class="empty-state"
-          :class="ready ? 'empty-state-ready' : 'empty-state-disconnected'"
-        >
-          <p class="empty-title">{{ ready ? "开始对话" : "请填写凭证" }}</p>
-          <p class="empty-desc">
-            {{
-              ready
-                ? "用自然语言查询、操作已接入的 API。"
-                : "在左侧填写业务 Token 与用户 ID 后即可开始。"
-            }}
-          </p>
-        </div>
-
-        <template v-for="m in messages" :key="m.id">
-          <div v-if="m.role === 'user'" class="msg user">{{ m.content }}</div>
-          <div
-            v-else
-            class="msg assistant turn"
-            :class="{ error: m.error }"
+    <div class="chat-workspace">
+      <section class="chat-main">
+        <header class="chat-top">
+          <h2>对话</h2>
+          <span v-if="route" class="badge">{{
+            route === "thought"
+              ? "深度思考"
+              : route === "chat"
+                ? "快答"
+                : route === "auto"
+                  ? "Auto"
+                  : route === "present"
+                    ? "Present"
+                    : route
+          }}</span>
+          <button
+            v-if="panelHasA2ui && !panelOpen"
+            type="button"
+            class="btn ghost chat-top-panel-btn"
+            @click="panelOpen = true"
           >
+            打开交互面板
+          </button>
+        </header>
+
+        <div ref="listRef" class="chat-messages">
+          <div
+            v-if="!messages.length"
+            class="empty-state"
+            :class="ready ? 'empty-state-ready' : 'empty-state-disconnected'"
+          >
+            <p class="empty-title">{{ ready ? "开始对话" : "请填写凭证" }}</p>
+            <p class="empty-desc">
+              {{
+                ready
+                  ? "用自然语言查询、操作已接入的 API。"
+                  : "在左侧填写业务 Token 与用户 ID 后即可开始。"
+              }}
+            </p>
+          </div>
+
+          <template v-for="m in messages" :key="m.id">
+            <div v-if="m.role === 'user'" class="msg user">{{ m.content }}</div>
             <div
-              v-if="
-                m.streaming &&
-                agentPhase &&
-                !m.content &&
-                !m.a2uiMessages?.length &&
-                !(m.thought || (showTools && m.tools?.length))
-              "
-              class="agent-status"
-              :data-state="agentPhase"
+              v-else
+              class="msg assistant turn"
+              :class="{
+                error: m.error,
+                'turn-panel-active':
+                  panelOpen && panelMessageId === m.id && messageHasA2ui(m),
+              }"
             >
-              <span class="agent-status-label">{{ phaseLabel }}</span>
-              <span class="agent-status-dots">
-                <span class="dot" /><span class="dot" /><span class="dot" />
-              </span>
-            </div>
-
-            <details
-              v-if="m.thought || (showTools && m.tools?.length)"
-              class="thought-panel"
-              open
-            >
-              <summary class="thought-summary">
-                {{
-                  m.thought?.trim()
-                    ? `思考过程（${m.thought.trim().length} 字）`
-                    : "思考过程"
-                }}
-              </summary>
-              <div
-                v-if="m.thought"
-                class="thought-body"
-                :data-thought-scroll="m.id"
-              >{{ m.thought }}</div>
-              <div
-                v-if="showTools && m.tools?.length"
-                class="thought-tools"
-              >
-                <details
-                  v-for="(t, i) in m.tools"
-                  :key="i"
-                  class="tool-card"
-                >
-                  <summary class="tool-card-summary">
-                    <span
-                      v-if="toolKind(t.title)"
-                      class="tool-chip"
-                      :class="toolKind(t.title)"
-                    >{{ toolKindLabel(t.title) }}</span>
-                    <span class="tool-card-name">{{ toolName(t.title) }}</span>
-                    <template
-                      v-for="meta in [toolTargetMeta(m.tools || [], i)]"
-                      :key="'target'"
-                    >
-                      <template v-if="meta.tag">
-                        <span class="tool-sep">·</span>
-                        <span class="tool-target-tag">{{ meta.tag }}</span>
-                      </template>
-                      <template v-if="meta.apiTool">
-                        <span class="tool-sep">/</span>
-                        <span class="tool-target-api">{{ meta.apiTool }}</span>
-                      </template>
-                    </template>
-                  </summary>
-                  <pre>{{ t.body }}</pre>
-                </details>
-              </div>
-            </details>
-
-            <!-- Think 已结束、Respond 尚未出字：在结果区给明确过渡，避免像卡住 -->
-            <div
-              v-if="
-                m.streaming &&
-                agentPhase === 'replying' &&
-                !m.content &&
-                !m.a2uiMessages?.length
-              "
-              class="answer-pending"
-            >
-              <span class="answer-pending-bar" aria-hidden="true" />
-              <div class="answer-pending-copy">
-                <strong>正在生成回复</strong>
-                <span>思考已完成，正在输出最终答案…</span>
-              </div>
-              <span class="agent-status-dots answer-pending-dots">
-                <span class="dot" /><span class="dot" /><span class="dot" />
-              </span>
-            </div>
-
-            <template v-if="m.answerParts?.length">
-              <template v-for="(part, pi) in m.answerParts" :key="pi">
-                <div
-                  v-if="
-                    part.type === 'text' &&
-                    visibleAnswerText(part.text) &&
-                    !isA2uiPlaceholder(part.text)
-                  "
-                  class="answer-body markdown-body"
-                  :class="{ typing: m.streaming }"
-                  v-html="renderMarkdownToHtml(visibleAnswerText(part.text))"
-                />
-                <ChatA2uiBlock
-                  v-else-if="part.type === 'a2ui' && m.a2uiMessages?.length"
-                  :messages="m.a2uiMessages"
-                  :reload-key="m.a2uiReloadKey || 0"
-                  :disabled="busy"
-                  @action="onA2uiAction"
-                />
-              </template>
-            </template>
-            <template v-else>
               <div
                 v-if="
-                  visibleAnswerText(m.content) &&
-                  !(m.a2uiMessages?.length && isA2uiPlaceholder(m.content))
+                  m.streaming &&
+                  agentPhase &&
+                  !answerMarkdown(m) &&
+                  !messageHasA2ui(m) &&
+                  !(m.thought || (showTools && m.tools?.length))
                 "
-                class="answer-body"
-                :class="{
-                  'markdown-body': true,
-                  typing: m.streaming,
-                }"
-                v-html="renderMarkdownToHtml(visibleAnswerText(m.content))"
+                class="agent-status"
+                :data-state="agentPhase"
+              >
+                <span class="agent-status-label">{{ phaseLabel }}</span>
+                <span class="agent-status-dots">
+                  <span class="dot" /><span class="dot" /><span class="dot" />
+                </span>
+              </div>
+
+              <details
+                v-if="m.thought || (showTools && m.tools?.length)"
+                class="thought-panel"
+                open
+              >
+                <summary class="thought-summary">
+                  {{
+                    m.thought?.trim()
+                      ? `思考过程（${m.thought.trim().length} 字）`
+                      : "思考过程"
+                  }}
+                </summary>
+                <div
+                  v-if="m.thought"
+                  class="thought-body"
+                  :data-thought-scroll="m.id"
+                >{{ m.thought }}</div>
+                <div
+                  v-if="showTools && m.tools?.length"
+                  class="thought-tools"
+                >
+                  <details
+                    v-for="(t, i) in m.tools"
+                    :key="i"
+                    class="tool-card"
+                  >
+                    <summary class="tool-card-summary">
+                      <span
+                        v-if="toolKind(t.title)"
+                        class="tool-chip"
+                        :class="toolKind(t.title)"
+                      >{{ toolKindLabel(t.title) }}</span>
+                      <span class="tool-card-name">{{ toolName(t.title) }}</span>
+                      <template
+                        v-for="meta in [toolTargetMeta(m.tools || [], i)]"
+                        :key="'target'"
+                      >
+                        <template v-if="meta.tag">
+                          <span class="tool-sep">·</span>
+                          <span class="tool-target-tag">{{ meta.tag }}</span>
+                        </template>
+                        <template v-if="meta.apiTool">
+                          <span class="tool-sep">/</span>
+                          <span class="tool-target-api">{{ meta.apiTool }}</span>
+                        </template>
+                      </template>
+                    </summary>
+                    <pre>{{ t.body }}</pre>
+                  </details>
+                </div>
+              </details>
+
+              <div
+                v-if="
+                  m.streaming &&
+                  (agentPhase === 'presenting' || agentPhase === 'replying') &&
+                  !answerMarkdown(m) &&
+                  !messageHasA2ui(m)
+                "
+                class="answer-pending"
+              >
+                <span class="answer-pending-bar" aria-hidden="true" />
+                <div class="answer-pending-copy">
+                  <strong>{{
+                    agentPhase === "presenting"
+                      ? "正在决定呈现方式"
+                      : "正在生成回复"
+                  }}</strong>
+                  <span>{{
+                    agentPhase === "presenting"
+                      ? "思考已完成，Present 判定是否需要交互面板…"
+                      : "思考已完成，正在输出最终答案…"
+                  }}</span>
+                </div>
+                <span class="agent-status-dots answer-pending-dots">
+                  <span class="dot" /><span class="dot" /><span class="dot" />
+                </span>
+              </div>
+
+              <div
+                v-if="answerMarkdown(m)"
+                class="answer-body markdown-body"
+                :class="{ typing: m.streaming }"
+                v-html="renderMarkdownToHtml(answerMarkdown(m))"
               />
 
-              <ChatA2uiBlock
-                v-if="m.a2uiMessages?.length"
-                :messages="m.a2uiMessages"
-                :reload-key="m.a2uiReloadKey || 0"
-                :disabled="busy"
-                @action="onA2uiAction"
-              />
-            </template>
-          </div>
-        </template>
-      </div>
-
-      <form
-        class="composer"
-        :class="{ 'composer-disabled': !ready }"
-        @submit.prevent="onSubmit"
-      >
-        <div class="composer-inner">
-          <textarea
-            v-model="draft"
-            rows="2"
-            :disabled="!ready || busy"
-            :placeholder="
-              ready
-                ? '输入消息，Enter 发送，Shift+Enter 换行'
-                : '请先填写 Token 与用户 ID'
-            "
-            @keydown="onKeydown"
-          />
-          <button
-            type="submit"
-            class="btn primary"
-            :disabled="!ready || busy || !draft.trim()"
-          >
-            发送
-          </button>
+              <button
+                v-if="messageHasA2ui(m)"
+                type="button"
+                class="a2ui-panel-chip"
+                :class="{ active: panelOpen && panelMessageId === m.id }"
+                @click="toggleA2uiPanel(m.id)"
+              >
+                <span class="a2ui-panel-chip-dot" aria-hidden="true" />
+                <span>{{
+                  panelOpen && panelMessageId === m.id
+                    ? "交互面板已打开"
+                    : "打开交互面板"
+                }}</span>
+              </button>
+            </div>
+          </template>
         </div>
-      </form>
-    </section>
+
+        <form
+          class="composer"
+          :class="{ 'composer-disabled': !ready }"
+          @submit.prevent="onSubmit"
+        >
+          <div class="composer-inner">
+            <textarea
+              v-model="draft"
+              rows="2"
+              :disabled="!ready || busy"
+              :placeholder="
+                ready
+                  ? '输入消息，Enter 发送，Shift+Enter 换行'
+                  : '请先填写 Token 与用户 ID'
+              "
+              @keydown="onKeydown"
+            />
+            <button
+              type="submit"
+              class="btn primary"
+              :disabled="!ready || busy || !draft.trim()"
+            >
+              发送
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <aside
+        v-if="panelOpen && panelHasA2ui && panelMessage"
+        class="a2ui-drawer"
+        aria-label="交互面板"
+      >
+        <header class="a2ui-drawer-top">
+          <div>
+            <p class="a2ui-drawer-kicker">交互面板</p>
+            <h3>A2UI</h3>
+          </div>
+          <button
+            type="button"
+            class="btn ghost a2ui-drawer-close"
+            aria-label="关闭交互面板"
+            @click="closeA2uiPanel"
+          >
+            关闭
+          </button>
+        </header>
+        <div class="a2ui-drawer-body">
+          <template v-for="(part, pi) in a2uiPanelParts(panelMessage)" :key="pi">
+            <div
+              v-if="part.type === 'text' && visibleAnswerText(part.text)"
+              class="a2ui-drawer-prose markdown-body"
+              v-html="renderMarkdownToHtml(visibleAnswerText(part.text))"
+            />
+            <ChatA2uiBlock
+              v-else-if="part.type === 'a2ui' && panelMessage.a2uiMessages?.length"
+              :messages="panelMessage.a2uiMessages || []"
+              :reload-key="panelMessage.a2uiReloadKey || 0"
+              :disabled="busy"
+              @action="onA2uiAction"
+            />
+          </template>
+        </div>
+      </aside>
+    </div>
   </div>
 </template>

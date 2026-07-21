@@ -196,7 +196,7 @@ class HubloomRuntime:
         ``bearer_token``：当前用户鉴权，写入 request context，供 MCP
         ``call_tool`` 经 ``get_bearer_token()`` 透传；为空则回退 MCP_TOKEN。
 
-        ``present_mode=auto``：由 Think 的 NEED_A2UI 选择 Markdown / A2UI Respond。
+        ``present_mode=auto``：Think 交班后跑 Present，再决定 Markdown / A2UI Respond。
         """
         mode: PresentMode = present_mode or self.default_present_mode
         sid = (session_id or "").strip()

@@ -12,12 +12,12 @@ const STORAGE_SESSION = "cortex_session_key";
 const STORAGE_TOKEN = "cortex_mcp_token";
 const STORAGE_PRESENT = "cortex_present_mode";
 
-export type PresentMode = "a2ui" | "markdown";
+export type PresentMode = "auto" | "a2ui" | "markdown";
 
 function loadPresentMode(): PresentMode {
   const raw = (localStorage.getItem(STORAGE_PRESENT) || "").trim().toLowerCase();
-  // 默认 Markdown；仅显式选过 a2ui 时才用 A2UI
-  return raw === "a2ui" ? "a2ui" : "markdown";
+  if (raw === "a2ui" || raw === "markdown" || raw === "auto") return raw;
+  return "auto";
 }
 
 function uuid(): string {
@@ -43,7 +43,13 @@ function coerceAnswerParts(raw: unknown): AnswerPart[] | undefined {
     const kind = String(obj.type || "").trim();
     if (kind === "text") {
       const text = String(obj.text || "").trim();
-      if (text) out.push({ type: "text", text });
+      if (!text) continue;
+      const channelRaw = String(obj.channel || "").trim();
+      const channel =
+        channelRaw === "a2ui" || channelRaw === "markdown"
+          ? channelRaw
+          : undefined;
+      out.push(channel ? { type: "text", text, channel } : { type: "text", text });
     } else if (kind === "a2ui") {
       out.push({ type: "a2ui" });
     }
@@ -51,14 +57,41 @@ function coerceAnswerParts(raw: unknown): AnswerPart[] | undefined {
   return out.length ? out : undefined;
 }
 
-function appendTextDelta(msg: ChatMessage, delta: string) {
-  msg.content += delta;
+function a2uiProseFromParts(parts: AnswerPart[] | undefined): string | undefined {
+  if (!parts?.length) return undefined;
+  const prose = parts
+    .filter(
+      (p): p is { type: "text"; text: string; channel?: "markdown" | "a2ui" } =>
+        p.type === "text" && p.channel === "a2ui",
+    )
+    .map((p) => p.text)
+    .join("\n\n")
+    .trim();
+  return prose || undefined;
+}
+
+function appendTextDelta(
+  msg: ChatMessage,
+  delta: string,
+  channel: "markdown" | "a2ui" = "markdown",
+) {
+  if (channel === "markdown") {
+    msg.content += delta;
+  } else {
+    msg.a2uiProse = (msg.a2uiProse || "") + delta;
+  }
   const parts = msg.answerParts ? [...msg.answerParts] : [];
   const last = parts[parts.length - 1];
-  if (last?.type === "text") {
-    parts[parts.length - 1] = { type: "text", text: last.text + delta };
+  const lastChannel =
+    last?.type === "text" ? last.channel || "markdown" : undefined;
+  if (last?.type === "text" && lastChannel === channel) {
+    parts[parts.length - 1] = {
+      type: "text",
+      text: last.text + delta,
+      channel,
+    };
   } else {
-    parts.push({ type: "text", text: delta });
+    parts.push({ type: "text", text: delta, channel });
   }
   msg.answerParts = parts;
 }
@@ -202,6 +235,7 @@ export function useChat() {
             ? (m.a2ui as A2uiMessage[])
             : undefined,
         answerParts: coerceAnswerParts(m.answer_parts),
+        a2uiProse: a2uiProseFromParts(coerceAnswerParts(m.answer_parts)),
       }));
       status.value = rows.length ? `已加载 ${rows.length} 条历史` : "就绪";
     } catch {
@@ -276,6 +310,9 @@ export function useChat() {
             if (phase === "thinking") {
               agentPhase.value = "thinking";
               status.value = "思考中…";
+            } else if (phase === "presenting") {
+              agentPhase.value = "presenting";
+              status.value = "呈现决策中…";
             } else if (phase === "replying") {
               agentPhase.value = "replying";
               status.value = "回复中…";
@@ -285,7 +322,10 @@ export function useChat() {
             current.thought = (current.thought || "") + String(data.delta || "");
           } else if (event === "text_delta" && data.delta) {
             agentPhase.value = "replying";
-            appendTextDelta(current, String(data.delta));
+            const sourceRaw = String(data.source || "").trim().toLowerCase();
+            const channel: "markdown" | "a2ui" =
+              sourceRaw === "a2ui" ? "a2ui" : "markdown";
+            appendTextDelta(current, String(data.delta), channel);
           } else if (event === "a2ui") {
             const raw = data.messages;
             if (Array.isArray(raw) && raw.length) {
@@ -319,12 +359,12 @@ export function useChat() {
             current.tools = [...(current.tools || []), block];
           } else if (event === "turn_complete") {
             if (data.final_message != null) {
-              // 与后端权威 Markdown 对齐（纯 A2UI 时为空，清掉标签外误流式文本）
               current.content = String(data.final_message);
             }
             const parts = coerceAnswerParts(data.answer_parts);
             if (parts) {
               current.answerParts = parts;
+              current.a2uiProse = a2uiProseFromParts(parts);
             }
             if (data.route) route.value = String(data.route);
             current.streaming = false;

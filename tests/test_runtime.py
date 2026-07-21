@@ -34,7 +34,7 @@ from core.models import Message, Role
 from memory.manager import MemoryManager
 from runtime import HubloomRuntime
 
-# 测 auto：Think NEED_A2UI → 路由 Markdown / A2UI
+# 测 auto：Present NEED_A2UI → 路由 Markdown / A2UI
 _PRESENT_MODE = (os.getenv("PRESENT_MODE") or "auto").strip().lower()
 _ROOT = Path(__file__).resolve().parents[1]
 _CLEAR_SESSION = os.getenv("CLEAR_SESSION", "").strip().lower() in {
@@ -81,8 +81,8 @@ async def test_runtime() -> None:
     print(f"CLEAR_SESSION={_CLEAR_SESSION}")
     print(f"trigger={task!r}")
     print(
-        "注：auto 且 NEED_A2UI=yes 时 Markdown+A2UI 并行；"
-        "PhaseEvent(replying).route=auto，text_delta 与 a2ui 事件会交错出现"
+        "注：auto 时 Think 交班后跑 Present；NEED_A2UI=yes 则 Markdown+A2UI 并行；"
+        "PhaseEvent(presenting/replying)，text_delta 带 source=markdown|a2ui"
     )
 
     agent = await HubloomRuntime.from_config_file(
