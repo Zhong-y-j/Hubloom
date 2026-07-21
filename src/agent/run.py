@@ -35,7 +35,13 @@ from agent.events import (
 )
 from agent.llm_context_log import dump_llm_context
 from agent.loop.execute import ExecuteResult, execute
-from agent.loop.respond import PresentMode, RespondResult, respond, user_visible_content
+from agent.loop.respond import (
+    PresentMode,
+    RespondResult,
+    answer_display_parts,
+    respond,
+    user_visible_content,
+)
 from agent.loop.think import ThinkDecision, think
 
 
@@ -46,6 +52,8 @@ class RunResult:
     content: str = ""
     present_mode: PresentMode = "markdown"
     a2ui_messages: list[dict[str, Any]] = field(default_factory=list)
+    # 正文与 A2UI 交错段（可选；写入 metadata，不影响 content 列）
+    answer_parts: list[dict[str, Any]] = field(default_factory=list)
     think_rounds: int = 0
     tool_calls: int = 0
     tool_errors: int = 0
@@ -378,12 +386,17 @@ async def run_stream(
                 result.content,
                 a2ui_messages=a2ui_messages,
             )
+            parts = answer_display_parts(
+                result.content,
+                a2ui_messages=a2ui_messages,
+            )
             agent_trace(
                 "respond done",
                 round=round_i,
                 present_mode=result.present_mode,
                 content_len=len(visible),
                 a2ui=len(a2ui_messages),
+                answer_parts=len(parts),
                 respond_ms=_elapsed_ms(respond_started),
             )
             if visible:
@@ -394,6 +407,8 @@ async def run_stream(
                     turn_meta["tools"] = tool_log
                 if a2ui_messages:
                     turn_meta["a2ui"] = a2ui_messages
+                if parts:
+                    turn_meta["answer_parts"] = parts
                 await _remember(
                     memory,
                     Message(role=Role.ASSISTANT, content=visible),
@@ -420,6 +435,7 @@ async def run_stream(
                 content=visible,
                 present_mode=result.present_mode,
                 a2ui_messages=a2ui_messages,
+                answer_parts=parts,
                 think_rounds=round_i,
                 tool_calls=tool_calls,
                 tool_errors=tool_errors,

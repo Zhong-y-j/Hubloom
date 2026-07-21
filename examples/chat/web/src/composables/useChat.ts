@@ -1,6 +1,7 @@
 import { computed, ref } from "vue";
 import type {
   AgentPhase,
+  AnswerPart,
   ChatMessage,
   HistoryMessage,
   ToolBlock,
@@ -31,6 +32,43 @@ function normalizeSessionKey(value: string): string {
     return trimmed.slice(4, -":default".length);
   }
   return trimmed;
+}
+
+function coerceAnswerParts(raw: unknown): AnswerPart[] | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  const out: AnswerPart[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+    const kind = String(obj.type || "").trim();
+    if (kind === "text") {
+      const text = String(obj.text || "").trim();
+      if (text) out.push({ type: "text", text });
+    } else if (kind === "a2ui") {
+      out.push({ type: "a2ui" });
+    }
+  }
+  return out.length ? out : undefined;
+}
+
+function appendTextDelta(msg: ChatMessage, delta: string) {
+  msg.content += delta;
+  const parts = msg.answerParts ? [...msg.answerParts] : [];
+  const last = parts[parts.length - 1];
+  if (last?.type === "text") {
+    parts[parts.length - 1] = { type: "text", text: last.text + delta };
+  } else {
+    parts.push({ type: "text", text: delta });
+  }
+  msg.answerParts = parts;
+}
+
+function ensureA2uiPart(msg: ChatMessage) {
+  const parts = msg.answerParts ? [...msg.answerParts] : [];
+  if (parts[parts.length - 1]?.type !== "a2ui") {
+    parts.push({ type: "a2ui" });
+    msg.answerParts = parts;
+  }
 }
 
 function parseSseChunk(buffer: string): {
@@ -163,6 +201,7 @@ export function useChat() {
           Array.isArray(m.a2ui) && m.a2ui.length
             ? (m.a2ui as A2uiMessage[])
             : undefined,
+        answerParts: coerceAnswerParts(m.answer_parts),
       }));
       status.value = rows.length ? `已加载 ${rows.length} 条历史` : "就绪";
     } catch {
@@ -246,7 +285,7 @@ export function useChat() {
             current.thought = (current.thought || "") + String(data.delta || "");
           } else if (event === "text_delta" && data.delta) {
             agentPhase.value = "replying";
-            current.content += String(data.delta);
+            appendTextDelta(current, String(data.delta));
           } else if (event === "a2ui") {
             const raw = data.messages;
             if (Array.isArray(raw) && raw.length) {
@@ -260,6 +299,7 @@ export function useChat() {
                   ...batch,
                 ];
               }
+              ensureA2uiPart(current);
             }
             agentPhase.value = "replying";
           } else if (event === "tool_call") {
@@ -281,6 +321,10 @@ export function useChat() {
             if (data.final_message != null) {
               // 与后端权威 Markdown 对齐（纯 A2UI 时为空，清掉标签外误流式文本）
               current.content = String(data.final_message);
+            }
+            const parts = coerceAnswerParts(data.answer_parts);
+            if (parts) {
+              current.answerParts = parts;
             }
             if (data.route) route.value = String(data.route);
             current.streaming = false;

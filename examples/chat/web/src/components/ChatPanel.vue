@@ -392,26 +392,49 @@ onMounted(async () => {
               </span>
             </div>
 
-            <div
-              v-if="
-                visibleAnswerText(m.content) &&
-                !(m.a2uiMessages?.length && isA2uiPlaceholder(m.content))
-              "
-              class="answer-body"
-              :class="{
-                'markdown-body': true,
-                typing: m.streaming,
-              }"
-              v-html="renderMarkdownToHtml(visibleAnswerText(m.content))"
-            />
+            <template v-if="m.answerParts?.length">
+              <template v-for="(part, pi) in m.answerParts" :key="pi">
+                <div
+                  v-if="
+                    part.type === 'text' &&
+                    visibleAnswerText(part.text) &&
+                    !isA2uiPlaceholder(part.text)
+                  "
+                  class="answer-body markdown-body"
+                  :class="{ typing: m.streaming }"
+                  v-html="renderMarkdownToHtml(visibleAnswerText(part.text))"
+                />
+                <ChatA2uiBlock
+                  v-else-if="part.type === 'a2ui' && m.a2uiMessages?.length"
+                  :messages="m.a2uiMessages"
+                  :reload-key="m.a2uiReloadKey || 0"
+                  :disabled="busy"
+                  @action="onA2uiAction"
+                />
+              </template>
+            </template>
+            <template v-else>
+              <div
+                v-if="
+                  visibleAnswerText(m.content) &&
+                  !(m.a2uiMessages?.length && isA2uiPlaceholder(m.content))
+                "
+                class="answer-body"
+                :class="{
+                  'markdown-body': true,
+                  typing: m.streaming,
+                }"
+                v-html="renderMarkdownToHtml(visibleAnswerText(m.content))"
+              />
 
-            <ChatA2uiBlock
-              v-if="m.a2uiMessages?.length"
-              :messages="m.a2uiMessages"
-              :reload-key="m.a2uiReloadKey || 0"
-              :disabled="busy"
-              @action="onA2uiAction"
-            />
+              <ChatA2uiBlock
+                v-if="m.a2uiMessages?.length"
+                :messages="m.a2uiMessages"
+                :reload-key="m.a2uiReloadKey || 0"
+                :disabled="busy"
+                @action="onA2uiAction"
+              />
+            </template>
           </div>
         </template>
       </div>

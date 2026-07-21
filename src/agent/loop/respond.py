@@ -96,7 +96,10 @@ def user_visible_content(
     *,
     a2ui_messages: list[dict[str, Any]] | None = None,
 ) -> str:
-    """供 UI / 历史落库的可见正文：去掉 ``<a2ui-json>``，纯界面时用占位。"""
+    """供 UI / 历史落库的可见正文：去掉 ``<a2ui-json>``，纯界面时用占位。
+
+    多段正文会拼成一段（顺序信息见 ``answer_display_parts``）。
+    """
     text = (content or "").strip()
     if text and has_a2ui_parts(text):
         chunks: list[str] = []
@@ -108,6 +111,43 @@ def user_visible_content(
     if not text and a2ui_messages:
         return "（交互界面）"
     return text
+
+
+def answer_display_parts(
+    content: str,
+    *,
+    a2ui_messages: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """从原始 Respond 输出拆出 text / a2ui 交错段，供前端按序渲染。
+
+    形状::
+        [{"type": "text", "text": "..."}, {"type": "a2ui"}, {"type": "text", "text": "..."}]
+
+    - ``content`` 列仍存 ``user_visible_content`` 合并正文（兼容旧逻辑 / Think）
+    - 本列表仅写入 metadata / SSE，不影响已有行的读取
+    - 多个 ``<a2ui-json>`` 只插一个 ``a2ui`` 标记（同一 surface）
+    """
+    raw = content or ""
+    parts: list[dict[str, Any]] = []
+    if raw and has_a2ui_parts(raw):
+        saw_a2ui = False
+        for part in parse_response(raw):
+            piece = (getattr(part, "text", None) or "").strip()
+            if piece:
+                parts.append({"type": "text", "text": piece})
+            if getattr(part, "a2ui_json", None) is not None and not saw_a2ui:
+                parts.append({"type": "a2ui"})
+                saw_a2ui = True
+        if a2ui_messages and not saw_a2ui:
+            parts.append({"type": "a2ui"})
+        return parts
+
+    visible = (raw or "").strip()
+    if visible:
+        parts.append({"type": "text", "text": visible})
+    if a2ui_messages:
+        parts.append({"type": "a2ui"})
+    return parts
 
 
 async def _emit_splitter_items(

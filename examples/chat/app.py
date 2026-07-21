@@ -272,6 +272,7 @@ async def _stream_chat(
                     final_message=(final.content or "").strip(),
                     session_id=session_id,
                     reason="" if final.ok else (final.error or ""),
+                    answer_parts=list(final.answer_parts or []) or None,
                 )
                 yield format_sse(name, payload)
         except Exception as exc:
@@ -318,6 +319,7 @@ async def _run_chat_once(
         final_message=(final.content or "").strip(),
         session_id=session_id,
         reason="",
+        answer_parts=list(final.answer_parts or []) or None,
     )
 
 

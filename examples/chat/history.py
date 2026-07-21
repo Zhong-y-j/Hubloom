@@ -20,6 +20,8 @@ class HistoryMessage(BaseModel):
     tools: list[ToolHistoryItem] = Field(default_factory=list)
     route: str | None = None
     a2ui: list[dict[str, Any]] | None = None
+    # 正文与 A2UI 交错段；旧记录无此字段时前端回退为 content → a2ui
+    answer_parts: list[dict[str, Any]] | None = None
     created_at: str | None = None
 
 
@@ -61,6 +63,23 @@ def _coerce_a2ui(raw: Any) -> list[dict[str, Any]] | None:
     return out or None
 
 
+def _coerce_answer_parts(raw: Any) -> list[dict[str, Any]] | None:
+    if not isinstance(raw, list) or not raw:
+        return None
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("type") or "").strip()
+        if kind == "text":
+            text = str(item.get("text") or "").strip()
+            if text:
+                out.append({"type": "text", "text": text})
+        elif kind == "a2ui":
+            out.append({"type": "a2ui"})
+    return out or None
+
+
 def messages_for_display(rows: list[dict[str, str]]) -> list[HistoryMessage]:
     """过滤并清洗消息，供前端展示（含思考过程 / A2UI metadata）。"""
     out: list[HistoryMessage] = []
@@ -75,6 +94,7 @@ def messages_for_display(rows: list[dict[str, str]]) -> list[HistoryMessage]:
         thought = (meta.get("thought") or "").strip() or None
         route = (meta.get("route") or "").strip() or None
         a2ui = _coerce_a2ui(meta.get("a2ui"))
+        answer_parts = _coerce_answer_parts(meta.get("answer_parts"))
         tools_raw = meta.get("tools") or []
         tools: list[ToolHistoryItem] = []
         if isinstance(tools_raw, list):
@@ -108,6 +128,7 @@ def messages_for_display(rows: list[dict[str, str]]) -> list[HistoryMessage]:
                 tools=tools,
                 route=route,
                 a2ui=a2ui,
+                answer_parts=answer_parts,
                 created_at=row.get("created_at"),
             )
         )

@@ -81,10 +81,14 @@ def turn_complete_payload(
     final_message: str,
     session_id: str,
     reason: str = "",
+    answer_parts: list[dict[str, Any]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    return "turn_complete", {
+    payload: dict[str, Any] = {
         "route": route,
         "final_message": final_message,
         "session_id": session_id,
         "reason": reason,
     }
+    if answer_parts:
+        payload["answer_parts"] = answer_parts
+    return "turn_complete", payload

@@ -23,6 +23,7 @@ class ChatResponse(BaseModel):
     final_message: str
     session_id: str
     reason: str = ""
+    answer_parts: list[dict] | None = None
 
 
 class McpStatusResponse(BaseModel):
