@@ -4,7 +4,7 @@
 在仓库根执行::
 
     uv sync
-    uv run python main.py
+    PYTHONPATH=src:. uv run python main.py
 """
 
 from examples.chat.app import main

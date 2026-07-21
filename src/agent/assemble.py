@@ -109,10 +109,14 @@ async def assemble_think(
 def assemble_respond_markdown(
     *,
     system_prompt: str,
-    turn_messages: list[Message],
+    think_content: str,
 ) -> list[Message]:
-    """Respond(Markdown)：system + 本轮 turn_messages（不走 token 预算裁剪）。"""
-    return [Message(role=Role.SYSTEM, content=system_prompt), *turn_messages]
+    """Respond(Markdown)：与 A2UI 相同，仅 system + 本轮最后一轮 Think 正文。"""
+    body = (think_content or "").strip()
+    return [
+        Message(role=Role.SYSTEM, content=system_prompt),
+        Message(role=Role.USER, content=body),
+    ]
 
 
 def assemble_respond_a2ui(
@@ -120,7 +124,7 @@ def assemble_respond_a2ui(
     system_prompt: str,
     think_content: str,
 ) -> list[Message]:
-    """Respond(A2UI)：仅官方 system + 本轮最后一条 Think 正文。"""
+    """Respond(A2UI)：仅官方 system + 本轮最后一轮 Think 正文。"""
     body = (think_content or "").strip()
     return [
         Message(role=Role.SYSTEM, content=system_prompt),

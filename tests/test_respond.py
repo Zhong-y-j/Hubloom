@@ -413,11 +413,11 @@ async def test_respond() -> None:
                 else:
                     respond_messages = assemble_respond_markdown(
                         system_prompt=build_respond_markdown_system(),
-                        turn_messages=turn_messages,
+                        think_content=think_text,
                     )
                     print(
-                        f"【Respond 本轮窗】run 内 {len(turn_messages)} 条"
-                        "（非按 USER 切片）"
+                        "【Respond Markdown 窗】system + 末轮 Think"
+                        f"（{len(think_text)} chars）"
                     )
                 await _run_respond(
                     llm, respond_messages, memory, present_mode=_PRESENT_MODE

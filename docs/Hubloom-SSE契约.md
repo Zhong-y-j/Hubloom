@@ -1,7 +1,7 @@
 # Hubloom `/v1/chat` SSE 契约（冻结草案）
 
 重构期间**尽量保持事件名与字段兼容** [`examples/chat`](../examples/chat/)，避免前端同步大改。  
-实现见 [`src/agents/sse.py`](../src/agents/sse.py)。
+实现见 [`src/agent/sse.py`](../src/agent/sse.py)。
 
 对照备份：以你本地备份 / git 历史中的旧实现为准校验行为；现仓库 `dev` 为重构工作树。
 

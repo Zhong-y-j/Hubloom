@@ -61,36 +61,38 @@ cp config/env.example.yaml config/env.yaml
 
 在 `config/env.yaml` 中填写 LLM 与 MCP（OpenAPI 规格、业务 API 地址等）。业务 Token 由前端会话传入，不要写进配置文件。
 
-### 3. 启动服务
+### 3. 启动示例站
 
 ```bash
-PYTHONPATH=. uv run python main.py
+# 后端 API（默认 :8010）
+PYTHONPATH=src:. uv run python main.py
+
+# 前端（另开终端）
+cd examples/chat/web && npm install && npm run dev
 ```
 
-默认监听 `http://127.0.0.1:8000`。可通过 `CORTEX_API_HOST`、`CORTEX_API_PORT` 调整。
+- **Web 对话页**：http://127.0.0.1:5173/（Vite 代理 `/v1` → `:8010`）
+- **API 文档**：http://127.0.0.1:8010/docs
 
-### 4. 开始对话
-
-- **Web 对话页**：http://127.0.0.1:8000/
-- **API 文档**：http://127.0.0.1:8000/docs
+可通过 `CORTEX_API_HOST`、`CORTEX_API_PORT`、`HUBLOOM_CONFIG` 调整。
 
 **健康检查**
 
 ```bash
-curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8010/health
 ```
 
 **调用对话接口**
 
 ```bash
-curl -s http://127.0.0.1:8000/v1/chat \
+curl -s http://127.0.0.1:8010/v1/chat \
   -H "Content-Type: application/json" \
   -H "X-Session-Id: demo-session" \
   -H "X-MCP-Token: your-business-token" \
   -d '{"message":"你好，你能做什么？","stream":false}'
 ```
 
-默认开启 SSE 流式（`"stream": true`）。生产接入时，建议由业务后端验签后转发请求，并透传 `Authorization`（或 `X-MCP-Token`）与 `X-Session-Id`。
+默认 SSE（`"stream": true`）。历史：`GET /v1/chat/history?session_id=demo-session`。
 
 ---
 

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent.agent_log import configure_agent_logging
 from agent.assemble import (
     build_respond_a2ui_system,
     build_respond_markdown_system,
@@ -86,6 +87,13 @@ class HubloomRuntime:
         if not (cfg.openai_api_key or "").strip():
             raise ValueError("HubloomConfig 未配置 llm.api_key")
 
+        configure_agent_logging(
+            agent_log=cfg.agent_log,
+            cortex_log=cfg.cortex_log,
+            a2a_log=cfg.a2a_log,
+            memory_log=cfg.memory_log,
+        )
+
         llm = create_llm(
             api_key=cfg.openai_api_key,
             model=cfg.openai_model,
@@ -154,10 +162,14 @@ class HubloomRuntime:
             max_think_rounds=max_think_rounds,
         )
 
+    @property
+    def memory_db_path(self) -> str:
+        return _memory_db_path(self.cfg)
+
     def _make_memory(self, session_id: str) -> MemoryManager:
         return create_memory_manager(
             namespace=session_id,
-            db_path=_memory_db_path(self.cfg),
+            db_path=self.memory_db_path,
             vector_backend="none",
             graph_backend="none",
         )

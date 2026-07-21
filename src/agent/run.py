@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -30,7 +31,7 @@ from agent.events import (
     ToolResultEvent,
 )
 from agent.loop.execute import ExecuteResult, execute
-from agent.loop.respond import PresentMode, RespondResult, respond
+from agent.loop.respond import PresentMode, RespondResult, respond, user_visible_content
 from agent.loop.think import ThinkDecision, think
 
 
@@ -54,23 +55,39 @@ async def _remember(
     message: Message,
     *,
     source: str = "agent",
+    metadata: dict[str, Any] | None = None,
 ) -> None:
     await memory.remember(
         memory_type="conversation",
         message=message,
         source=source,
+        metadata=metadata,
     )
-
-
-def _trigger_task_text(trigger: Message) -> str:
-    """首轮 assemble_think 用的 task；非 USER 触发则空串（不强制 current_task）。"""
-    if trigger.role != Role.USER:
-        return ""
-    return (trigger.content or "").strip()
 
 
 def _elapsed_ms(started: float) -> int:
     return max(0, int((time.monotonic() - started) * 1000))
+
+
+def _append_tool_log(
+    tool_log: list[dict[str, str]],
+    ev: ToolCallEvent | ToolResultEvent,
+) -> None:
+    if isinstance(ev, ToolCallEvent):
+        tool_log.append(
+            {
+                "title": f"调用 · {ev.tool_name}",
+                "body": json.dumps(ev.args or {}, ensure_ascii=False, indent=2),
+            }
+        )
+        return
+    prefix = "失败 · " if ev.is_error else "返回 · "
+    tool_log.append(
+        {
+            "title": f"{prefix}{ev.tool_name}",
+            "body": (ev.result or "")[:4000],
+        }
+    )
 
 
 async def run_stream(
@@ -95,6 +112,7 @@ async def run_stream(
     started = time.monotonic()
     tool_calls = 0
     tool_errors = 0
+    tool_log: list[dict[str, str]] = []
 
     if present_mode == "auto":
         yield ErrorEvent(
@@ -118,7 +136,6 @@ async def run_stream(
 
     turn_messages: list[Message] = [trigger]
     await _remember(memory, trigger, source=trigger_source)
-    task_text = _trigger_task_text(trigger)
 
     yield PhaseEvent(phase="thinking", route=present_mode)
 
@@ -166,10 +183,12 @@ async def run_stream(
             ):
                 if isinstance(item, ToolCallEvent):
                     tool_calls += 1
+                    _append_tool_log(tool_log, item)
                     yield item
                 elif isinstance(item, ToolResultEvent):
                     if item.is_error:
                         tool_errors += 1
+                    _append_tool_log(tool_log, item)
                     yield item
                 elif isinstance(item, AgentEvent):
                     yield item
@@ -198,14 +217,23 @@ async def run_stream(
                 return
 
             for msg in exec_result.messages:
-                await _remember(memory, msg, source="agent")
+                meta: dict[str, Any] | None = None
+                if msg.role == Role.ASSISTANT and msg.tool_calls:
+                    meta = {"display": False}
+                await _remember(memory, msg, source="agent", metadata=meta)
                 turn_messages.append(msg)
             continue
 
         if decision.should_respond:
             think_text = (decision.content or "").strip()
             think_msg = Message(role=Role.ASSISTANT, content=think_text)
-            await _remember(memory, think_msg, source="agent")
+            # 思考过程进库供多轮 recall，但不进历史 UI
+            await _remember(
+                memory,
+                think_msg,
+                source="agent",
+                metadata={"display": False},
+            )
             turn_messages.append(think_msg)
 
             yield PhaseEvent(phase="replying", route=present_mode)
@@ -218,7 +246,7 @@ async def run_stream(
             else:
                 respond_messages = assemble_respond_markdown(
                     system_prompt=respond_system,
-                    turn_messages=turn_messages,
+                    think_content=think_text,
                 )
 
             result: RespondResult | None = None
@@ -254,11 +282,24 @@ async def run_stream(
                 )
                 return
 
-            if (result.content or "").strip():
+            a2ui_messages = list(result.a2ui_messages or [])
+            visible = user_visible_content(
+                result.content,
+                a2ui_messages=a2ui_messages,
+            )
+            if visible:
+                turn_meta: dict[str, Any] = {"route": present_mode}
+                if think_text:
+                    turn_meta["thought"] = think_text
+                if tool_log:
+                    turn_meta["tools"] = tool_log
+                if a2ui_messages:
+                    turn_meta["a2ui"] = a2ui_messages
                 await _remember(
                     memory,
-                    Message(role=Role.ASSISTANT, content=result.content),
+                    Message(role=Role.ASSISTANT, content=visible),
                     source="agent",
+                    metadata=turn_meta,
                 )
 
             yield RunStatsEvent(
@@ -268,9 +309,9 @@ async def run_stream(
                 elapsed_ms=elapsed,
             )
             yield RunResult(
-                content=result.content,
+                content=visible,
                 present_mode=result.present_mode,
-                a2ui_messages=list(result.a2ui_messages or []),
+                a2ui_messages=a2ui_messages,
                 think_rounds=round_i,
                 tool_calls=tool_calls,
                 tool_errors=tool_errors,

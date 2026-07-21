@@ -82,6 +82,25 @@ def _extract_a2ui_messages(content: str) -> list[dict[str, Any]]:
     return messages
 
 
+def user_visible_content(
+    content: str,
+    *,
+    a2ui_messages: list[dict[str, Any]] | None = None,
+) -> str:
+    """供 UI / 历史落库的可见正文：去掉 ``<a2ui-json>``，纯界面时用占位。"""
+    text = (content or "").strip()
+    if text and has_a2ui_parts(text):
+        chunks: list[str] = []
+        for part in parse_response(text):
+            piece = (getattr(part, "text", None) or "").strip()
+            if piece:
+                chunks.append(piece)
+        text = "\n\n".join(chunks).strip()
+    if not text and a2ui_messages:
+        return "（交互界面）"
+    return text
+
+
 async def _stream_a2ui(
     llm: LLMProvider,
     messages: list[Message],
@@ -119,12 +138,7 @@ async def _stream_a2ui(
     a2ui_messages = _extract_a2ui_messages(content)
     if a2ui_messages:
         yield A2uiMessagesEvent(messages=a2ui_messages, replace=True)
-    elif content:
-        # present_mode=a2ui 但模型没吐标签：可告警，仍把正文当最终答案
-        yield ErrorEvent(
-            error="present_mode='a2ui' 但回复中未找到 <a2ui-json> 块",
-            recoverable=True,
-        )
+    # present_mode=a2ui 但模型只回了 Markdown：正常降级，不推 error（避免前端标红）
     yield FinalAnswerEvent(content=content, usage=usage)
     yield RespondResult(
         content=content,
