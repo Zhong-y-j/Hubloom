@@ -14,7 +14,7 @@ class ChatRequest(BaseModel):
     stream: bool = Field(default=True, description="是否 SSE 流式返回")
     present_mode: str | None = Field(
         default=None,
-        description="markdown | a2ui；默认用服务端 Runtime 配置",
+        description="markdown | a2ui | auto；默认用服务端 Runtime 配置",
     )
 
 

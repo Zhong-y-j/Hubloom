@@ -67,11 +67,11 @@ def _normalize_present_mode(raw: str | None, default: PresentMode) -> PresentMod
     text = (raw or "").strip().lower()
     if not text:
         return default
-    if text in ("markdown", "a2ui"):
+    if text in ("markdown", "a2ui", "auto"):
         return text  # type: ignore[return-value]
     raise HTTPException(
         status_code=400,
-        detail=f"present_mode 无效: {raw!r}，可选 markdown / a2ui",
+        detail=f"present_mode 无效: {raw!r}，可选 markdown / a2ui / auto",
     )
 
 
@@ -84,7 +84,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     if not cfg_path.is_file():
         raise RuntimeError(f"配置文件不存在: {cfg_path}")
     present = (os.getenv("PRESENT_MODE") or "a2ui").strip().lower()
-    if present not in ("markdown", "a2ui"):
+    if present not in ("markdown", "a2ui", "auto"):
         present = "a2ui"
     _runtime = await HubloomRuntime.from_config_file(
         cfg_path,

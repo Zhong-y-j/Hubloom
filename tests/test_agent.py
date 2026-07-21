@@ -44,7 +44,7 @@ from tools.builtin.memory_tool import SearchMemoryTool
 from tools.registry import ToolRegistry
 from tools.runner import ToolRunner
 
-_PRESENT_MODE = (os.getenv("PRESENT_MODE") or "a2ui").strip().lower()  # markdown | a2ui
+_PRESENT_MODE = (os.getenv("PRESENT_MODE") or "a2ui").strip().lower()  # markdown | a2ui | auto
 _ROOT = Path(__file__).resolve().parents[1]
 _SRC = _ROOT / "src"
 _MAX_THINK_ROUNDS = 5
@@ -139,8 +139,10 @@ def _print_tools(registry: ToolRegistry) -> None:
 
 
 async def test_agent() -> None:
-    if _PRESENT_MODE not in {"markdown", "a2ui"}:
-        raise SystemExit(f"PRESENT_MODE 无效: {_PRESENT_MODE!r}，可选 markdown / a2ui")
+    if _PRESENT_MODE not in {"markdown", "a2ui", "auto"}:
+        raise SystemExit(
+            f"PRESENT_MODE 无效: {_PRESENT_MODE!r}，可选 markdown / a2ui / auto"
+        )
 
     cfg = HubloomConfig.from_file(_ROOT / "config" / "env.yaml")
     if not (cfg.openai_api_key or "").strip():
@@ -179,11 +181,8 @@ async def test_agent() -> None:
             skills_exclude=cfg.skills_exclude,
             catalog=None if mcp_setup is None else mcp_setup.catalog,
         )
-        respond_system = (
-            build_respond_a2ui_system()
-            if _PRESENT_MODE == "a2ui"
-            else build_respond_markdown_system()
-        )
+        respond_markdown_system = build_respond_markdown_system()
+        respond_a2ui_system = build_respond_a2ui_system()
 
         _print_tools(registry)
         print(f"skills_dir={skills_dir}")
@@ -213,7 +212,8 @@ async def test_agent() -> None:
             trigger=trigger,
             think_system=think_system,
             think_system_after=think_system_after,
-            respond_system=respond_system,
+            respond_markdown_system=respond_markdown_system,
+            respond_a2ui_system=respond_a2ui_system,
             present_mode=_PRESENT_MODE,  # type: ignore[arg-type]
             max_think_rounds=_MAX_THINK_ROUNDS,
             trigger_source="user",

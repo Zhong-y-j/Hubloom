@@ -5,7 +5,7 @@
     PYTHONPATH=src .venv/bin/python tests/test_runtime.py
 
 可选环境变量：
-- ``PRESENT_MODE``：markdown | a2ui（默认 markdown）
+- ``PRESENT_MODE``：markdown | a2ui | auto（默认看脚本内 ``_PRESENT_MODE``）
 - ``SESSION_ID``：会话 namespace（建议每次换新的，避免历史污染）
 - ``TASK``：触发用户话
 - ``CLEAR_SESSION=1``：结束后清空本 session conversation
@@ -34,7 +34,8 @@ from core.models import Message, Role
 from memory.manager import MemoryManager
 from runtime import HubloomRuntime
 
-_PRESENT_MODE = "a2ui"
+# 测 auto：Think NEED_A2UI → 路由 Markdown / A2UI
+_PRESENT_MODE = (os.getenv("PRESENT_MODE") or "auto").strip().lower()
 _ROOT = Path(__file__).resolve().parents[1]
 _CLEAR_SESSION = os.getenv("CLEAR_SESSION", "").strip().lower() in {
     "1",
@@ -65,11 +66,13 @@ async def print_stored_conversation(
 
 
 async def test_runtime() -> None:
-    if _PRESENT_MODE not in {"markdown", "a2ui"}:
-        raise SystemExit(f"PRESENT_MODE 无效: {_PRESENT_MODE!r}，可选 markdown / a2ui")
+    if _PRESENT_MODE not in {"markdown", "a2ui", "auto"}:
+        raise SystemExit(
+            f"PRESENT_MODE 无效: {_PRESENT_MODE!r}，可选 markdown / a2ui / auto"
+        )
 
-    session_id = "test-runtime-11111"
-    task = "我当前想要添加一个宠物"
+    session_id = (os.getenv("SESSION_ID") or "test-runtime-auto-1").strip()
+    task = (os.getenv("TASK") or "我当前想要添加一个宠物").strip()
     config_path = _ROOT / "config" / "env.yaml"
 
     print(f"config={config_path}")
@@ -77,7 +80,10 @@ async def test_runtime() -> None:
     print(f"PRESENT_MODE={_PRESENT_MODE}")
     print(f"CLEAR_SESSION={_CLEAR_SESSION}")
     print(f"trigger={task!r}")
-    print("注：Respond(markdown/a2ui) 均只吃本轮末次 Think，不带 tool 原文")
+    print(
+        "注：auto 且 NEED_A2UI=yes 时 Markdown+A2UI 并行；"
+        "PhaseEvent(replying).route=auto，text_delta 与 a2ui 事件会交错出现"
+    )
 
     agent = await HubloomRuntime.from_config_file(
         config_path,

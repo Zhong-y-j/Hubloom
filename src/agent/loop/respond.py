@@ -256,7 +256,7 @@ async def respond(
     流式产出 ``FinalAnswerDeltaEvent`` / ``ErrorEvent``，
     结束时再产出 ``FinalAnswerEvent`` 与 ``RespondResult``。
 
-    本步：仅 ``markdown`` 已实现；``a2ui`` / ``auto`` 后续补齐。
+    本步：``markdown`` / ``a2ui`` 已实现；``auto`` 在 Orchestrator 层解析为二者之一后再调用本函数。
     """
     if not messages:
         agent_trace("respond abort", error="empty messages", present_mode=present_mode)
@@ -281,9 +281,9 @@ async def respond(
         return
 
     if present_mode == "auto":
-        agent_trace("respond abort", error="auto not implemented")
+        agent_trace("respond abort", error="auto must be resolved before respond()")
         yield ErrorEvent(
-            error="present_mode='auto' 尚未实现",
+            error="present_mode='auto' 应在 run_stream 中解析为 markdown/a2ui 后再调用 respond",
             recoverable=False,
         )
         yield RespondResult(present_mode=present_mode)

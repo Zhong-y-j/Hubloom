@@ -8,6 +8,7 @@ Think 不执行工具，只接收工具定义（``tools=``），供模型选择�
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
@@ -23,6 +24,27 @@ from core.provider import (
 from agent.agent_log import agent_trace
 from agent.events import AgentEvent, ErrorEvent, ThoughtDeltaEvent
 
+_NEED_A2UI_RE = re.compile(r"(?im)^\s*NEED_A2UI\s*:\s*(yes|no)\s*$")
+
+
+def parse_need_a2ui(content: str) -> bool | None:
+    """从 Think 正文解析交班标记；未写则 None。"""
+    found: bool | None = None
+    for m in _NEED_A2UI_RE.finditer(content or ""):
+        found = m.group(1).lower() == "yes"
+    return found
+
+
+def strip_need_a2ui_marker(content: str) -> str:
+    """去掉标记行，避免进 Respond / 落库展示。"""
+    lines = [ln for ln in (content or "").splitlines() if not _NEED_A2UI_RE.match(ln)]
+    return "\n".join(lines).strip()
+
+
+def _finalize_think_content(raw: str) -> tuple[str, bool | None]:
+    need = parse_need_a2ui(raw)
+    return strip_need_a2ui_marker(raw), need
+
 
 @dataclass
 class ThinkDecision:
@@ -30,6 +52,7 @@ class ThinkDecision:
 
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+    need_a2ui: bool | None = None  # None=未标明
 
     @property
     def should_execute(self) -> bool:
@@ -87,7 +110,8 @@ async def think(
         elif isinstance(ev, StreamErrorEvent):
             agent_trace("think llm error", error=str(ev.error)[:200])
             yield ErrorEvent(error=str(ev.error))
-            yield ThinkDecision(content="".join(content_parts))
+            cleaned, need = _finalize_think_content("".join(content_parts))
+            yield ThinkDecision(content=cleaned, need_a2ui=need)
             return
         elif isinstance(ev, StreamEndEvent):
             stop = ev.output.stop_reason
@@ -102,23 +126,30 @@ async def think(
                     yield ThoughtDeltaEvent(phase="think", delta=thinking)
             break
 
-    content = "".join(content_parts).strip()
+    raw = "".join(content_parts).strip()
+    cleaned, need = _finalize_think_content(raw)
     if stop == StopReason.TOOL_CALLS and tool_calls:
         agent_trace(
             "think llm done",
             route="execute",
             stop=stop.value if stop else None,
-            content_len=len(content),
+            content_len=len(cleaned),
             tool_calls=len(tool_calls),
             tools=",".join(tc.name for tc in tool_calls),
+            need_a2ui=need,
         )
-        yield ThinkDecision(content=content, tool_calls=tool_calls)
+        yield ThinkDecision(
+            content=cleaned,
+            tool_calls=tool_calls,
+            need_a2ui=need,
+        )
     else:
         agent_trace(
             "think llm done",
             route="respond",
             stop=stop.value if stop else None,
-            content_len=len(content),
+            content_len=len(cleaned),
             tool_calls=0,
+            need_a2ui=need,
         )
-        yield ThinkDecision(content=content, tool_calls=[])
+        yield ThinkDecision(content=cleaned, tool_calls=[], need_a2ui=need)

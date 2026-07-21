@@ -181,11 +181,6 @@ class HubloomRuntime:
         registry = ToolRegistry.from_tools(tools)
         return ToolRunner(registry), registry.list_definitions()
 
-    def _respond_system(self, present_mode: PresentMode) -> str:
-        if present_mode == "a2ui":
-            return self.respond_a2ui_system
-        return self.respond_markdown_system
-
     async def run_stream(
         self,
         trigger: Message,
@@ -200,6 +195,8 @@ class HubloomRuntime:
 
         ``bearer_token``：当前用户鉴权，写入 request context，供 MCP
         ``call_tool`` 经 ``get_bearer_token()`` 透传；为空则回退 MCP_TOKEN。
+
+        ``present_mode=auto``：由 Think 的 NEED_A2UI 选择 Markdown / A2UI Respond。
         """
         mode: PresentMode = present_mode or self.default_present_mode
         sid = (session_id or "").strip()
@@ -227,7 +224,8 @@ class HubloomRuntime:
             trigger=trigger,
             think_system=self.think_system,
             think_system_after=self.think_system_after,
-            respond_system=self._respond_system(mode),
+            respond_markdown_system=self.respond_markdown_system,
+            respond_a2ui_system=self.respond_a2ui_system,
             present_mode=mode,
             max_think_rounds=max_think_rounds or self.max_think_rounds,
             trigger_source=trigger_source,
