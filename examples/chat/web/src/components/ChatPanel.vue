@@ -52,7 +52,28 @@ async function scrollBottom() {
   if (el) el.scrollTop = el.scrollHeight;
 }
 
-watch(messages, () => scrollBottom(), { deep: true });
+/** 思考过程默认停在最新；流式时持续跟随，历史消息首次展示也滚到底 */
+async function scrollThoughtToLatest() {
+  await nextTick();
+  const root = listRef.value;
+  if (!root) return;
+  for (const m of messages.value) {
+    if (m.role !== "assistant" || !m.thought) continue;
+    const el = root.querySelector(
+      `[data-thought-scroll="${CSS.escape(m.id)}"]`,
+    );
+    if (!(el instanceof HTMLElement)) continue;
+    if (m.streaming || !el.dataset.scrolledOnce) {
+      el.scrollTop = el.scrollHeight;
+      if (!m.streaming) el.dataset.scrolledOnce = "1";
+    }
+  }
+}
+
+watch(messages, () => {
+  void scrollBottom();
+  void scrollThoughtToLatest();
+}, { deep: true });
 
 async function onSubmit() {
   const text = draft.value;
@@ -94,6 +115,58 @@ function toolName(title: string): string {
     .replace(/^返回\s*·\s*/, "")
     .replace(/^失败\s*·\s*/, "")
     .trim();
+}
+
+/** 从工具 body JSON 解析 MCP 的 tag / 业务 tool_name（兼容 call 的 args 与返回里的 tool 字段） */
+function parseToolTarget(body: string): { tag?: string; apiTool?: string } {
+  const raw = (body || "").trim();
+  if (!raw.startsWith("{") && !raw.startsWith("[")) return {};
+  try {
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return {};
+    const tag = typeof data.tag === "string" ? data.tag.trim() : "";
+    const apiTool =
+      (typeof data.tool_name === "string" && data.tool_name.trim()) ||
+      (typeof data.tool === "string" && data.tool.trim()) ||
+      "";
+    return {
+      ...(tag ? { tag } : {}),
+      ...(apiTool ? { apiTool } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 标题旁展示的 tag / 业务工具名。
+ * 返回/失败卡片常没有 tag，向前找同名「调用」卡片补全。
+ */
+function toolTargetMeta(
+  tools: { title: string; body: string }[],
+  index: number,
+): { tag?: string; apiTool?: string } {
+  const current = tools[index];
+  if (!current) return {};
+  const own = parseToolTarget(current.body);
+  const gateway = toolName(current.title);
+
+  let fromCall: { tag?: string; apiTool?: string } = {};
+  const needFallback =
+    !own.tag || (gateway === "call_tool" && !own.apiTool);
+  if (needFallback) {
+    for (let i = index - 1; i >= 0; i--) {
+      const prev = tools[i];
+      if (!prev || toolKind(prev.title) !== "call") continue;
+      if (toolName(prev.title) !== gateway) continue;
+      fromCall = parseToolTarget(prev.body);
+      break;
+    }
+  }
+  return {
+    tag: own.tag || fromCall.tag,
+    apiTool: own.apiTool || fromCall.apiTool,
+  };
 }
 
 onMounted(async () => {
@@ -172,8 +245,8 @@ onMounted(async () => {
         <label class="field">
           <span>呈现模式</span>
           <select v-model="presentMode" @change="persist">
-            <option value="a2ui">A2UI（表单 / 列表）</option>
             <option value="markdown">Markdown（纯文本）</option>
+            <option value="a2ui">A2UI（表单 / 列表）</option>
           </select>
         </label>
         <label class="checkbox">
@@ -224,7 +297,8 @@ onMounted(async () => {
                 m.streaming &&
                 agentPhase &&
                 !m.content &&
-                !m.a2uiMessages?.length
+                !m.a2uiMessages?.length &&
+                !(m.thought || (showTools && m.tools?.length))
               "
               class="agent-status"
               :data-state="agentPhase"
@@ -247,7 +321,11 @@ onMounted(async () => {
                     : "思考过程"
                 }}
               </summary>
-              <div v-if="m.thought" class="thought-body">{{ m.thought }}</div>
+              <div
+                v-if="m.thought"
+                class="thought-body"
+                :data-thought-scroll="m.id"
+              >{{ m.thought }}</div>
               <div
                 v-if="showTools && m.tools?.length"
                 class="thought-tools"
@@ -264,11 +342,44 @@ onMounted(async () => {
                       :class="toolKind(t.title)"
                     >{{ toolKindLabel(t.title) }}</span>
                     <span class="tool-card-name">{{ toolName(t.title) }}</span>
+                    <template
+                      v-for="meta in [toolTargetMeta(m.tools || [], i)]"
+                      :key="'target'"
+                    >
+                      <template v-if="meta.tag">
+                        <span class="tool-sep">·</span>
+                        <span class="tool-target-tag">{{ meta.tag }}</span>
+                      </template>
+                      <template v-if="meta.apiTool">
+                        <span class="tool-sep">/</span>
+                        <span class="tool-target-api">{{ meta.apiTool }}</span>
+                      </template>
+                    </template>
                   </summary>
                   <pre>{{ t.body }}</pre>
                 </details>
               </div>
             </details>
+
+            <!-- Think 已结束、Respond 尚未出字：在结果区给明确过渡，避免像卡住 -->
+            <div
+              v-if="
+                m.streaming &&
+                agentPhase === 'replying' &&
+                !m.content &&
+                !m.a2uiMessages?.length
+              "
+              class="answer-pending"
+            >
+              <span class="answer-pending-bar" aria-hidden="true" />
+              <div class="answer-pending-copy">
+                <strong>正在生成回复</strong>
+                <span>思考已完成，正在输出最终答案…</span>
+              </div>
+              <span class="agent-status-dots answer-pending-dots">
+                <span class="dot" /><span class="dot" /><span class="dot" />
+              </span>
+            </div>
 
             <div
               v-if="m.content && !(m.a2uiMessages?.length && isA2uiPlaceholder(m.content))"

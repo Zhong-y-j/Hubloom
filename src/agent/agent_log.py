@@ -106,6 +106,11 @@ def cortex_log(message: str, /, **fields) -> None:
     _emit("cortex", _channel_on(_cortex_log), message, **fields)
 
 
+def agent_trace(message: str, /, **fields) -> None:
+    """Think / Execute / Respond 编排节点（跟随 agent_log 总闸）。"""
+    _emit("agent", _agent_log, message, **fields)
+
+
 def a2a_log(message: str, /, **fields) -> None:
     """A2A 入站日志（Executor / bridge / credential）。"""
     _emit("a2a", _channel_on(_a2a_log), message, **fields)

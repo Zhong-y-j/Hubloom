@@ -12,6 +12,7 @@ from core.provider import (
     StreamErrorEvent,
 )
 
+from agent.agent_log import agent_trace
 from agent.events import (
     AgentEvent,
     A2uiMessagesEvent,
@@ -50,6 +51,7 @@ async def _stream_markdown(
                 content_parts.append(ev.delta)
                 yield FinalAnswerDeltaEvent(delta=ev.delta)
         elif isinstance(ev, StreamErrorEvent):
+            agent_trace("respond llm error", present_mode=present_mode, error=str(ev.error)[:200])
             yield ErrorEvent(error=str(ev.error))
             content = "".join(content_parts)
             yield FinalAnswerEvent(content=content)
@@ -63,6 +65,12 @@ async def _stream_markdown(
             break
 
     content = "".join(content_parts).strip()
+    agent_trace(
+        "respond llm done",
+        present_mode=present_mode,
+        content_len=len(content),
+        a2ui=0,
+    )
     yield FinalAnswerEvent(content=content, usage=usage)
     yield RespondResult(content=content, present_mode=present_mode, usage=usage)
 
@@ -116,6 +124,7 @@ async def _stream_a2ui(
                 content_parts.append(ev.delta)
                 yield FinalAnswerDeltaEvent(delta=ev.delta)
         elif isinstance(ev, StreamErrorEvent):
+            agent_trace("respond llm error", present_mode=present_mode, error=str(ev.error)[:200])
             yield ErrorEvent(error=str(ev.error))
             content = "".join(content_parts)
             a2ui_messages = _extract_a2ui_messages(content)
@@ -139,6 +148,12 @@ async def _stream_a2ui(
     if a2ui_messages:
         yield A2uiMessagesEvent(messages=a2ui_messages, replace=True)
     # present_mode=a2ui 但模型只回了 Markdown：正常降级，不推 error（避免前端标红）
+    agent_trace(
+        "respond llm done",
+        present_mode=present_mode,
+        content_len=len(content),
+        a2ui=len(a2ui_messages),
+    )
     yield FinalAnswerEvent(content=content, usage=usage)
     yield RespondResult(
         content=content,
@@ -162,9 +177,16 @@ async def respond(
     本步：仅 ``markdown`` 已实现；``a2ui`` / ``auto`` 后续补齐。
     """
     if not messages:
+        agent_trace("respond abort", error="empty messages", present_mode=present_mode)
         yield ErrorEvent(error="Respond 收到空 messages")
         yield RespondResult(present_mode=present_mode)
         return
+
+    agent_trace(
+        "respond llm start",
+        present_mode=present_mode,
+        messages=len(messages),
+    )
 
     if present_mode == "markdown":
         async for item in _stream_markdown(llm, messages, present_mode=present_mode):
@@ -177,6 +199,7 @@ async def respond(
         return
 
     if present_mode == "auto":
+        agent_trace("respond abort", error="auto not implemented")
         yield ErrorEvent(
             error="present_mode='auto' 尚未实现",
             recoverable=False,
@@ -184,6 +207,7 @@ async def respond(
         yield RespondResult(present_mode=present_mode)
         return
 
+    agent_trace("respond abort", error=f"unknown present_mode={present_mode!r}")
     yield ErrorEvent(
         error=f"未知 present_mode={present_mode!r}，可选: markdown / a2ui / auto",
         recoverable=False,

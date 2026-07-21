@@ -20,6 +20,7 @@ from core.provider import (
     StreamErrorEvent,
 )
 
+from agent.agent_log import agent_trace
 from agent.events import AgentEvent, ErrorEvent, ThoughtDeltaEvent
 
 
@@ -55,9 +56,16 @@ async def think(
     - ``decision.should_respond`` → 交给 Respond（可用 ``decision.content``）
     """
     if not messages:
+        agent_trace("think abort", error="empty messages")
         yield ErrorEvent(error="Think 收到空 messages")
         yield ThinkDecision()
         return
+
+    agent_trace(
+        "think llm start",
+        messages=len(messages),
+        tools=len(tools or []),
+    )
 
     content_parts: list[str] = []
     tool_calls: list[ToolCall] = []
@@ -77,6 +85,7 @@ async def think(
                 content_parts.append(ev.delta)
                 yield ThoughtDeltaEvent(phase="think", delta=ev.delta)
         elif isinstance(ev, StreamErrorEvent):
+            agent_trace("think llm error", error=str(ev.error)[:200])
             yield ErrorEvent(error=str(ev.error))
             yield ThinkDecision(content="".join(content_parts))
             return
@@ -95,6 +104,21 @@ async def think(
 
     content = "".join(content_parts).strip()
     if stop == StopReason.TOOL_CALLS and tool_calls:
+        agent_trace(
+            "think llm done",
+            route="execute",
+            stop=stop.value if stop else None,
+            content_len=len(content),
+            tool_calls=len(tool_calls),
+            tools=",".join(tc.name for tc in tool_calls),
+        )
         yield ThinkDecision(content=content, tool_calls=tool_calls)
     else:
+        agent_trace(
+            "think llm done",
+            route="respond",
+            stop=stop.value if stop else None,
+            content_len=len(content),
+            tool_calls=0,
+        )
         yield ThinkDecision(content=content, tool_calls=[])

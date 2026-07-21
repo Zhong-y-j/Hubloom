@@ -8,6 +8,7 @@ from typing import Any
 from a2ui.basic_catalog.provider import BasicCatalog
 from a2ui.schema.constants import VERSION_0_9
 from a2ui.schema.manager import A2uiSchemaManager
+from agent.agent_log import agent_trace
 from agent.prompts import RESPOND_MARKDOWN_SYSTEM, THINK_SYSTEM
 from core.models import Message, Role
 from mcp_adapter.gateway.catalog import format_catalog_for_prompt
@@ -103,7 +104,15 @@ async def assemble_think(
         current_task="",  # 触发句在 turn_messages 里，避免重复 USER
     )
     # 本轮（含 TOOL 全文）强制接在后面
-    return [*assembled, *turn]
+    out = [*assembled, *turn]
+    agent_trace(
+        "assemble think",
+        prior=len(prior),
+        turn=len(turn),
+        assembled=len(assembled),
+        total=len(out),
+    )
+    return out
 
 
 def assemble_respond_markdown(
@@ -113,6 +122,11 @@ def assemble_respond_markdown(
 ) -> list[Message]:
     """Respond(Markdown)：与 A2UI 相同，仅 system + 本轮最后一轮 Think 正文。"""
     body = (think_content or "").strip()
+    agent_trace(
+        "assemble respond",
+        present_mode="markdown",
+        think_len=len(body),
+    )
     return [
         Message(role=Role.SYSTEM, content=system_prompt),
         Message(role=Role.USER, content=body),
@@ -126,6 +140,12 @@ def assemble_respond_a2ui(
 ) -> list[Message]:
     """Respond(A2UI)：仅官方 system + 本轮最后一轮 Think 正文。"""
     body = (think_content or "").strip()
+    agent_trace(
+        "assemble respond",
+        present_mode="a2ui",
+        think_len=len(body),
+        system_len=len(system_prompt or ""),
+    )
     return [
         Message(role=Role.SYSTEM, content=system_prompt),
         Message(role=Role.USER, content=body),

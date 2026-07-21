@@ -17,6 +17,7 @@ from core.provider import LLMProvider
 from memory.manager import MemoryManager
 from tools.runner import ToolRunner
 
+from agent.agent_log import agent_trace, clip
 from agent.assemble import (
     assemble_respond_a2ui,
     assemble_respond_markdown,
@@ -30,6 +31,7 @@ from agent.events import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from agent.llm_context_log import dump_llm_context
 from agent.loop.execute import ExecuteResult, execute
 from agent.loop.respond import PresentMode, RespondResult, respond, user_visible_content
 from agent.loop.think import ThinkDecision, think
@@ -114,7 +116,17 @@ async def run_stream(
     tool_errors = 0
     tool_log: list[dict[str, str]] = []
 
+    trigger_text = trigger.content if isinstance(trigger.content, str) else str(trigger.content)
+    agent_trace(
+        "run start",
+        present_mode=present_mode,
+        max_think_rounds=max_think_rounds,
+        tools=len(tools),
+        trigger=clip(trigger_text, 120),
+    )
+
     if present_mode == "auto":
+        agent_trace("run abort", reason="auto not implemented")
         yield ErrorEvent(
             error="present_mode='auto' 尚未实现",
             recoverable=False,
@@ -138,12 +150,26 @@ async def run_stream(
     await _remember(memory, trigger, source=trigger_source)
 
     yield PhaseEvent(phase="thinking", route=present_mode)
+    agent_trace("phase", phase="thinking", present_mode=present_mode)
 
     for round_i in range(1, max_think_rounds + 1):
+        round_started = time.monotonic()
+        agent_trace(
+            "think round start",
+            round=round_i,
+            turn_messages=len(turn_messages),
+        )
         messages = await assemble_think(
             memory,
             system_prompt=think_system,
             turn_messages=turn_messages,
+        )
+        dump_llm_context(
+            phase="think",
+            messages=messages,
+            round_i=round_i,
+            present_mode=present_mode,
+            tools=tools,
         )
 
         decision: ThinkDecision | None = None
@@ -155,6 +181,7 @@ async def run_stream(
 
         if decision is None:
             err = f"Think#{round_i} 未产出 ThinkDecision"
+            agent_trace("think round fail", round=round_i, error=err)
             elapsed = _elapsed_ms(started)
             yield ErrorEvent(error=err, recoverable=False)
             yield RunStatsEvent(
@@ -174,7 +201,26 @@ async def run_stream(
             )
             return
 
+        route = "execute" if decision.should_execute else "respond"
+        tool_names = [tc.name for tc in (decision.tool_calls or [])]
+        agent_trace(
+            "think round done",
+            round=round_i,
+            route=route,
+            content_len=len(decision.content or ""),
+            tool_calls=len(tool_names),
+            tools=",".join(tool_names) if tool_names else "-",
+            round_ms=_elapsed_ms(round_started),
+        )
+
         if decision.should_execute:
+            exec_started = time.monotonic()
+            agent_trace(
+                "execute start",
+                round=round_i,
+                tools=",".join(tool_names),
+                n=len(tool_names),
+            )
             exec_result: ExecuteResult | None = None
             async for item in execute(
                 decision.tool_calls,
@@ -197,6 +243,7 @@ async def run_stream(
 
             if exec_result is None:
                 err = f"Think#{round_i} 后 Execute 未产出 ExecuteResult"
+                agent_trace("execute fail", round=round_i, error=err)
                 elapsed = _elapsed_ms(started)
                 yield ErrorEvent(error=err, recoverable=False)
                 yield RunStatsEvent(
@@ -215,6 +262,15 @@ async def run_stream(
                     error=err,
                 )
                 return
+
+            err_n = sum(1 for _, _, is_err in exec_result.results if is_err)
+            agent_trace(
+                "execute done",
+                round=round_i,
+                results=len(exec_result.results),
+                errors=err_n,
+                exec_ms=_elapsed_ms(exec_started),
+            )
 
             for msg in exec_result.messages:
                 meta: dict[str, Any] | None = None
@@ -237,6 +293,13 @@ async def run_stream(
             turn_messages.append(think_msg)
 
             yield PhaseEvent(phase="replying", route=present_mode)
+            agent_trace(
+                "phase",
+                phase="replying",
+                present_mode=present_mode,
+                round=round_i,
+                think_len=len(think_text),
+            )
 
             if present_mode == "a2ui":
                 respond_messages = assemble_respond_a2ui(
@@ -249,6 +312,20 @@ async def run_stream(
                     think_content=think_text,
                 )
 
+            dump_llm_context(
+                phase="respond",
+                messages=respond_messages,
+                round_i=round_i,
+                present_mode=present_mode,
+            )
+
+            respond_started = time.monotonic()
+            agent_trace(
+                "respond start",
+                round=round_i,
+                present_mode=present_mode,
+                messages=len(respond_messages),
+            )
             result: RespondResult | None = None
             async for item in respond(
                 llm,
@@ -264,6 +341,7 @@ async def run_stream(
 
             if result is None:
                 err = "Respond 未产出 RespondResult"
+                agent_trace("respond fail", round=round_i, error=err)
                 yield ErrorEvent(error=err, recoverable=False)
                 yield RunStatsEvent(
                     steps=round_i,
@@ -287,6 +365,14 @@ async def run_stream(
                 result.content,
                 a2ui_messages=a2ui_messages,
             )
+            agent_trace(
+                "respond done",
+                round=round_i,
+                present_mode=result.present_mode,
+                content_len=len(visible),
+                a2ui=len(a2ui_messages),
+                respond_ms=_elapsed_ms(respond_started),
+            )
             if visible:
                 turn_meta: dict[str, Any] = {"route": present_mode}
                 if think_text:
@@ -302,6 +388,15 @@ async def run_stream(
                     metadata=turn_meta,
                 )
 
+            agent_trace(
+                "run done",
+                ok=True,
+                think_rounds=round_i,
+                tool_calls=tool_calls,
+                tool_errors=tool_errors,
+                content_len=len(visible),
+                elapsed_ms=elapsed,
+            )
             yield RunStatsEvent(
                 steps=round_i,
                 tool_calls=tool_calls,
@@ -321,6 +416,7 @@ async def run_stream(
             return
 
         err = f"Think#{round_i} 既不 execute 也不 respond"
+        agent_trace("run abort", round=round_i, error=err)
         elapsed = _elapsed_ms(started)
         yield ErrorEvent(error=err, recoverable=False)
         yield RunStatsEvent(
@@ -341,6 +437,14 @@ async def run_stream(
         return
 
     err = f"达到 Think 轮次上限 {max_think_rounds}，未进入 Respond"
+    agent_trace(
+        "run abort",
+        error=err,
+        think_rounds=max_think_rounds,
+        tool_calls=tool_calls,
+        tool_errors=tool_errors,
+        elapsed_ms=_elapsed_ms(started),
+    )
     elapsed = _elapsed_ms(started)
     yield ErrorEvent(error=err, recoverable=False)
     yield RunStatsEvent(

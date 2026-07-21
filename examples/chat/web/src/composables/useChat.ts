@@ -15,7 +15,8 @@ export type PresentMode = "a2ui" | "markdown";
 
 function loadPresentMode(): PresentMode {
   const raw = (localStorage.getItem(STORAGE_PRESENT) || "").trim().toLowerCase();
-  return raw === "markdown" ? "markdown" : "a2ui";
+  // 默认 Markdown；仅显式选过 a2ui 时才用 A2UI
+  return raw === "a2ui" ? "a2ui" : "markdown";
 }
 
 function uuid(): string {
