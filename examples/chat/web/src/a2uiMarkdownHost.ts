@@ -2,6 +2,10 @@ import { LitElement, html } from "lit";
 import { ContextProvider } from "@lit/context";
 import { Context } from "@a2ui/lit/v0_9";
 import { renderMarkdown } from "@a2ui/markdown-it";
+import {
+  patchA2uiInputFonts,
+  watchA2uiInputFonts,
+} from "@/utils/patchA2uiInputFonts";
 
 /**
  * Lit 宿主：注入 markdown Context，并渲染官方 <a2ui-surface>。
@@ -18,6 +22,8 @@ class A2uiMarkdownHost extends LitElement {
 
   declare surface: unknown;
 
+  #stopFontWatch: (() => void) | null = null;
+
   constructor() {
     super();
     this.surface = undefined;
@@ -30,6 +36,27 @@ class A2uiMarkdownHost extends LitElement {
   createRenderRoot() {
     // light DOM：页面 --a2ui-* CSS 变量可传到 Basic Catalog
     return this;
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    this.#stopFontWatch?.();
+    this.#stopFontWatch = watchA2uiInputFonts(this);
+  }
+
+  disconnectedCallback() {
+    this.#stopFontWatch?.();
+    this.#stopFontWatch = null;
+    super.disconnectedCallback();
+  }
+
+  updated(changed: Map<string, unknown>) {
+    super.updated(changed);
+    if (changed.has("surface")) {
+      // Lit 更新 / shadow 就绪后再补扫
+      requestAnimationFrame(() => patchA2uiInputFonts(this));
+      setTimeout(() => patchA2uiInputFonts(this), 50);
+    }
   }
 
   render() {

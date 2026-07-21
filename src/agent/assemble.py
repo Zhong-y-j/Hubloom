@@ -10,6 +10,7 @@ from a2ui.schema.constants import VERSION_0_9
 from a2ui.schema.manager import A2uiSchemaManager
 from agent.agent_log import agent_trace
 from agent.prompts import (
+    RESPOND_A2UI_UI_DESCRIPTION,
     RESPOND_MARKDOWN_SYSTEM,
     THINK_SYSTEM_AFTER_TOOLS,
     THINK_SYSTEM_BEFORE_TOOLS,
@@ -101,8 +102,14 @@ def build_respond_markdown_system() -> str:
     return RESPOND_MARKDOWN_SYSTEM.strip()
 
 
-def build_respond_a2ui_system(*, ui_description: str = "") -> str:
-    """Respond(A2UI) system：SchemaManager 官方 prompt（含 schema）。"""
+def build_respond_a2ui_system(*, ui_description: str | None = None) -> str:
+    """Respond(A2UI) system：SchemaManager 官方 prompt（含 schema）。
+
+    ``ui_description`` 默认用 ``RESPOND_A2UI_UI_DESCRIPTION``（布局约定）；
+    传入非空字符串可覆盖；传 ``""`` 则不加布局段。
+    """
+    if ui_description is None:
+        ui_description = RESPOND_A2UI_UI_DESCRIPTION.strip()
     manager = A2uiSchemaManager(
         version=VERSION_0_9,
         catalogs=[BasicCatalog.get_config(version=VERSION_0_9)],

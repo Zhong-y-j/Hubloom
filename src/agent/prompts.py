@@ -69,6 +69,18 @@ RESPOND_MARKDOWN_SYSTEM = """你处于 Respond 阶段：直接对用户说话，
 - 本模式只输出 Markdown 正文，不要输出 A2UI / JSON 界面块
 """
 
-# 预留：A2UI / auto 提示词后续补齐
-# RESPOND_A2UI_SYSTEM = ...
-# RESPOND_AUTO_SYSTEM = ...
+# Respond（A2UI）：传给 SchemaManager 的 ui_description（布局/交互约定，不含 schema）。
+RESPOND_A2UI_UI_DESCRIPTION = """
+Layout & form structure (prefer these patterns):
+- Wrap the whole form in a Card; put a Column inside the Card as the single child.
+- Title: Text with usageHint h2/h3 in Simplified Chinese.
+- Default stack fields in a Column (vertical). For short related fields (e.g. name + category),
+  nest a Row with two TextFields side by side; keep long URL/text fields full-width in Column.
+- Primary submit Button: use primary variant; place at the bottom of the Column.
+- ChoicePicker for enums: set displayStyle to "chips" (not checkbox/radio look);
+  CheckBox for booleans; TextField for strings (use type number only when needed).
+- Do NOT invent CSS or custom components; only Basic Catalog types (Column/Row/Card/Tabs/…).
+- Prefer empty defaults in updateDataModel; avoid firing required validation errors on first paint
+  (do not pre-fill checks that mark empty required fields as failed until the user submits).
+- Chat bubble is narrow (~680px): avoid more than two columns; prefer Column on mobile-like width.
+"""
