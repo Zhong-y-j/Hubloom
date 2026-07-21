@@ -9,7 +9,11 @@ from a2ui.basic_catalog.provider import BasicCatalog
 from a2ui.schema.constants import VERSION_0_9
 from a2ui.schema.manager import A2uiSchemaManager
 from agent.agent_log import agent_trace
-from agent.prompts import RESPOND_MARKDOWN_SYSTEM, THINK_SYSTEM
+from agent.prompts import (
+    RESPOND_MARKDOWN_SYSTEM,
+    THINK_SYSTEM_AFTER_TOOLS,
+    THINK_SYSTEM_BEFORE_TOOLS,
+)
 from core.models import Message, Role
 from mcp_adapter.gateway.catalog import format_catalog_for_prompt
 from memory import ContextAssembler
@@ -27,14 +31,27 @@ async def load_conversation(
     return list(recalled.messages or [])
 
 
+def turn_has_tool_result(turn_messages: list[Message] | None) -> bool:
+    """本轮轨迹里是否已有 tool 回传（用于切换 Think 提示词）。"""
+    return any(m.role == Role.TOOL for m in (turn_messages or []))
+
+
 def build_think_system(
     *,
     skills_dir: Path,
     skills_exclude: list[str] | None = None,
     catalog: Any | None = None,
+    phase: str = "before_tools",
 ) -> str:
-    """Think system = THINK_SYSTEM + skills +（可选）API 分组目录。"""
-    parts = [THINK_SYSTEM.strip()]
+    """拼装 Think system。
+
+    - ``before_tools``：THINK_SYSTEM_BEFORE_TOOLS + skills +（可选）API 目录
+    - ``after_tools``：仅 THINK_SYSTEM_AFTER_TOOLS（不再挂长目录，降低复述 schema）
+    """
+    if phase == "after_tools":
+        return THINK_SYSTEM_AFTER_TOOLS.strip()
+
+    parts = [THINK_SYSTEM_BEFORE_TOOLS.strip()]
     skills = load_skills(skills_dir, exclude=skills_exclude or [])
     skills_text = build_skills_prompt(skills).strip()
     if skills_text:
@@ -44,6 +61,40 @@ def build_think_system(
         if catalog_text:
             parts.append(catalog_text)
     return "\n\n".join(parts)
+
+
+def build_think_systems(
+    *,
+    skills_dir: Path,
+    skills_exclude: list[str] | None = None,
+    catalog: Any | None = None,
+) -> tuple[str, str]:
+    """返回 ``(工具前 system, 工具后 system)``。"""
+    before = build_think_system(
+        skills_dir=skills_dir,
+        skills_exclude=skills_exclude,
+        catalog=catalog,
+        phase="before_tools",
+    )
+    after = build_think_system(
+        skills_dir=skills_dir,
+        skills_exclude=skills_exclude,
+        catalog=catalog,
+        phase="after_tools",
+    )
+    return before, after
+
+
+def select_think_system(
+    *,
+    think_system_before: str,
+    think_system_after: str,
+    turn_messages: list[Message] | None,
+) -> str:
+    """按本轮是否已有 tool 结果选择 Think system。"""
+    if turn_has_tool_result(turn_messages):
+        return think_system_after
+    return think_system_before
 
 
 def build_respond_markdown_system() -> str:
@@ -59,10 +110,31 @@ def build_respond_a2ui_system(*, ui_description: str = "") -> str:
     return manager.generate_system_prompt(
         role_description=(
             "You are a helpful assistant. When the user needs an interactive list "
-            "or form, your final output MUST include valid A2UI UI JSON messages."
+            "or form, your final output MUST include valid A2UI UI JSON messages.\n"
+            "LANGUAGE (hard rule): All user-visible text MUST be Simplified Chinese "
+            "(简体中文), including: conversational text outside <a2ui-json> blocks, "
+            "and every UI string inside A2UI (titles, labels, button text, helper "
+            "hints, validation messages, option labels, placeholders). "
+            "Do NOT use English for those strings. "
+            "JSON keys, component type names, path/field names, and enum values "
+            "required by the API/schema (e.g. available/pending/sold) may stay "
+            "in English as required by the schema."
         ),
         workflow_description=(
-            "Emit A2UI messages: createSurface, updateComponents, updateDataModel."
+            "Emit A2UI for progressive streaming. HARD RULES (violations are errors):\n"
+            "1) Use EXACTLY three separate blocks, each wrapped in its own "
+            "<a2ui-json>...</a2ui-json>. Each block MUST contain ONE JSON object "
+            "(one message). NEVER put a JSON array of multiple messages inside one block.\n"
+            "2) Emit blocks in this exact order, finishing each block (including the "
+            "closing </a2ui-json>) before starting the next:\n"
+            "   (1) createSurface\n"
+            "   (2) updateComponents — full component tree / form scaffold first\n"
+            "   (3) updateDataModel — values / empty defaults last\n"
+            "3) NEVER emit updateDataModel before updateComponents.\n"
+            "4) NEVER merge createSurface + updateComponents + updateDataModel into "
+            "one <a2ui-json> block.\n"
+            "Reason: the client renders each closed block immediately; components "
+            "must arrive before data so the empty form framework can appear first."
         ),
         ui_description=ui_description,
         include_schema=True,
@@ -111,6 +183,7 @@ async def assemble_think(
         turn=len(turn),
         assembled=len(assembled),
         total=len(out),
+        has_tool=turn_has_tool_result(turn),
     )
     return out
 

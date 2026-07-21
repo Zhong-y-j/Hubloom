@@ -17,7 +17,7 @@ from pathlib import Path
 from agent.assemble import (
     build_respond_a2ui_system,
     build_respond_markdown_system,
-    build_think_system,
+    build_think_systems,
     load_conversation,
 )
 from agent.events import (
@@ -174,7 +174,7 @@ async def test_agent() -> None:
         tool_defs = registry.list_definitions()
         skills_dir = _skills_dir(cfg)
 
-        think_system = build_think_system(
+        think_system, think_system_after = build_think_systems(
             skills_dir=skills_dir,
             skills_exclude=cfg.skills_exclude,
             catalog=None if mcp_setup is None else mcp_setup.catalog,
@@ -212,6 +212,7 @@ async def test_agent() -> None:
             tools=tool_defs,
             trigger=trigger,
             think_system=think_system,
+            think_system_after=think_system_after,
             respond_system=respond_system,
             present_mode=_PRESENT_MODE,  # type: ignore[arg-type]
             max_think_rounds=_MAX_THINK_ROUNDS,

@@ -34,7 +34,7 @@ from core.models import Message, Role
 from memory.manager import MemoryManager
 from runtime import HubloomRuntime
 
-_PRESENT_MODE = "markdown"
+_PRESENT_MODE = "a2ui"
 _ROOT = Path(__file__).resolve().parents[1]
 _CLEAR_SESSION = os.getenv("CLEAR_SESSION", "").strip().lower() in {
     "1",
@@ -68,8 +68,8 @@ async def test_runtime() -> None:
     if _PRESENT_MODE not in {"markdown", "a2ui"}:
         raise SystemExit(f"PRESENT_MODE 无效: {_PRESENT_MODE!r}，可选 markdown / a2ui")
 
-    session_id = "test-runtime-0019ec11"
-    task = "告诉当前有哪些钥匙柜呢"
+    session_id = "test-runtime-11111"
+    task = "我当前想要添加一个宠物"
     config_path = _ROOT / "config" / "env.yaml"
 
     print(f"config={config_path}")
@@ -89,6 +89,7 @@ async def test_runtime() -> None:
             f"【Runtime 已装配】mcp_tools={n_mcp} max_think_rounds={agent.max_think_rounds}"
         )
         print(f"  think_system chars={len(agent.think_system)}")
+        print(f"  think_system_after chars={len(agent.think_system_after)}")
         print(f"  respond_markdown chars={len(agent.respond_markdown_system)}")
         print(f"  respond_a2ui chars={len(agent.respond_a2ui_system)}")
 
@@ -107,7 +108,9 @@ async def test_runtime() -> None:
             session_id=session_id,
             present_mode=_PRESENT_MODE,  # type: ignore[arg-type]
             trigger_source="user",
-            bearer_token=(os.getenv("MCP_TOKEN") or os.getenv("HUBLOOM_BEARER") or "").strip()
+            bearer_token=(
+                os.getenv("MCP_TOKEN") or os.getenv("HUBLOOM_BEARER") or ""
+            ).strip()
             or None,
         ):
             if isinstance(item, PhaseEvent):
@@ -137,6 +140,18 @@ async def test_runtime() -> None:
                     f"【A2uiMessagesEvent】replace={item.replace} "
                     f"n={len(item.messages)}"
                 )
+                for i, msg in enumerate(item.messages):
+                    keys = ",".join(
+                        k
+                        for k in (
+                            "createSurface",
+                            "updateComponents",
+                            "updateDataModel",
+                            "deleteSurface",
+                        )
+                        if k in msg
+                    )
+                    print(f"  [{i}] {keys or list(msg.keys())[:3]}")
             elif isinstance(item, FinalAnswerEvent):
                 print()
                 print("-" * 60)

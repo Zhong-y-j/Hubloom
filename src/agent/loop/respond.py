@@ -20,6 +20,7 @@ from agent.events import (
     FinalAnswerDeltaEvent,
     FinalAnswerEvent,
 )
+from agent.loop.a2ui_stream import A2uiStreamEmit, A2uiStreamSplitter
 
 from a2ui.parser.parser import has_a2ui_parts, parse_response
 
@@ -109,23 +110,54 @@ def user_visible_content(
     return text
 
 
+async def _emit_splitter_items(
+    emits: list[A2uiStreamEmit],
+) -> AsyncIterator[AgentEvent]:
+    for item in emits:
+        if item.kind == "text" and item.text:
+            yield FinalAnswerDeltaEvent(delta=item.text)
+        elif item.kind == "a2ui" and item.messages:
+            yield A2uiMessagesEvent(
+                messages=list(item.messages),
+                replace=False,
+            )
+            agent_trace(
+                "a2ui block",
+                replace=False,
+                n=len(item.messages),
+            )
+
+
 async def _stream_a2ui(
     llm: LLMProvider,
     messages: list[Message],
     *,
     present_mode: PresentMode,
 ) -> AsyncIterator[AgentEvent | RespondResult]:
-    """流式生成 A2UI 回复：文本增量 + 结束时权威 A2uiMessagesEvent。"""
+    """流式 A2UI：标签外文本即时下发；每个闭合 ``<a2ui-json>`` 整块推送；结束再权威全量。"""
     content_parts: list[str] = []
     usage: TokenUsage | None = None
+    splitter = A2uiStreamSplitter()
+    incremental_n = 0
+
     async for ev in llm.generate_stream(messages=messages, tools=None):
         if isinstance(ev, DeltaEvent):
-            if ev.delta:
-                content_parts.append(ev.delta)
-                yield FinalAnswerDeltaEvent(delta=ev.delta)
+            if not ev.delta:
+                continue
+            content_parts.append(ev.delta)
+            async for item in _emit_splitter_items(splitter.feed(ev.delta)):
+                if isinstance(item, A2uiMessagesEvent):
+                    incremental_n += len(item.messages)
+                yield item
         elif isinstance(ev, StreamErrorEvent):
-            agent_trace("respond llm error", present_mode=present_mode, error=str(ev.error)[:200])
+            agent_trace(
+                "respond llm error",
+                present_mode=present_mode,
+                error=str(ev.error)[:200],
+            )
             yield ErrorEvent(error=str(ev.error))
+            async for item in _emit_splitter_items(splitter.flush()):
+                yield item
             content = "".join(content_parts)
             a2ui_messages = _extract_a2ui_messages(content)
             if a2ui_messages:
@@ -141,18 +173,28 @@ async def _stream_a2ui(
             usage = ev.output.usage
             if not content_parts and ev.output.content:
                 content_parts.append(ev.output.content)
-                yield FinalAnswerDeltaEvent(delta=ev.output.content)
+                async for item in _emit_splitter_items(splitter.feed(ev.output.content)):
+                    if isinstance(item, A2uiMessagesEvent):
+                        incremental_n += len(item.messages)
+                    yield item
             break
+
+    async for item in _emit_splitter_items(splitter.flush()):
+        if isinstance(item, A2uiMessagesEvent):
+            incremental_n += len(item.messages)
+        yield item
+
     content = "".join(content_parts).strip()
     a2ui_messages = _extract_a2ui_messages(content)
     if a2ui_messages:
+        # 权威全量：与增量结果对齐，前端 replace 重建
         yield A2uiMessagesEvent(messages=a2ui_messages, replace=True)
-    # present_mode=a2ui 但模型只回了 Markdown：正常降级，不推 error（避免前端标红）
     agent_trace(
         "respond llm done",
         present_mode=present_mode,
         content_len=len(content),
         a2ui=len(a2ui_messages),
+        a2ui_incremental=incremental_n,
     )
     yield FinalAnswerEvent(content=content, usage=usage)
     yield RespondResult(

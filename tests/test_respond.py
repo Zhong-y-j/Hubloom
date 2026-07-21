@@ -20,8 +20,9 @@ from agent.assemble import (
     assemble_think,
     build_respond_a2ui_system,
     build_respond_markdown_system,
-    build_think_system,
+    build_think_systems,
     load_conversation,
+    select_think_system,
 )
 from agent.events import (
     A2uiMessagesEvent,
@@ -340,7 +341,7 @@ async def test_respond() -> None:
         runner = ToolRunner(registry)
         tool_defs = registry.list_definitions()
         skills_dir = _skills_dir(cfg)
-        think_system = build_think_system(
+        think_system, think_system_after = build_think_systems(
             skills_dir=skills_dir,
             skills_exclude=cfg.skills_exclude,
             catalog=None if mcp_setup is None else mcp_setup.catalog,
@@ -369,9 +370,14 @@ async def test_respond() -> None:
 
         for round_i in range(1, _MAX_THINK_ROUNDS + 1):
             print()
+            think_prompt = select_think_system(
+                think_system_before=think_system,
+                think_system_after=think_system_after,
+                turn_messages=turn_messages,
+            )
             messages = await assemble_think(
                 memory,
-                system_prompt=think_system,
+                system_prompt=think_prompt,
                 turn_messages=turn_messages,
             )
             decision = await _run_think(

@@ -1339,6 +1339,16 @@ h1 {
   animation: chat-a2ui-in 0.28s ease-out;
 }
 
+.answer-a2ui-pending {
+  margin: 0.35rem 0 0;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  border-radius: var(--radius-sm);
+  border: 1px dashed #99f6e4;
+  background: #f0fdfa;
+}
+
 .chat-a2ui a2ui-basic-image,
 .chat-a2ui img {
   display: block;

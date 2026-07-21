@@ -41,6 +41,17 @@ function isA2uiPlaceholder(content: string): boolean {
   return content.trim() === "（交互界面）";
 }
 
+/** 展示用正文：去掉泄漏的 a2ui-json 标签块（后端正常已不会流式下发） */
+function visibleAnswerText(content: string): string {
+  const raw = (content || "").trim();
+  if (!raw) return "";
+  if (!raw.includes("<a2ui-json>")) return raw;
+  return raw
+    .replace(/<a2ui-json>[\s\S]*?<\/a2ui-json>/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function onCredChange() {
   persist();
   status.value = ready.value ? "就绪" : "请填写 Token 与用户 ID";
@@ -382,13 +393,16 @@ onMounted(async () => {
             </div>
 
             <div
-              v-if="m.content && !(m.a2uiMessages?.length && isA2uiPlaceholder(m.content))"
+              v-if="
+                visibleAnswerText(m.content) &&
+                !(m.a2uiMessages?.length && isA2uiPlaceholder(m.content))
+              "
               class="answer-body"
               :class="{
                 'markdown-body': true,
                 typing: m.streaming,
               }"
-              v-html="renderMarkdownToHtml(m.content)"
+              v-html="renderMarkdownToHtml(visibleAnswerText(m.content))"
             />
 
             <ChatA2uiBlock

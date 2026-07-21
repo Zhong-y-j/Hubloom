@@ -162,7 +162,12 @@ function syncFromProps() {
 }
 
 watch(
-  () => [props.reloadKey ?? 0, props.messages?.length ?? 0] as const,
+  () =>
+    [
+      props.reloadKey ?? 0,
+      props.messages?.length ?? 0,
+      // replace 权威全量时 length 可能不变，靠 reloadKey；增量靠 length
+    ] as const,
   () => syncFromProps(),
   { immediate: true }
 );

@@ -19,7 +19,7 @@ from agent.agent_log import configure_agent_logging
 from agent.assemble import (
     build_respond_a2ui_system,
     build_respond_markdown_system,
-    build_think_system,
+    build_think_systems,
 )
 from agent.events import AgentEvent
 from agent.loop.respond import PresentMode
@@ -68,7 +68,8 @@ class HubloomRuntime:
 
     cfg: HubloomConfig
     llm: LLMProvider
-    think_system: str
+    think_system: str  # 工具前（含 skills / catalog）
+    think_system_after: str  # 工具后（短提示）
     respond_markdown_system: str
     respond_a2ui_system: str
     default_present_mode: PresentMode
@@ -129,7 +130,7 @@ class HubloomRuntime:
             )
             mcp_tools = list(mcp_setup.bindings.tools)
 
-        think_system = build_think_system(
+        think_system, think_system_after = build_think_systems(
             skills_dir=_skills_dir(cfg),
             skills_exclude=cfg.skills_exclude,
             catalog=None if mcp_setup is None else mcp_setup.catalog,
@@ -139,6 +140,7 @@ class HubloomRuntime:
             cfg=cfg,
             llm=llm,
             think_system=think_system,
+            think_system_after=think_system_after,
             respond_markdown_system=build_respond_markdown_system(),
             respond_a2ui_system=build_respond_a2ui_system(),
             default_present_mode=default_present_mode,
@@ -224,6 +226,7 @@ class HubloomRuntime:
             tools=tool_defs,
             trigger=trigger,
             think_system=self.think_system,
+            think_system_after=self.think_system_after,
             respond_system=self._respond_system(mode),
             present_mode=mode,
             max_think_rounds=max_think_rounds or self.max_think_rounds,

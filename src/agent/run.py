@@ -22,6 +22,8 @@ from agent.assemble import (
     assemble_respond_a2ui,
     assemble_respond_markdown,
     assemble_think,
+    select_think_system,
+    turn_has_tool_result,
 )
 from agent.events import (
     AgentEvent,
@@ -104,17 +106,18 @@ async def run_stream(
     present_mode: PresentMode = "markdown",
     max_think_rounds: int = 5,
     trigger_source: str = "user",
+    think_system_after: str | None = None,
 ) -> AsyncIterator[AgentEvent | RunResult]:
     """执行一整轮 Agent：落库 trigger → Think/Execute 循环 → Respond。
 
-    事件顺序大致为：
-    PhaseEvent(thinking) → … → PhaseEvent(replying) → …
-    → RunStatsEvent → RunResult
+    ``think_system``：工具前提示（含 skills/catalog）。
+    ``think_system_after``：工具后短提示；缺省则全程用 ``think_system``。
     """
     started = time.monotonic()
     tool_calls = 0
     tool_errors = 0
     tool_log: list[dict[str, str]] = []
+    after_system = (think_system_after or think_system).strip() or think_system
 
     trigger_text = trigger.content if isinstance(trigger.content, str) else str(trigger.content)
     agent_trace(
@@ -154,14 +157,24 @@ async def run_stream(
 
     for round_i in range(1, max_think_rounds + 1):
         round_started = time.monotonic()
+        think_prompt = select_think_system(
+            think_system_before=think_system,
+            think_system_after=after_system,
+            turn_messages=turn_messages,
+        )
         agent_trace(
             "think round start",
             round=round_i,
             turn_messages=len(turn_messages),
+            think_phase=(
+                "after_tools"
+                if turn_has_tool_result(turn_messages)
+                else "before_tools"
+            ),
         )
         messages = await assemble_think(
             memory,
-            system_prompt=think_system,
+            system_prompt=think_prompt,
             turn_messages=turn_messages,
         )
         dump_llm_context(
