@@ -14,6 +14,15 @@ import asyncio
 import os
 from pathlib import Path
 
+from agent.assemble import (
+    assemble_respond_a2ui,
+    assemble_respond_markdown,
+    assemble_think,
+    build_respond_a2ui_system,
+    build_respond_markdown_system,
+    build_think_system,
+    load_conversation,
+)
 from agent.events import (
     A2uiMessagesEvent,
     ErrorEvent,
@@ -26,23 +35,17 @@ from agent.events import (
 from agent.loop.execute import ExecuteResult, execute
 from agent.loop.respond import RespondResult, respond
 from agent.loop.think import ThinkDecision, think
-from agent.prompts import RESPOND_MARKDOWN_SYSTEM, THINK_SYSTEM
 from config import HubloomConfig
+from context import set_request_context
 from core.factory import create_llm
 from core.models import Message, Role
-from context import set_request_context
 from mcp_adapter.discovery import AgentMcpSetup, load_agent_mcp_bindings
-from mcp_adapter.gateway.catalog import format_catalog_for_prompt
-from memory import ContextAssembler, create_memory_manager
+from memory import create_memory_manager
 from memory.manager import MemoryManager
-from skill import build_skills_prompt, load_skills
+from skill import load_skills
 from tools.builtin.memory_tool import SearchMemoryTool
 from tools.registry import ToolRegistry
 from tools.runner import ToolRunner
-
-from a2ui.basic_catalog.provider import BasicCatalog
-from a2ui.schema.constants import VERSION_0_9
-from a2ui.schema.manager import A2uiSchemaManager
 
 # 可选：环境变量切呈现模式
 _PRESENT_MODE = "a2ui"  # markdown | a2ui
@@ -56,28 +59,6 @@ _CLEAR_SESSION = os.getenv("CLEAR_SESSION", "").strip().lower() in {
     "true",
     "yes",
 }
-
-
-def build_respond_a2ui_system(*, ui_description: str = "") -> str:
-    """Respond(A2UI) 的 system：SchemaManager 生成（含 schema + 标签约定）。"""
-    manager = A2uiSchemaManager(
-        version=VERSION_0_9,
-        catalogs=[BasicCatalog.get_config(version=VERSION_0_9)],
-    )
-    return manager.generate_system_prompt(
-        role_description=(
-            "你处于 Hubloom 的 Respond 阶段：直接对用户呈现最终界面。\n"
-            "依据本轮上下文（用户意图、工具结果）作答；不编造未出现的事实；"
-            "不要输出 Think/Execute/tool_calls 等实现细节。"
-        ),
-        workflow_description=(
-            "缺必填信息时用表单收集；有结果时用列表/卡片展示；"
-            "说明性短句可放在 <a2ui-json> 块外的普通文本里。"
-        ),
-        ui_description=ui_description,  # v1 可空；以后可从本轮意图填
-        include_schema=True,
-        include_examples=False,
-    )
 
 
 def _db_path(cfg: HubloomConfig) -> str:
@@ -106,16 +87,6 @@ async def save_message(
     )
 
 
-async def load_histories(
-    memory: MemoryManager,
-    *,
-    top_k: int = 40,
-) -> list[Message]:
-    """从 conversation 表召回最近消息（时间正序）。"""
-    recalled = await memory.recall(memory_type="conversation", top_k=top_k)
-    return list(recalled.messages or [])
-
-
 async def print_stored_conversation(
     memory: MemoryManager,
     *,
@@ -123,7 +94,7 @@ async def print_stored_conversation(
     top_k: int = 40,
 ) -> list[Message]:
     """从 memory 再读一遍并打印，确认落库。"""
-    rows = await load_histories(memory, top_k=top_k)
+    rows = await load_conversation(memory, top_k=top_k)
     print(f"【{title}】共 {len(rows)} 条（conversation）")
     for i, m in enumerate(rows):
         preview = m.content if isinstance(m.content, str) else str(m.content)
@@ -136,60 +107,6 @@ async def print_stored_conversation(
             extra += f" tool_call_id={m.tool_call_id}"
         print(f"  db[{i}] {m.role.value}: {preview!r}{extra}")
     return rows
-
-
-async def assemble_from_memory(
-    memory: MemoryManager,
-    *,
-    system_prompt: str,
-    task: str = "",
-    history_limit: int = 40,
-) -> list[Message]:
-    """召回会话历史 → ContextAssembler；``task`` 为本轮 USER（已落库则去重）。"""
-    histories = await load_histories(memory, top_k=history_limit)
-    task_text = (task or "").strip()
-    if (
-        task_text
-        and histories
-        and histories[-1].role == Role.USER
-        and (histories[-1].content or "").strip() == task_text
-    ):
-        histories = histories[:-1]
-    return ContextAssembler().assemble(
-        system_prompt=system_prompt,
-        histories=histories,
-        current_task=task_text,
-    )
-
-
-def assemble_respond_from_turn(
-    *,
-    system_prompt: str,
-    turn_messages: list[Message],
-) -> list[Message]:
-    """Respond(Markdown) 专用：system + 本轮 turn_messages。
-
-    不走 ``ContextAssembler`` token 预算，避免超长 system 裁掉 history。
-    """
-    print(f"【Respond 本轮窗】run 内 {len(turn_messages)} 条（非按 USER 切片）")
-    return [Message(role=Role.SYSTEM, content=system_prompt), *turn_messages]
-
-
-def assemble_respond_a2ui(
-    *,
-    system_prompt: str,
-    think_content: str,
-) -> list[Message]:
-    """Respond(A2UI) 专用：仅官方 A2UI system + 本轮最后一条 Think 正文。
-
-    不注入 USER 触发句、也不注入 tool 轨迹；由 Think 摘要承载本轮意图与缺参等信息。
-    """
-    body = (think_content or "").strip()
-    print(f"【Respond A2UI 窗】仅 system + 末轮 Think（{len(body)} chars）")
-    return [
-        Message(role=Role.SYSTEM, content=system_prompt),
-        Message(role=Role.USER, content=body),
-    ]
 
 
 async def load_tools(
@@ -233,22 +150,6 @@ def _skills_dir(cfg: HubloomConfig) -> Path:
     if not path.is_absolute():
         path = _ROOT / path
     return path
-
-
-def build_think_system(
-    cfg: HubloomConfig,
-    mcp_setup: AgentMcpSetup | None,
-) -> str:
-    parts = [THINK_SYSTEM.strip()]
-    skills = load_skills(_skills_dir(cfg), exclude=cfg.skills_exclude)
-    skills_text = build_skills_prompt(skills).strip()
-    if skills_text:
-        parts.append(skills_text)
-    if mcp_setup is not None:
-        catalog_text = format_catalog_for_prompt(mcp_setup.catalog).strip()
-        if catalog_text:
-            parts.append(catalog_text)
-    return "\n\n".join(parts)
 
 
 def _print_tools(registry: ToolRegistry) -> None:
@@ -438,19 +339,21 @@ async def test_respond() -> None:
         registry, mcp_setup = await load_tools(cfg, memory)
         runner = ToolRunner(registry)
         tool_defs = registry.list_definitions()
-        think_system = build_think_system(cfg, mcp_setup)
+        skills_dir = _skills_dir(cfg)
+        think_system = build_think_system(
+            skills_dir=skills_dir,
+            skills_exclude=cfg.skills_exclude,
+            catalog=None if mcp_setup is None else mcp_setup.catalog,
+        )
         _print_tools(registry)
-        print(f"skills_dir={_skills_dir(cfg)}")
+        print(f"skills_dir={skills_dir}")
         print(
             "skills:",
-            [
-                s["name"]
-                for s in load_skills(_skills_dir(cfg), exclude=cfg.skills_exclude)
-            ],
+            [s["name"] for s in load_skills(skills_dir, exclude=cfg.skills_exclude)],
         )
 
         # 若库内已有历史，先展示（支持 SESSION_ID 续跑）
-        existing = await load_histories(memory)
+        existing = await load_conversation(memory)
         if existing:
             await print_stored_conversation(memory, title="已有会话（续跑）")
 
@@ -466,12 +369,10 @@ async def test_respond() -> None:
 
         for round_i in range(1, _MAX_THINK_ROUNDS + 1):
             print()
-            # Think 仍可从库召回更长历史做规划；首轮 task 去重
-            task_arg = task if round_i == 1 else ""
-            messages = await assemble_from_memory(
+            messages = await assemble_think(
                 memory,
                 system_prompt=think_system,
-                task=task_arg,
+                turn_messages=turn_messages,
             )
             decision = await _run_think(
                 llm,
@@ -505,10 +406,18 @@ async def test_respond() -> None:
                         system_prompt=build_respond_a2ui_system(),
                         think_content=think_text,
                     )
+                    print(
+                        f"【Respond A2UI 窗】仅 system + 末轮 Think"
+                        f"（{len(think_text)} chars）"
+                    )
                 else:
-                    respond_messages = assemble_respond_from_turn(
-                        system_prompt=RESPOND_MARKDOWN_SYSTEM.strip(),
+                    respond_messages = assemble_respond_markdown(
+                        system_prompt=build_respond_markdown_system(),
                         turn_messages=turn_messages,
+                    )
+                    print(
+                        f"【Respond 本轮窗】run 内 {len(turn_messages)} 条"
+                        "（非按 USER 切片）"
                     )
                 await _run_respond(
                     llm, respond_messages, memory, present_mode=_PRESENT_MODE

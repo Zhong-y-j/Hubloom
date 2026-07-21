@@ -1,9 +1,3 @@
-"""Respond：面向用户的最终回复（本步仅 Markdown）。
-
-上下文由调用方装配（含 RESPOND_* system）；这里只流式生成正文，不调工具。
-``present_mode`` 预留 auto/a2ui；当前仅实现 ``markdown``。
-"""
-
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
