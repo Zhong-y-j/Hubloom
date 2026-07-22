@@ -84,9 +84,9 @@ async def load_agent_mcp_bindings(
     env: dict[str, str] | None = None,
     cwd: str | None = None,
 ) -> AgentMcpSetup:
-    """主路径：catalog + 全量 MCP + 原生 list_tools/call_tool。"""
+    """主路径：catalog + 全量 MCP + 原生 list_api/call_api。"""
     from mcp_adapter.gateway.catalog import load_catalog
-    from tools.builtin.meta_tools import build_meta_tools
+    from tools.builtin.api_tools import build_api_tools
 
     catalog = await load_catalog(swagger_url=swagger_url, base_url=base_url)
     client = await connect_full_mcp(
@@ -96,7 +96,7 @@ async def load_agent_mcp_bindings(
         cwd=cwd,
     )
     bindings = MCPBindings(
-        tools=build_meta_tools(catalog, client),
+        tools=build_api_tools(catalog, client),
         client=client,
     )
     return AgentMcpSetup(bindings=bindings, catalog=catalog)

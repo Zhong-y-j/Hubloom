@@ -82,7 +82,7 @@ flowchart TB
     CH --> LLM["LLM API"]
     TH --> LLM
 
-    TH --> TOOLS["ToolRegistry<br/>元工具 list_tools / call_tool"]
+    TH --> TOOLS["ToolRegistry<br/>元工具 list_api / call_api"]
     TOOLS --> WK["全量 MCP worker"] --> REST["REST API"]
     TOOLS --> A2AC["A2A Client<br/>registry · transport"] --> RA["远程 A2A Agent"]
 
@@ -132,7 +132,7 @@ sequenceDiagram
     A->>L: 路由 → Thought
 
     T->>L: 推理
-    T->>G: call_tool
+    T->>G: call_api
     G->>R: HTTP
     R-->>G: JSON
     G-->>T: 结果

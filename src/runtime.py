@@ -199,7 +199,7 @@ class HubloomRuntime:
         """按 session 装配 memory/tools，委托 ``agent.run.run_stream``。
 
         ``bearer_token``：当前用户鉴权，写入 request context，供 MCP
-        ``call_tool`` 经 ``get_bearer_token()`` 透传；为空则回退 MCP_TOKEN。
+        ``call_api`` 经 ``get_bearer_token()`` 透传；为空则回退 MCP_TOKEN。
 
         ``present_mode=auto``：Think 交班后跑 Present，再决定 Markdown / A2UI Respond。
         """

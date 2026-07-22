@@ -162,7 +162,7 @@ flowchart TD
 
     D1 --> EX["② execute<br/>ReAct 工具循环"]
     EX --> TC{工具调用}
-    TC -->|list_tools / call_tool| TOOL[ToolRunner → MCP / RAG / Memory]
+    TC -->|list_api / call_api| TOOL[ToolRunner → MCP / RAG / Memory]
     TOOL --> EX
 
     EX --> RP_Q{should_replan?<br/>失败或步数上限}

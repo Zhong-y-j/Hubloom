@@ -43,7 +43,7 @@ async def load_tools(
     cfg: HubloomConfig,
     memory: MemoryManager,
 ) -> tuple[ToolRegistry, AgentMcpSetup | None]:
-    """正式装配：内置 tool +（可选）MCP 元工具 list_tools / call_tool。"""
+    """正式装配：内置 tool +（可选）MCP 元工具 list_api / call_api。"""
     tools: list = [SearchMemoryTool(memory)]
     mcp_setup: AgentMcpSetup | None = None
 

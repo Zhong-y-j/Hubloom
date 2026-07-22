@@ -117,7 +117,7 @@ curl -s http://127.0.0.1:8010/v1/chat \
 
 ### 当前版本（重构后）
 
-- [x] OpenAPI → MCP 工具面（catalog + 元工具 `list_tools` / `call_tool`）
+- [x] OpenAPI → MCP 工具面（catalog + 元工具 `list_api` / `call_api`）
 - [x] **Think → Present → Respond** 统一编排环
 - [x] **双呈现**：Markdown + A2UI（含 `present_mode=auto`）
 - [x] 自研 HTTP / **SSE** 流式契约与 Web 对话页（交互面板、本轮 A2UI 生命周期）

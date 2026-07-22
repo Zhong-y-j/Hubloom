@@ -259,7 +259,7 @@ sequenceDiagram
 
 ### 5.3 如何从 UI 判断走了 A2A
 
-过程区出现 **`list_agents` / `delegate_task`**（及绿色「远程过程 · {agent_id}」）即走了出站；若只有 `list_tools` / `call_tool` 则是本机 MCP。
+过程区出现 **`list_agents` / `delegate_task`**（及绿色「远程过程 · {agent_id}」）即走了出站；若只有 `list_api` / `call_api` 则是本机 MCP。
 
 ---
 
@@ -350,7 +350,7 @@ uv run python -m examples.chat.app
 
 > 先用 list_agents，再用 delegate_task 让 hubloom-a2 查询当前有哪些小区（必须调用工具）。不要自己直接调业务工具。
 
-- A2 走 Thought 时，远程面板里应看到 A2 的 `list_tools` / `call_tool` 等。  
+- A2 走 Thought 时，远程面板里应看到 A2 的 `list_api` / `call_api` 等。  
 - 仅「介绍自己」类问题，A2 常走 Chat，远程区可能只有 `[replying] route=chat`。
 
 ### 8.3 CLI 冒烟（不出站 UI）

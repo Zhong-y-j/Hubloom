@@ -1,8 +1,8 @@
 """Skill 元工具：按需读取 SKILL.md 正文（不执行业务）。
 
-与 MCP 的 list_tools / call_tool 分工：
+与业务 API 元工具 list_api / call_api 分工：
 - system 里已有 Skills 名片（name + description）
-- 需要细则时再 read_skill；读完按正文去 call_tool / 交 Respond
+- 需要细则时再 read_skill；读完按正文去 call_api / 交 Respond
 - 本工具不做 call_skill
 """
 
@@ -77,7 +77,7 @@ class ReadSkillTool(BaseTool):
         "仅当「可用 Skills」名片与当前任务匹配、且正文尚未出现在本轮上下文时调用。"
         "参数 skill 为目录 id（推荐，如 account-access）或 frontmatter name。"
         "同一 Skill 每轮最多成功读取一次；读完后按正文执行，禁止重复读取。"
-        "本工具不执行业务，不能代替 list_tools / call_tool。"
+        "本工具不执行业务，不能代替 list_api / call_api。"
     )
     parameters = {
         "type": "object",

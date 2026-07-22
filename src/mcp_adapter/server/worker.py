@@ -19,7 +19,7 @@ async def _main() -> None:
     if args and args[0].strip() and args[0].strip() not in ("--full", "full", "*"):
         print(
             "mcp_adapter.server.worker 仅支持全量模式（--full）。"
-            "按 tag 启动已移除；请用 Agent 元工具 list_tools(tag=...)。",
+            "按 tag 启动已移除；请用 Agent 元工具 list_api(tag=...)。",
             file=sys.stderr,
         )
         sys.exit(2)

@@ -322,7 +322,7 @@ function toolTargetMeta(
 
   let fromCall: { tag?: string; apiTool?: string } = {};
   const needFallback =
-    !own.tag || (gateway === "call_tool" && !own.apiTool);
+    !own.tag || (gateway === "call_api" && !own.apiTool);
   if (needFallback) {
     for (let i = index - 1; i >= 0; i--) {
       const prev = tools[i];

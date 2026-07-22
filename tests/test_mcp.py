@@ -91,19 +91,19 @@ async def cmd_groups(catalog) -> None:
 
 
 async def cmd_tools(bindings, tag: str) -> None:
-    print(f"=== list_tools(tag={tag!r}) ===")
-    text = await _run_meta(bindings, "list_tools", tag=tag)
+    print(f"=== list_api(tag={tag!r}) ===")
+    text = await _run_meta(bindings, "list_api", tag=tag)
     print(_pp(text))
 
 
 async def cmd_call(
     bindings, tag: str, tool_name: str, arguments: dict[str, Any]
 ) -> None:
-    print(f"=== call_tool(tag={tag!r}, tool_name={tool_name!r}) ===")
+    print(f"=== call_api(tag={tag!r}, tool_name={tool_name!r}) ===")
     print(f"arguments = {_pp(arguments)}")
     text = await _run_meta(
         bindings,
-        "call_tool",
+        "call_api",
         tag=tag,
         tool_name=tool_name,
         arguments=arguments,
@@ -147,8 +147,8 @@ async def cmd_interactive(bindings, catalog) -> None:
     while True:
         print("-" * 60)
         print("1) 打印 API 分组目录（Swagger）")
-        print("2) list_tools <tag>")
-        print("3) call_tool <tag> <tool_name> [json_args]")
+        print("2) list_api <tag>")
+        print("3) call_api <tag> <tool_name> [json_args]")
         print("4) 任意元工具 <name> [json_kwargs]")
         print("q) 退出")
         line = input("\n> ").strip()
@@ -208,12 +208,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-i", "--interactive", action="store_true", help="交互模式")
     p.add_argument("--list", action="store_true", help="列出元工具")
     p.add_argument("--groups", action="store_true", help="打印 API 分组目录（Swagger）")
-    p.add_argument("--tools", metavar="TAG", help="调用 list_tools")
+    p.add_argument("--tools", metavar="TAG", help="调用 list_api")
     p.add_argument(
         "--call",
         nargs=2,
         metavar=("TAG", "TOOL"),
-        help="经 call_tool 调用后端工具，如: --call Banner Banner_GetList",
+        help="经 call_api 调用后端工具，如: --call Banner Banner_GetList",
     )
     p.add_argument(
         "--meta",

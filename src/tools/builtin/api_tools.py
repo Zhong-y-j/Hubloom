@@ -1,4 +1,4 @@
-"""Agent 侧元工具：只暴露 list_tools / call_tool，背后转发到单个全量 MCP。"""
+"""Agent 侧 API 元工具：只暴露 list_api / call_api，背后转发到单个全量 MCP。"""
 
 from __future__ import annotations
 
@@ -47,12 +47,12 @@ def _resolve_tool_name(catalog: GatewayCatalog, tag: str, tool_name: str) -> str
     raise ValueError(f"工具 {tool_name!r} 不属于分组 {tag!r}；示例: {preview}...")
 
 
-class ListToolsMetaTool(BaseTool):
-    """按 OpenAPI tag 列出该分组内的 MCP 工具（含 parameters schema）。"""
+class ListAPITool(BaseTool):
+    """按 OpenAPI tag 列出该分组内的业务 API 工具（含 parameters schema）。"""
 
-    name = "list_tools"
+    name = "list_api"
     description = (
-        "列出指定 tag 分组内的工具（含 parameters JSON Schema）。"
+        "列出指定 tag 分组内的业务 API 工具（含 parameters JSON Schema）。"
         "仅用于发现工具名与参数，不能代替实际业务调用。"
         "tag 为 OpenAPI 分组名，见 system prompt 中的「API 分组」目录。"
     )
@@ -90,13 +90,13 @@ class ListToolsMetaTool(BaseTool):
         return json.dumps(tools, ensure_ascii=False, indent=2)
 
 
-class CallToolMetaTool(BaseTool):
-    """按 tag 校验后，调用全量 MCP 上的业务工具。"""
+class CallAPITool(BaseTool):
+    """按 tag 校验后，调用全量 MCP 上的业务 API。"""
 
-    name = "call_tool"
+    name = "call_api"
     description = (
-        "调用指定分组内的实际业务工具（创建/查询/更新/删除等均须通过本工具）。"
-        "tag 见 system prompt 中的「API 分组」；tool_name 来自 list_tools；"
+        "调用指定分组内的实际业务接口（创建/查询/更新/删除等均须通过本工具）。"
+        "tag 见 system prompt 中的「API 分组」；tool_name 来自 list_api；"
         "arguments 为该工具的参数对象（JSON object），无参时可省略。"
     )
     parameters = {
@@ -108,7 +108,7 @@ class CallToolMetaTool(BaseTool):
             },
             "tool_name": {
                 "type": "string",
-                "description": "业务工具名（来自 list_tools）",
+                "description": "业务工具名（来自 list_api）",
             },
             "arguments": {
                 "type": "object",
@@ -141,7 +141,7 @@ class CallToolMetaTool(BaseTool):
         auth_token = resolve_auth_token(get_bearer_token())
         auth_scheme = (get_mcp_auth_scheme() or "").strip() or None
         auth_trace(
-            "agent_meta_call",
+            "agent_api_call",
             tag=key,
             tool_name=resolved,
             has_token=bool(auth_token),
@@ -159,12 +159,12 @@ class CallToolMetaTool(BaseTool):
         return result.to_llm_text()
 
 
-def build_meta_tools(
+def build_api_tools(
     catalog: GatewayCatalog,
     client: MCPToolClient,
 ) -> list[BaseTool]:
-    """构造 Agent 可见的两个元工具（共享同一全量 MCP 客户端）。"""
+    """构造 Agent 可见的两个 API 元工具（共享同一全量 MCP 客户端）。"""
     return [
-        ListToolsMetaTool(catalog, client),
-        CallToolMetaTool(catalog, client),
+        ListAPITool(catalog, client),
+        CallAPITool(catalog, client),
     ]

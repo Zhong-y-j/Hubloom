@@ -11,7 +11,7 @@ from memory.context import (
 )
 
 
-def _tc(id_: str, name: str = "call_tool") -> ToolCall:
+def _tc(id_: str, name: str = "call_api") -> ToolCall:
     return ToolCall(id=id_, name=name, arguments={"x": 1})
 
 

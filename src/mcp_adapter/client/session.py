@@ -263,7 +263,7 @@ class MCPToolClient:
 async def _demo() -> None:
     from pathlib import Path
 
-    from hubloom.config import HubloomConfig
+    from config import HubloomConfig
     from mcp_adapter.discovery import connect_full_mcp
     from mcp_adapter.gateway.catalog import format_catalog_for_prompt, load_catalog
 
