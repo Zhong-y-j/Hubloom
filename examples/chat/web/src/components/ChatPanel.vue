@@ -29,9 +29,15 @@ const {
 
 const draft = ref("");
 const listRef = ref<HTMLElement | null>(null);
+/** 面板当前绑定的消息（仅本轮 live A2UI） */
 const panelMessageId = ref<string | null>(null);
 const panelOpen = ref(false);
 const autoOpenedForId = ref<string | null>(null);
+/**
+ * 本轮仍有效的 A2UI 消息 id。
+ * 仅在本会话流式产出时写入；用户再发新问题或加载历史后清空——历史无入口。
+ */
+const liveA2uiMessageId = ref<string | null>(null);
 
 const phaseLabel = computed(() => {
   if (agentPhase.value === "understanding") return "理解中";
@@ -43,7 +49,7 @@ const phaseLabel = computed(() => {
 
 const panelMessage = computed(() => {
   const id = panelMessageId.value;
-  if (!id) return null;
+  if (!id || id !== liveA2uiMessageId.value) return null;
   return messages.value.find((m) => m.id === id) || null;
 });
 
@@ -57,9 +63,20 @@ function messageHasA2ui(m: ChatMessage): boolean {
   );
 }
 
+function isLiveA2uiMessage(m: ChatMessage): boolean {
+  return liveA2uiMessageId.value === m.id && messageHasA2ui(m);
+}
+
 const panelHasA2ui = computed(() => {
   const m = panelMessage.value;
-  return m ? messageHasA2ui(m) : false;
+  return m ? isLiveA2uiMessage(m) : false;
+});
+
+const canReopenLivePanel = computed(() => {
+  const id = liveA2uiMessageId.value;
+  if (!id || panelOpen.value) return false;
+  const m = messages.value.find((x) => x.id === id);
+  return Boolean(m && messageHasA2ui(m));
 });
 
 function isA2uiPlaceholder(content: string): boolean {
@@ -110,6 +127,7 @@ function a2uiPanelParts(m: ChatMessage): AnswerPart[] {
 }
 
 function openA2uiPanel(messageId: string) {
+  if (messageId !== liveA2uiMessageId.value) return;
   panelMessageId.value = messageId;
   panelOpen.value = true;
 }
@@ -118,7 +136,17 @@ function closeA2uiPanel() {
   panelOpen.value = false;
 }
 
+/** 结束本轮交互面板生命周期（发新问题 / 新会话 / 拉历史） */
+function retireA2uiPanel() {
+  closeA2uiPanel();
+  panelMessageId.value = null;
+  liveA2uiMessageId.value = null;
+  autoOpenedForId.value = null;
+}
+
 function toggleA2uiPanel(messageId: string) {
+  const m = messages.value.find((x) => x.id === messageId);
+  if (!m || !isLiveA2uiMessage(m)) return;
   if (panelOpen.value && panelMessageId.value === messageId) {
     closeA2uiPanel();
     return;
@@ -132,16 +160,12 @@ function onCredChange() {
 }
 
 function onNewSession() {
-  closeA2uiPanel();
-  panelMessageId.value = null;
-  autoOpenedForId.value = null;
+  retireA2uiPanel();
   newSession();
 }
 
 async function onLoadHistory() {
-  closeA2uiPanel();
-  panelMessageId.value = null;
-  autoOpenedForId.value = null;
+  retireA2uiPanel();
   await loadHistory();
 }
 
@@ -173,14 +197,36 @@ watch(
   () => {
     void scrollBottom();
     void scrollThoughtToLatest();
+
     const streaming = [...messages.value]
       .reverse()
       .find(
         (m) => m.role === "assistant" && m.streaming && messageHasA2ui(m),
       );
-    if (streaming && autoOpenedForId.value !== streaming.id) {
-      autoOpenedForId.value = streaming.id;
-      openA2uiPanel(streaming.id);
+    if (streaming) {
+      liveA2uiMessageId.value = streaming.id;
+      if (autoOpenedForId.value !== streaming.id) {
+        autoOpenedForId.value = streaming.id;
+        openA2uiPanel(streaming.id);
+      }
+      return;
+    }
+
+    // 已绑定的 live 消息若被新用户轮次顶掉，收起面板
+    const liveId = liveA2uiMessageId.value;
+    if (liveId) {
+      const liveMsg = messages.value.find((m) => m.id === liveId);
+      if (!liveMsg || !messageHasA2ui(liveMsg)) {
+        retireA2uiPanel();
+        return;
+      }
+      const liveIdx = messages.value.findIndex((m) => m.id === liveId);
+      const superseded = messages.value
+        .slice(liveIdx + 1)
+        .some((m) => m.role === "user");
+      if (superseded) {
+        retireA2uiPanel();
+      }
     }
   },
   { deep: true },
@@ -189,11 +235,13 @@ watch(
 async function onSubmit() {
   const text = draft.value;
   draft.value = "";
+  retireA2uiPanel();
   await send(text);
 }
 
 async function onA2uiAction(action: A2uiClientAction) {
   const text = formatA2uiActionAsChat(action);
+  retireA2uiPanel();
   await send(text);
 }
 
@@ -386,10 +434,10 @@ onMounted(async () => {
                     : route
           }}</span>
           <button
-            v-if="panelHasA2ui && !panelOpen"
+            v-if="canReopenLivePanel"
             type="button"
             class="btn ghost chat-top-panel-btn"
-            @click="panelOpen = true"
+            @click="liveA2uiMessageId && openA2uiPanel(liveA2uiMessageId)"
           >
             打开交互面板
           </button>
@@ -420,7 +468,7 @@ onMounted(async () => {
               :class="{
                 error: m.error,
                 'turn-panel-active':
-                  panelOpen && panelMessageId === m.id && messageHasA2ui(m),
+                  panelOpen && panelMessageId === m.id && isLiveA2uiMessage(m),
               }"
             >
               <div
@@ -527,7 +575,7 @@ onMounted(async () => {
               />
 
               <button
-                v-if="messageHasA2ui(m)"
+                v-if="isLiveA2uiMessage(m)"
                 type="button"
                 class="a2ui-panel-chip"
                 :class="{ active: panelOpen && panelMessageId === m.id }"
