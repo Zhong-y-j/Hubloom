@@ -1,4 +1,4 @@
-# Vue 前端（Agent 对话 + A2UI 场景实验室）
+# Vue 前端（Agent 对话）
 
 ## 启动
 

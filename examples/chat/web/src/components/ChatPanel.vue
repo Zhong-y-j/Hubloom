@@ -289,16 +289,15 @@ onMounted(async () => {
   >
     <aside class="chat-sidebar">
       <div class="chat-brand">
-        <div class="chat-brand-mark">A</div>
-        <div>
+        <div class="chat-brand-mark" aria-hidden="true">H</div>
+        <div class="chat-brand-text">
+          <p class="chat-brand-name">Hubloom</p>
           <h2>Agent 对话</h2>
-          <p>接 HubloomAgent · SSE</p>
         </div>
       </div>
 
       <p class="chat-intro">
-        气泡展示 Markdown；交互在右侧面板。推荐
-        <strong>Auto</strong>：Think → Present → Respond（按需并行 A2UI）。
+        回复以 Markdown 呈现；需要点选、填写时，在右侧交互面板完成。
       </p>
 
       <div class="config-card">
@@ -396,6 +395,7 @@ onMounted(async () => {
           </button>
         </header>
 
+        <div class="chat-main-body">
         <div ref="listRef" class="chat-messages">
           <div
             v-if="!messages.length"
@@ -570,6 +570,7 @@ onMounted(async () => {
             </button>
           </div>
         </form>
+        </div>
       </section>
 
       <aside
@@ -578,10 +579,7 @@ onMounted(async () => {
         aria-label="交互面板"
       >
         <header class="a2ui-drawer-top">
-          <div>
-            <p class="a2ui-drawer-kicker">交互面板</p>
-            <h3>A2UI</h3>
-          </div>
+          <h2>交互面板</h2>
           <button
             type="button"
             class="btn ghost a2ui-drawer-close"
