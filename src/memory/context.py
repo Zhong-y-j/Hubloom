@@ -1,9 +1,14 @@
 """
-GSSC 四阶段上下文装配器
+GSSC 四阶段上下文装配器。
+
+历史会话单独做预算裁剪（成组保留 tool 链），裁完后再与 system / 记忆块组装。
 """
 
+from __future__ import annotations
+
+import json
 import re
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from agent.agent_log import memory_log
 from core.models import Message, Role
@@ -12,21 +17,176 @@ _MEMORY_TYPE_LABELS = {
     "episodic": "情景",
     "semantic": "语义",
 }
-_PINNED_SYSTEM_TAGS = ("[MEMORY]", "[DOCUMENTS]", "[GRAPH]")
+def estimate_text_tokens(text: str) -> int:
+    """粗估文本 token（与历史实现一致，供装配预算使用）。"""
+    if not text:
+        return 0
+    chinese = len(re.findall(r"[\u4e00-\u9fff]", text))
+    english_words = len(re.findall(r"[a-zA-Z]+", text))
+    others = len(re.findall(r"[0-9]+", text))
+    return int(chinese * 0.7 + english_words * 1.3 + others * 1.0)
+
+
+def estimate_message_tokens(msg: Message) -> int:
+    """粗估单条 Message（含 tool_calls / tool_call_id）占用。"""
+    content = msg.content
+    if isinstance(content, str):
+        n = estimate_text_tokens(content)
+    elif content is None:
+        n = 0
+    else:
+        n = estimate_text_tokens(json.dumps(content, ensure_ascii=False))
+    if msg.tool_calls:
+        try:
+            raw = json.dumps(
+                [
+                    {
+                        "id": tc.id,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
+                    }
+                    for tc in msg.tool_calls
+                ],
+                ensure_ascii=False,
+            )
+            n += estimate_text_tokens(raw)
+        except Exception:
+            n += 32 * len(msg.tool_calls)
+    if msg.tool_call_id:
+        n += estimate_text_tokens(msg.tool_call_id)
+    if msg.name:
+        n += estimate_text_tokens(msg.name)
+    return n
+
+
+def _tool_call_ids(msg: Message) -> set[str]:
+    if not msg.tool_calls:
+        return set()
+    return {tc.id for tc in msg.tool_calls if tc.id}
+
+
+def group_conversation_messages(messages: List[Message]) -> List[List[Message]]:
+    """把会话历史切成可原子裁剪的组。
+
+    - ``assistant(tool_calls)`` + 紧随其后、匹配其 id 的 ``tool`` 回包 → 一组
+    - 其余 ``user`` / 普通 ``assistant`` → 单条一组
+    - 悬空 ``tool``（前面没有对应 tool_calls）→ 单独记下，后续丢弃
+    """
+    groups: List[List[Message]] = []
+    i = 0
+    n = len(messages)
+    while i < n:
+        msg = messages[i]
+        if msg.role == Role.ASSISTANT and msg.tool_calls:
+            needed = _tool_call_ids(msg)
+            group = [msg]
+            j = i + 1
+            while j < n and messages[j].role == Role.TOOL:
+                group.append(messages[j])
+                tid = messages[j].tool_call_id
+                if tid in needed:
+                    needed.discard(tid)
+                j += 1
+            groups.append(group)
+            i = j
+            continue
+        if msg.role == Role.TOOL:
+            # 悬空 tool：自成一组，trim 时丢弃
+            groups.append([msg])
+            i += 1
+            continue
+        groups.append([msg])
+        i += 1
+    return groups
+
+
+def _is_complete_tool_group(group: List[Message]) -> bool:
+    """assistant(tool_calls) 组是否收齐全部 tool 回包。"""
+    if not group:
+        return False
+    head = group[0]
+    if head.role != Role.ASSISTANT or not head.tool_calls:
+        # 悬空 tool
+        if head.role == Role.TOOL:
+            return False
+        return True
+    needed = _tool_call_ids(head)
+    if not needed:
+        return False
+    got = {
+        m.tool_call_id
+        for m in group[1:]
+        if m.role == Role.TOOL and m.tool_call_id
+    }
+    return needed <= got
+
+
+def trim_conversation_history(
+    messages: List[Message],
+    *,
+    max_tokens: int,
+) -> List[Message]:
+    """仅对会话历史做预算裁剪：成组保留 tool 链，宁丢整组不留半截。
+
+    从最近往前保留完整组；单组本身超过预算则整组丢弃并继续尝试更早组。
+    不完整的 tool 链（缺回包 / 悬空 tool）直接丢弃，避免 API 400。
+    """
+    if max_tokens <= 0 or not messages:
+        return []
+
+    groups = group_conversation_messages(messages)
+    clean: List[List[Message]] = []
+    dropped_incomplete = 0
+    for g in groups:
+        if not _is_complete_tool_group(g):
+            dropped_incomplete += 1
+            continue
+        clean.append(g)
+
+    kept_rev: List[List[Message]] = []
+    budget = max_tokens
+    dropped_oversize = 0
+    for g in reversed(clean):
+        cost = sum(estimate_message_tokens(m) for m in g)
+        if cost <= budget:
+            kept_rev.append(g)
+            budget -= cost
+        elif cost > max_tokens:
+            # 单组本身超过总预算：跳过，继续尝试更早小组
+            dropped_oversize += 1
+            continue
+        else:
+            # 剩余预算不够：停止，保留已选中的最近连续组
+            break
+
+    kept_rev.reverse()
+    out = [m for g in kept_rev for m in g]
+    if dropped_incomplete or dropped_oversize or len(out) < len(messages):
+        memory_log(
+            "history trim",
+            before=len(messages),
+            after=len(out),
+            groups_before=len(groups),
+            groups_kept=len(kept_rev),
+            dropped_incomplete=dropped_incomplete,
+            dropped_oversize=dropped_oversize,
+            max_tokens=max_tokens,
+        )
+    return out
 
 
 class ContextAssembler:
     """上下文装配器：将多源信息组装成可直接传给 LLM 的消息列表。
 
-    遵循 GSSC 流水线，输出保持多角色多轮结构。
+    流水线：
+        1. 先装配 system / 记忆 / 文档等非历史块，并扣掉其 token
+        2. 剩余预算只裁剪 ``histories``（成组保留 tool 链）
+        3. 再拼 current_task（若有）
 
     Args:
-        max_tokens: 上下文的 Token 预算上限，作用：限制上下文消息的总长度，避免超长。
-        system_reserve_ratio: 预留给系统指令和规则的比例（0~1），作用：预留给系统指令和规则，避免超长。
-        min_relevance: 记忆/文档的最低相关性分数，作用：过滤掉不相关的记忆/文档。
-
-    Actions:
-        - assemble: 组装最终发送给 LLM 的消息列表
+        max_tokens: 上下文 Token 预算上限（含 system 与历史）。
+        system_reserve_ratio: 预留给系统指令的比例（兼容旧参数；实际按 system 真实长度扣减）。
+        min_relevance: 记忆/文档的最低相关性分数。
     """
 
     def __init__(
@@ -48,61 +208,59 @@ class ContextAssembler:
         current_task: str = "",
         graph_summary: Optional[str] = None,
     ) -> List[Message]:
-        """组装最终发送给 LLM 的消息列表。
+        """组装最终发送给 LLM 的消息列表。"""
+        pinned = self._build_pinned(
+            system_prompt=system_prompt,
+            memories=memories,
+            documents=documents,
+            graph_summary=graph_summary,
+        )
+        pinned_tokens = sum(estimate_message_tokens(m) for m in pinned)
+        task = (current_task or "").strip()
+        task_tokens = estimate_text_tokens(task) if task else 0
 
-        Args:
-            system_prompt: 系统角色设定和工具规则（必备）
-            memories: 长期记忆条目（episodic/semantic），来自 MemoryContextProvider
-            documents: RAG 结果列表，每条含 text, metadata, score
-            histories: 历史对话消息（最近若干轮）
-            current_task: 当前用户输入，将作为最后一条 USER 消息
-            graph_summary: 联想记忆图摘要文本（associative recall 格式化结果）
-
-        Returns:
-            可直接传入 llm.generate_stream() 的消息列表。
-        """
-        # 1. Gather：收集所有候选内容，统一为 Message 格式并标记优先级/分数
-        candidates: List[Dict[str, Any]] = self._gather(
-            system_prompt, memories, documents, histories, graph_summary
+        history_budget = self.max_tokens - pinned_tokens - task_tokens
+        trimmed = trim_conversation_history(
+            list(histories or []),
+            max_tokens=max(0, history_budget),
         )
 
-        # 2. Select：去重、评分、按 Token 预算筛选
-        selected = self._select(candidates)
+        out = [*pinned, *trimmed]
+        if task:
+            out.append(Message(role=Role.USER, content=task))
 
-        # 3. Structure：组装为有序的 Message 列表
-        messages = self._structure(selected, current_task)
+        memory_log(
+            "assemble",
+            pinned=len(pinned),
+            history_in=len(histories or []),
+            history_out=len(trimmed),
+            total=len(out),
+            history_budget=max(0, history_budget),
+            max_tokens=self.max_tokens,
+        )
+        return out
 
-        # 4. Compress：若超限，从最早的历史中裁剪
-        compressed = self._compress(messages)
-        if len(compressed) < len(messages):
-            memory_log(
-                "assemble compressed",
-                before=len(messages),
-                after=len(compressed),
-                max_tokens=self.max_tokens,
-            )
-        return compressed
-
-    # ────── Gather ──────
-    def _gather(
+    def _build_pinned(
         self,
+        *,
         system_prompt: str,
         memories: Optional[List[Any]],
         documents: Optional[List[Dict]],
-        histories: Optional[List[Message]],
-        graph_summary: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        candidates = []
+        graph_summary: Optional[str],
+    ) -> List[Message]:
+        """system + [MEMORY]/[GRAPH]/[DOCUMENTS]，不参与历史按条裁剪。"""
+        messages: List[Message] = [
+            Message(role=Role.SYSTEM, content=system_prompt or "")
+        ]
 
-        # 系统指令（最高优先级，保留为 SYSTEM 消息）
-        candidates.append(
-            _make_candidate(
-                type_="system", content=system_prompt, priority=100, score=1.0
-            )
-        )
+        # 记忆 / 文档仍按分数过滤；预算上优先保证 system，其余能塞多少算多少
+        system_tokens = estimate_message_tokens(messages[0])
+        reserve = max(system_tokens, int(self.max_tokens * self.system_reserve_ratio))
+        budget = max(0, self.max_tokens - reserve)
 
-        # 长期记忆（episodic / semantic）
+        mem_bits: list[str] = []
         if memories:
+            scored: list[tuple[float, str]] = []
             for mem in memories:
                 content = getattr(mem, "content", None)
                 memory_type = ""
@@ -116,270 +274,78 @@ class ContextAssembler:
                     meta = getattr(mem, "metadata", None)
                     if isinstance(meta, dict) and meta.get("score") is not None:
                         score = float(meta["score"])
-                if not content:
+                if not content or score < self.min_relevance:
                     continue
                 label = _MEMORY_TYPE_LABELS.get(memory_type, "相关")
                 formatted = f"[{label}记忆 | 相关度: {score:.2f}] {content}"
-                candidates.append(
-                    _make_candidate(
-                        type_="memory",
-                        content=formatted,
-                        priority=70,
-                        score=score,
-                    )
-                )
+                scored.append((score, formatted))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            for score, formatted in scored:
+                cost = estimate_text_tokens(formatted)
+                if cost > budget:
+                    continue
+                mem_bits.append(formatted)
+                budget -= cost
 
-        # 联想记忆图摘要
-        if graph_summary and graph_summary.strip():
-            candidates.append(
-                _make_candidate(
-                    type_="graph",
-                    content=graph_summary.strip(),
-                    priority=68,
-                    score=0.72,
+        if mem_bits:
+            messages.append(
+                Message(
+                    role=Role.SYSTEM,
+                    content="[MEMORY]\n" + "\n".join(mem_bits) + "\n[/MEMORY]",
                 )
             )
 
-        # 文档（RAG 结果）
+        if graph_summary and graph_summary.strip():
+            block = graph_summary.strip()
+            cost = estimate_text_tokens(block)
+            if cost <= budget:
+                messages.append(
+                    Message(
+                        role=Role.SYSTEM,
+                        content=f"[GRAPH]\n{block}\n[/GRAPH]",
+                    )
+                )
+                budget -= cost
+
+        doc_bits: list[str] = []
         if documents:
+            docs_scored: list[tuple[float, str]] = []
             for doc in documents:
                 text = doc.get("text", "")
-                meta = doc.get("metadata", {})
-                score = doc.get("score", 0.5)
+                meta = doc.get("metadata", {}) or {}
+                score = float(doc.get("score", 0.5))
+                if score < self.min_relevance or not text:
+                    continue
                 section = meta.get("section_path", "")
                 source = meta.get("doc_name", "未知文档")
                 formatted = (
                     f"[来源: {source} | 章节: {section} | 相关度: {score:.2f}]\n{text}"
                 )
-                candidates.append(
-                    _make_candidate(
-                        type_="document",
-                        content=formatted,
-                        priority=50,
-                        score=score,
-                    )
+                docs_scored.append((score, formatted))
+            docs_scored.sort(key=lambda x: x[0], reverse=True)
+            for score, formatted in docs_scored:
+                cost = estimate_text_tokens(formatted)
+                if cost > budget:
+                    continue
+                doc_bits.append(formatted)
+                budget -= cost
+
+        if doc_bits:
+            messages.append(
+                Message(
+                    role=Role.SYSTEM,
+                    content="[DOCUMENTS]\n" + "\n\n".join(doc_bits) + "\n[/DOCUMENTS]",
                 )
-
-        # 历史对话（成对保留，按时间排序；保留完整 Message 含 tool_calls）
-        if histories:
-            for msg in histories:
-                content = msg.content if isinstance(msg.content, str) else str(msg.content)
-                candidates.append(
-                    _make_candidate(
-                        type_="history",
-                        content=content or "",
-                        priority=30,
-                        score=0.5,
-                        original_role=msg.role.value,
-                        message=msg,
-                    )
-                )
-
-        return candidates
-
-    # ────── Select ──────
-    def _select(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        # 去重（基于相同 type 和 content 前缀，只保留最高分）
-        deduped: List[Dict[str, Any]] = []
-        seen = set()
-        for c in sorted(
-            candidates, key=lambda x: (x["priority"], x["score"]), reverse=True
-        ):
-            # 历史消息不去重，每条都独立
-            if c["type"] == "history":
-                deduped.append(c)
-                continue
-            fingerprint = (c["type"], c["content"][:50])  # 首部指纹
-            if fingerprint not in seen:
-                seen.add(fingerprint)
-                deduped.append(c)
-        # 重新按 priority 排序
-        deduped.sort(key=lambda x: (x["priority"], x["score"]), reverse=True)
-
-        # 按分数阈值过滤（系统指令保留）
-        filtered = [
-            c
-            for c in deduped
-            if c["type"] == "system" or c["score"] >= self.min_relevance
-        ]
-
-        # 计算预算：系统指令预留
-        system_budget = int(self.max_tokens * self.system_reserve_ratio)
-        other_budget = self.max_tokens - system_budget
-
-        selected: List[Dict[str, Any]] = []
-        used_tokens = 0
-
-        # 第一步：强制保留系统指令
-        for c in filtered:
-            if c["type"] == "system":
-                selected.append(c)
-                used_tokens += self._estimate_tokens(c["content"])
-                break
-
-        # 第二步：贪心填充记忆、文档、历史（优先级顺序已排序）
-        for c in filtered:
-            if c["type"] == "system":
-                continue
-            tokens = self._estimate_tokens(c["content"])
-            if used_tokens + tokens <= other_budget:
-                selected.append(c)
-                used_tokens += tokens
-            else:
-                # 预算用尽，后续不再添加（历史消息可能会在 compress 阶段被整条丢弃，这里暂不处理）
-                pass
-
-        return selected
-
-    # ────── Structure ──────
-    def _structure(
-        self, selected: List[Dict[str, Any]], current_task: str
-    ) -> List[Message]:
-        messages: List[Message] = []
-
-        # 分组
-        system_items = []
-        memory_items = []
-        graph_items = []
-        document_items = []
-        history_items = []
-
-        for item in selected:
-            if item["type"] == "system":
-                system_items.append(item)
-            elif item["type"] == "memory":
-                memory_items.append(item)
-            elif item["type"] == "graph":
-                graph_items.append(item)
-            elif item["type"] == "document":
-                document_items.append(item)
-            elif item["type"] == "history":
-                history_items.append(item)
-
-        # 1) 系统指令（保持在最开始）
-        for item in system_items:
-            messages.append(Message(role=Role.SYSTEM, content=item["content"]))
-
-        # 2) 记忆块（作为单独的 SYSTEM 消息）
-        if memory_items:
-            mem_block = (
-                "[MEMORY]\n"
-                + "\n".join(item["content"] for item in memory_items)
-                + "\n[/MEMORY]"
             )
-            messages.append(Message(role=Role.SYSTEM, content=mem_block))
-
-        if graph_items:
-            graph_block = (
-                "[GRAPH]\n"
-                + "\n".join(item["content"] for item in graph_items)
-                + "\n[/GRAPH]"
-            )
-            messages.append(Message(role=Role.SYSTEM, content=graph_block))
-
-        # 3) 文档块（作为单独的 SYSTEM 消息）
-        if document_items:
-            doc_block = (
-                "[DOCUMENTS]\n"
-                + "\n\n".join(item["content"] for item in document_items)
-                + "\n[/DOCUMENTS]"
-            )
-            messages.append(Message(role=Role.SYSTEM, content=doc_block))
-
-        # 4) 历史对话（保留原角色与 tool 字段）
-        _role_map = {
-            "user": Role.USER,
-            "assistant": Role.ASSISTANT,
-            "tool": Role.TOOL,
-            "system": Role.SYSTEM,
-        }
-        for item in history_items:
-            original = item.get("message")
-            if isinstance(original, Message):
-                messages.append(original)
-                continue
-            role = _role_map.get(item.get("original_role", ""), Role.USER)
-            messages.append(Message(role=role, content=item["content"]))
-
-        # 5) 当前任务（作为最后一条 USER 消息）
-        if current_task.strip():
-            messages.append(Message(role=Role.USER, content=current_task))
 
         return messages
 
-    # ────── Compress ──────
-    def _compress(self, messages: List[Message]) -> List[Message]:
-        total = sum(self._estimate_tokens(msg.content) for msg in messages)
-        if total <= self.max_tokens:
-            return messages
-
-        if not messages:
-            return messages
-
-        pinned: list[Message] = []
-        rest_start = 0
-
-        pinned.append(messages[0])
-        rest_start = 1
-
-        while rest_start < len(messages):
-            msg = messages[rest_start]
-            if msg.role == Role.SYSTEM and any(
-                tag in msg.content for tag in _PINNED_SYSTEM_TAGS
-            ):
-                pinned.append(msg)
-                rest_start += 1
-            else:
-                break
-
-        tail: Message | None = None
-        if len(messages) > rest_start and messages[-1].role == Role.USER:
-            tail = messages[-1]
-            middle = messages[rest_start:-1]
-        else:
-            middle = messages[rest_start:]
-
-        budget = self.max_tokens
-        budget -= sum(self._estimate_tokens(msg.content) for msg in pinned)
-        if tail:
-            budget -= self._estimate_tokens(tail.content)
-
-        kept_middle: list[Message] = []
-        for msg in reversed(middle):
-            tokens = self._estimate_tokens(msg.content)
-            if tokens <= budget:
-                kept_middle.append(msg)
-                budget -= tokens
-
-        kept_middle.reverse()
-
-        result = pinned + kept_middle
-        if tail:
-            result.append(tail)
-        dropped = len(middle) - len(kept_middle)
-        if dropped > 0:
-            memory_log(
-                "context compress",
-                dropped_history=dropped,
-                kept_history=len(kept_middle),
-                total_before=len(messages),
-                total_after=len(result),
-                max_tokens=self.max_tokens,
-            )
-        return result
+    # 兼容旧调用 / 测试
+    def _estimate_tokens(self, text: str) -> int:
+        return estimate_text_tokens(text)
 
     def _calculate_total(self, messages: List[Message]) -> int:
-        return sum(self._estimate_tokens(msg.content) for msg in messages)
-
-    # ────── 辅助：Token 估算 ──────
-    @staticmethod
-    def _estimate_tokens(text: str) -> int:
-        if not text:
-            return 0
-        chinese = len(re.findall(r"[\u4e00-\u9fff]", text))
-        english_words = len(re.findall(r"[a-zA-Z]+", text))
-        others = len(re.findall(r"[0-9]+", text))
-        return int(chinese * 0.7 + english_words * 1.3 + others * 1.0)
+        return sum(estimate_message_tokens(msg) for msg in messages)
 
 
 def _make_candidate(
@@ -390,6 +356,7 @@ def _make_candidate(
     original_role: str = "",
     message: Optional[Message] = None,
 ) -> Dict[str, Any]:
+    """保留给可能的外部调用；主路径已不再依赖 candidate 列表。"""
     return {
         "type": type_,
         "content": content,

@@ -18,7 +18,7 @@ from agent.prompts import (
 )
 from core.models import Message, Role
 from mcp_adapter.gateway.catalog import format_catalog_for_prompt
-from memory import ContextAssembler
+from memory.context import estimate_message_tokens, trim_conversation_history
 from memory.manager import MemoryManager
 from skill import build_skills_prompt, load_skills
 
@@ -170,27 +170,29 @@ async def assemble_think(
     history_limit: int = 40,
     history_max_tokens: int = 32_000,
 ) -> list[Message]:
-    """Think 装配：旧历史走 32K 预算；本轮 turn_messages 全文追加、不裁剪。
+    """Think 装配：先只裁历史，再与 system / 本轮组装。
+
     形状::
-        [SYSTEM] + [更早会话（Assembler ≤ history_max_tokens）] + [本轮原文]
+        [SYSTEM] + [裁剪后的更早会话] + [本轮 turn_messages 原文（不裁）]
+
+    历史裁剪成组保留 ``assistant(tool_calls)+tool``，不把 system/skill 卷入按条丢弃。
     """
     turn = list(turn_messages or [])
     all_rows = await load_conversation(memory, top_k=history_limit)
     prior = _strip_turn_suffix(all_rows, turn)
-    # 旧历史可裁；预算只约束 prior，不包含本轮
-    assembled = ContextAssembler(max_tokens=history_max_tokens).assemble(
-        system_prompt=system_prompt,
-        histories=prior,
-        current_task="",  # 触发句在 turn_messages 里，避免重复 USER
-    )
-    # 本轮（含 TOOL 全文）强制接在后面
-    out = [*assembled, *turn]
+
+    system_msg = Message(role=Role.SYSTEM, content=system_prompt)
+    history_budget = max(0, history_max_tokens - estimate_message_tokens(system_msg))
+    trimmed = trim_conversation_history(prior, max_tokens=history_budget)
+
+    out = [system_msg, *trimmed, *turn]
     agent_trace(
         "assemble think",
         prior=len(prior),
+        history_out=len(trimmed),
         turn=len(turn),
-        assembled=len(assembled),
         total=len(out),
+        history_budget=history_budget,
         has_tool=turn_has_tool_result(turn),
     )
     return out
