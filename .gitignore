@@ -56,3 +56,7 @@ src/logs/
 !/skills/hubloom/**
 !/skills/a2ui/
 !/skills/a2ui/**
+!/skills/account-access/
+!/skills/account-access/**
+!/skills/math-calculator/
+!/skills/math-calculator/**

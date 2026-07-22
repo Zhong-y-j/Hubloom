@@ -72,7 +72,8 @@ def build_skills_prompt(skills: Sequence[dict[str, Any]]) -> str:
         return ""
     lines = [
         "【可用 Skills】",
-        "以下为技能名片；需要时按技能约定执行（详细步骤在对应 SKILL.md 正文）。",
+        "以下为技能名片（name + description）。需要细则时调用工具 read_skill(skill=目录id或name)，"
+        "再按返回的 SKILL.md 正文执行；同一 skill 每轮只读一次。",
     ]
     for s in skills:
         name = (s.get("name") or "").strip() or "?"

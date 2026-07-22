@@ -33,6 +33,7 @@ from mcp_adapter.discovery import AgentMcpSetup, load_agent_mcp_bindings
 from memory import create_memory_manager
 from memory.manager import MemoryManager
 from tools.builtin.memory_tool import SearchMemoryTool
+from tools.builtin.skill_tools import build_skill_tools, clear_read_skill_turn_state
 from tools.registry import ToolRegistry
 from tools.runner import ToolRunner
 
@@ -177,7 +178,11 @@ class HubloomRuntime:
         )
 
     def _make_runner(self, memory: MemoryManager) -> tuple[ToolRunner, list[dict]]:
-        tools: list[Any] = [SearchMemoryTool(memory), *self._mcp_tools]
+        skill_tools = build_skill_tools(
+            skills_dir=_skills_dir(self.cfg),
+            skills_exclude=self.cfg.skills_exclude,
+        )
+        tools: list[Any] = [SearchMemoryTool(memory), *skill_tools, *self._mcp_tools]
         registry = ToolRegistry.from_tools(tools)
         return ToolRunner(registry), registry.list_definitions()
 
@@ -212,6 +217,7 @@ class HubloomRuntime:
             mcp_swagger_url=self.cfg.mcp_swagger_url,
             mcp_base_url=self.cfg.mcp_base_url,
         )
+        clear_read_skill_turn_state()
 
         memory = self._make_memory(sid)
         runner, tool_defs = self._make_runner(memory)
