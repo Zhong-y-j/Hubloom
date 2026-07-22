@@ -86,18 +86,31 @@ RESPOND_MARKDOWN_SYSTEM = """你处于 Respond 阶段：直接对用户说话，
 
 # Respond（A2UI）：传给 SchemaManager 的 ui_description（布局/交互约定，不含 schema）。
 RESPOND_A2UI_UI_DESCRIPTION = """
-Layout & form structure (prefer these patterns):
-- Wrap the whole form in a Card; put a Column inside the Card as the single child.
-- Title: Text with usageHint h2/h3 in Simplified Chinese.
-- Default stack fields in a Column (vertical). For short related fields (e.g. name + category),
-  nest a Row with two TextFields side by side; keep long URL/text fields full-width in Column.
-- Primary submit Button: use primary variant; place at the bottom of the Column.
-- ChoicePicker for enums: set displayStyle to "chips" (not checkbox/radio look);
-  CheckBox for booleans; TextField for strings (use type number only when needed).
-- Do NOT invent CSS or custom components; only Basic Catalog types (Column/Row/Card/Tabs/…).
-- Prefer empty defaults in updateDataModel; avoid firing required validation errors on first paint
-  (do not pre-fill checks that mark empty required fields as failed until the user submits).
-- Chat bubble is narrow (~680px): avoid more than two columns; prefer Column on mobile-like width.
+Layout (hard rules — messy single-card UIs are failures):
+- Root MUST be a Column (vertical). Do NOT wrap the entire UI in one giant Card.
+- ONE logical block = ONE Card. Examples of separate blocks that each need their own Card:
+  order summary, service items, timeline, attachments/photos, each pending task / form,
+  confirmation, choice list. Never leave a section as bare Text/Row floating outside a Card.
+- Inside every Card: a single child Column that holds that block's title + content.
+- Optional short intro Text (1 sentence) may sit ABOVE the first Card as a root Column child;
+  do not put long prose or repeated explanations inside Cards.
+- Multiple tasks → multiple Cards (e.g. 「添加小区」Card, 「移除钥匙柜」Card), not one Card
+  stacking many unrelated forms.
+- Title inside each Card: Text with usageHint h3 (or h2 only for the primary block), Simplified Chinese.
+- Fields: stack in Column. Short related fields may use a Row with at most two TextFields;
+  long text/URL fields stay full-width.
+- Primary submit Button: primary variant, at the bottom of THAT Card's Column (not shared across Cards).
+- ChoicePicker: displayStyle "chips"; CheckBox for booleans; TextField for strings.
+- Only Basic Catalog types (Column/Row/Card/Tabs/Text/Button/TextField/…). No invented CSS.
+- Prefer empty defaults in updateDataModel; do not pre-trigger required validation on first paint.
+- Narrow panel (~360–400px): prefer single Column; at most two columns in a Row; avoid dense grids.
+
+Images (hard rules — fake images are failures):
+- Image.url MUST be a real http(s) URL copied verbatim from tool results / user input in this turn.
+- NEVER invent placeholders (e.g. a2ui.org/placeholder.png, example.com, empty string, or made-up paths).
+- If tool data has no usable image URL for a photo: do NOT emit an Image component; show a short Text
+  like 「暂无附件图片」instead.
+- productImage / photo fields that are empty strings must be skipped, not replaced with placeholders.
 
 JSON string safety (hard rule — broken JSON is a hard failure):
 - Inside any JSON string value (labels, text, messages, placeholders, option labels),

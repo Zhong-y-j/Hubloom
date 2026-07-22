@@ -29,15 +29,10 @@ const {
 
 const draft = ref("");
 const listRef = ref<HTMLElement | null>(null);
-/** 面板当前绑定的消息（仅本轮 live A2UI） */
+/** 面板当前绑定的消息（仅「当前未过期」A2UI） */
 const panelMessageId = ref<string | null>(null);
 const panelOpen = ref(false);
 const autoOpenedForId = ref<string | null>(null);
-/**
- * 本轮仍有效的 A2UI 消息 id。
- * 仅在本会话流式产出时写入；用户再发新问题或加载历史后清空——历史无入口。
- */
-const liveA2uiMessageId = ref<string | null>(null);
 
 const phaseLabel = computed(() => {
   if (agentPhase.value === "understanding") return "理解中";
@@ -45,12 +40,6 @@ const phaseLabel = computed(() => {
   if (agentPhase.value === "presenting") return "呈现决策中";
   if (agentPhase.value === "replying") return "回复中";
   return "";
-});
-
-const panelMessage = computed(() => {
-  const id = panelMessageId.value;
-  if (!id || id !== liveA2uiMessageId.value) return null;
-  return messages.value.find((m) => m.id === id) || null;
 });
 
 function messageHasA2ui(m: ChatMessage): boolean {
@@ -63,9 +52,39 @@ function messageHasA2ui(m: ChatMessage): boolean {
   );
 }
 
-function isLiveA2uiMessage(m: ChatMessage): boolean {
-  return liveA2uiMessageId.value === m.id && messageHasA2ui(m);
+/**
+ * 当前仍有效的交互：最后一轮用户消息之后的、带 A2UI 的助手消息。
+ * 更早历史一律不算 live（无入口）；刷新后若末轮仍是该助手回复，可恢复。
+ */
+function findCurrentA2uiMessage(): ChatMessage | null {
+  const list = messages.value;
+  let lastUserIdx = -1;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].role === "user") {
+      lastUserIdx = i;
+      break;
+    }
+  }
+  for (let i = list.length - 1; i > lastUserIdx; i--) {
+    const m = list[i];
+    if (m.role === "assistant" && messageHasA2ui(m)) return m;
+  }
+  return null;
 }
+
+const currentA2uiMessage = computed(() => findCurrentA2uiMessage());
+
+function isLiveA2uiMessage(m: ChatMessage): boolean {
+  const cur = currentA2uiMessage.value;
+  return Boolean(cur && cur.id === m.id);
+}
+
+const panelMessage = computed(() => {
+  const id = panelMessageId.value;
+  const cur = currentA2uiMessage.value;
+  if (!id || !cur || id !== cur.id) return null;
+  return cur;
+});
 
 const panelHasA2ui = computed(() => {
   const m = panelMessage.value;
@@ -73,10 +92,8 @@ const panelHasA2ui = computed(() => {
 });
 
 const canReopenLivePanel = computed(() => {
-  const id = liveA2uiMessageId.value;
-  if (!id || panelOpen.value) return false;
-  const m = messages.value.find((x) => x.id === id);
-  return Boolean(m && messageHasA2ui(m));
+  if (panelOpen.value) return false;
+  return Boolean(currentA2uiMessage.value);
 });
 
 function isA2uiPlaceholder(content: string): boolean {
@@ -127,7 +144,8 @@ function a2uiPanelParts(m: ChatMessage): AnswerPart[] {
 }
 
 function openA2uiPanel(messageId: string) {
-  if (messageId !== liveA2uiMessageId.value) return;
+  const m = messages.value.find((x) => x.id === messageId);
+  if (!m || !isLiveA2uiMessage(m)) return;
   panelMessageId.value = messageId;
   panelOpen.value = true;
 }
@@ -136,12 +154,23 @@ function closeA2uiPanel() {
   panelOpen.value = false;
 }
 
-/** 结束本轮交互面板生命周期（发新问题 / 新会话 / 拉历史） */
+/** 关闭面板（发新问题 / 新会话）；过期判定由 currentA2uiMessage 推导 */
 function retireA2uiPanel() {
   closeA2uiPanel();
   panelMessageId.value = null;
-  liveA2uiMessageId.value = null;
   autoOpenedForId.value = null;
+}
+
+function restoreCurrentA2uiPanel(autoOpen: boolean) {
+  const cur = findCurrentA2uiMessage();
+  if (!cur) {
+    retireA2uiPanel();
+    return;
+  }
+  if (autoOpen) {
+    autoOpenedForId.value = cur.id;
+    openA2uiPanel(cur.id);
+  }
 }
 
 function toggleA2uiPanel(messageId: string) {
@@ -167,6 +196,7 @@ function onNewSession() {
 async function onLoadHistory() {
   retireA2uiPanel();
   await loadHistory();
+  restoreCurrentA2uiPanel(true);
 }
 
 async function scrollBottom() {
@@ -198,35 +228,20 @@ watch(
     void scrollBottom();
     void scrollThoughtToLatest();
 
-    const streaming = [...messages.value]
-      .reverse()
-      .find(
-        (m) => m.role === "assistant" && m.streaming && messageHasA2ui(m),
-      );
-    if (streaming) {
-      liveA2uiMessageId.value = streaming.id;
-      if (autoOpenedForId.value !== streaming.id) {
-        autoOpenedForId.value = streaming.id;
-        openA2uiPanel(streaming.id);
-      }
+    const cur = findCurrentA2uiMessage();
+    if (cur?.streaming && autoOpenedForId.value !== cur.id) {
+      autoOpenedForId.value = cur.id;
+      openA2uiPanel(cur.id);
       return;
     }
 
-    // 已绑定的 live 消息若被新用户轮次顶掉，收起面板
-    const liveId = liveA2uiMessageId.value;
-    if (liveId) {
-      const liveMsg = messages.value.find((m) => m.id === liveId);
-      if (!liveMsg || !messageHasA2ui(liveMsg)) {
-        retireA2uiPanel();
-        return;
-      }
-      const liveIdx = messages.value.findIndex((m) => m.id === liveId);
-      const superseded = messages.value
-        .slice(liveIdx + 1)
-        .some((m) => m.role === "user");
-      if (superseded) {
-        retireA2uiPanel();
-      }
+    // 面板绑在已过期消息上（用户又发了新问题）→ 收起
+    if (
+      panelOpen.value &&
+      panelMessageId.value &&
+      (!cur || cur.id !== panelMessageId.value)
+    ) {
+      retireA2uiPanel();
     }
   },
   { deep: true },
@@ -326,7 +341,10 @@ function toolTargetMeta(
 onMounted(async () => {
   onCredChange();
   await refreshMcpStatus();
-  if (ready.value) await loadHistory();
+  if (ready.value) {
+    await loadHistory();
+    restoreCurrentA2uiPanel(true);
+  }
 });
 </script>
 
@@ -437,7 +455,9 @@ onMounted(async () => {
             v-if="canReopenLivePanel"
             type="button"
             class="btn ghost chat-top-panel-btn"
-            @click="liveA2uiMessageId && openA2uiPanel(liveA2uiMessageId)"
+            @click="
+              currentA2uiMessage && openA2uiPanel(currentA2uiMessage.id)
+            "
           >
             打开交互面板
           </button>
