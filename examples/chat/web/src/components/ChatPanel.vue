@@ -185,7 +185,7 @@ function toggleA2uiPanel(messageId: string) {
 
 function onCredChange() {
   persist();
-  status.value = ready.value ? "就绪" : "请填写 Token 与用户 ID";
+  status.value = ready.value ? "就绪" : "请填写用户 ID";
 }
 
 function onNewSession() {
@@ -369,12 +369,12 @@ onMounted(async () => {
       <div class="config-card">
         <p class="config-card-title">凭证</p>
         <label class="field">
-          <span>业务 Token</span>
+          <span>业务 Token（可选）</span>
           <input
             v-model="token"
             type="password"
             autocomplete="off"
-            placeholder="X-MCP-Token"
+            placeholder="需鉴权时填写；无鉴权可留空"
             @change="onCredChange"
           />
         </label>
@@ -439,7 +439,7 @@ onMounted(async () => {
     <div class="chat-workspace">
       <section class="chat-main">
         <header class="chat-top">
-          <h2>对话</h2>
+          <h2>业务会话</h2>
           <span v-if="route" class="badge">{{
             route === "thought"
               ? "深度思考"
@@ -470,14 +470,25 @@ onMounted(async () => {
             class="empty-state"
             :class="ready ? 'empty-state-ready' : 'empty-state-disconnected'"
           >
-            <p class="empty-title">{{ ready ? "开始对话" : "请填写凭证" }}</p>
-            <p class="empty-desc">
-              {{
-                ready
-                  ? "用自然语言查询、操作已接入的 API。"
-                  : "在左侧填写业务 Token 与用户 ID 后即可开始。"
-              }}
-            </p>
+            <template v-if="ready">
+              <p class="empty-title">开始办事</p>
+              <p class="empty-desc">
+                用自然语言查询或办理已接入的业务；需要点选、填写时在右侧交互面板完成。业务需鉴权时再填写左侧
+                Token，无鉴权可留空。
+              </p>
+              <p class="empty-examples-label">可以试试</p>
+              <ul class="empty-examples">
+                <li>列出当前有哪些资源</li>
+                <li>新建一条记录（需关联其他数据时先选再绑）</li>
+                <li>查看详情，或删除前先选出目标</li>
+              </ul>
+            </template>
+            <template v-else>
+              <p class="empty-title">请填写用户 ID</p>
+              <p class="empty-desc">
+                在左侧填写用户 ID 后即可开始。业务 Token 仅在接口需要鉴权时填写，可留空。
+              </p>
+            </template>
           </div>
 
           <template v-for="m in messages" :key="m.id">
@@ -625,7 +636,7 @@ onMounted(async () => {
               :placeholder="
                 ready
                   ? '输入消息，Enter 发送，Shift+Enter 换行'
-                  : '请先填写 Token 与用户 ID'
+                  : '请先填写用户 ID'
               "
               @keydown="onKeydown"
             />

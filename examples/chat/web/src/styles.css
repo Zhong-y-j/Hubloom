@@ -664,7 +664,7 @@ body {
   margin: auto;
   text-align: center;
   color: var(--muted);
-  max-width: 420px;
+  max-width: 480px;
   line-height: 1.6;
   font-size: 0.9rem;
   padding: 2rem 1.25rem;
@@ -683,6 +683,45 @@ body {
 .empty-state .empty-desc {
   margin: 0;
   color: var(--text-secondary);
+}
+
+.empty-state .empty-examples-label {
+  margin: 1rem 0 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+}
+
+.empty-state .empty-examples {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  text-align: left;
+}
+
+.empty-state .empty-examples li {
+  position: relative;
+  padding: 0.45rem 0.75rem 0.45rem 1.65rem;
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.empty-state .empty-examples li::before {
+  content: "例";
+  position: absolute;
+  left: 0.55rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--accent);
+  opacity: 0.85;
 }
 
 .empty-state-disconnected {

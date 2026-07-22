@@ -141,7 +141,7 @@ export function useChat() {
   );
   const messages = ref<ChatMessage[]>([]);
   const busy = ref(false);
-  const status = ref("请填写 Token 与用户 ID");
+  const status = ref("就绪");
   const route = ref("");
   const agentPhase = ref<AgentPhase>(null);
   const showTools = ref(true);
@@ -150,9 +150,8 @@ export function useChat() {
   const mcpReady = ref<boolean | null>(null);
   const mcpDetail = ref("");
 
-  const ready = computed(
-    () => Boolean(token.value.trim() && normalizeSessionKey(sessionId.value))
-  );
+  /** 会话 ID 即可发消息；业务 Token 可选（部分 OpenAPI 无需鉴权） */
+  const ready = computed(() => Boolean(normalizeSessionKey(sessionId.value)));
 
   function persist() {
     localStorage.setItem(STORAGE_TOKEN, token.value.trim());
@@ -183,7 +182,7 @@ export function useChat() {
     route.value = "";
     agentPhase.value = null;
     persist();
-    status.value = ready.value ? "就绪" : "请填写 Token 与用户 ID";
+    status.value = ready.value ? "就绪" : "请填写用户 ID";
   }
 
   async function refreshMcpStatus() {
