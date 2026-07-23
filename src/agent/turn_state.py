@@ -27,6 +27,10 @@ def new_tool_call_id() -> str:
     return f"tc-{uuid.uuid4().hex[:12]}"
 
 
+# 客户端人机表单虚拟工具名（非 MCP）；出站 TOOL_CALL_* / 入站 tool 消息共用
+A2UI_ACTION_TOOL_NAME = "hubloom.a2ui_action"
+
+
 @dataclass
 class PendingInteraction:
     """某会话上「等待人机」的交互（通常是本轮 A2UI 表单）。"""

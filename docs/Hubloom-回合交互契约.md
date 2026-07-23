@@ -11,7 +11,8 @@
 
 出站：`RUN_STARTED` / `RUN_FINISHED` 携带 `runId`（见 `agui_sse`）。  
 人机等待中：进程内 `TurnStateStore` 按 session 保存至多一个 `waiting`。  
-等待时额外推送 `CUSTOM name=hubloom.interaction_waiting`（`value.run_id`、`value.tool_call_id`）。
+出表单时先下发客户端工具 `TOOL_CALL_START/ARGS/END`（`hubloom.a2ui_action` + `toolCallId`），再推送 `CUSTOM name=hubloom.interaction_waiting`（`value.run_id`、`value.tool_call_id`）。  
+表单回传后续跑流开头先发 `TOOL_CALL_RESULT`（同一 `toolCallId`），再 `RUN_STARTED`。
 
 ## 入站：`POST /v1/chat`
 
@@ -68,5 +69,5 @@
 
 ## 后续
 
-- 出表单前先发真实 `TOOL_CALL_*`，回传天然带同一 `toolCallId`（完全客户端 tool 模型）。  
+- 文本流补全 `TEXT_MESSAGE_START/END` 配对；`docs/Hubloom-SSE契约.md` 与 `agui_sse` 对齐。  
 - 文档中旧 `event: text_delta` 表以 `agui_sse` 为准；前端已按 `data.type` 解析。

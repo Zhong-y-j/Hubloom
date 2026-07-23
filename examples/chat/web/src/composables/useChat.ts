@@ -368,6 +368,14 @@ export function useChat() {
       const toolName = String(
         data.toolCallName || data.tool_call_name || "tool",
       );
+      // 客户端人机表单：记下 toolCallId，不上屏为普通 MCP 调用块
+      if (toolName === "hubloom.a2ui_action") {
+        const tcid = String(
+          data.toolCallId || data.tool_call_id || "",
+        ).trim();
+        if (tcid) waitingToolCallId.value = tcid;
+        return;
+      }
       const block: ToolBlock = {
         title: `调用 · ${toolName}`,
         body: "",
@@ -378,6 +386,7 @@ export function useChat() {
     }
 
     if (event === "TOOL_CALL_ARGS") {
+      // 人机表单 args 不上屏
       const tools = current.tools || [];
       const last = tools[tools.length - 1];
       if (last && last.title.startsWith("调用")) {
@@ -396,6 +405,10 @@ export function useChat() {
       const toolName = String(
         raw.toolCallName || raw.tool_call_name || "tool",
       );
+      if (toolName === "hubloom.a2ui_action" || raw.clientTool) {
+        // 表单已回传，等待态由后续 RUN_STARTED / waiting 事件接管
+        return;
+      }
       const isError = Boolean(raw.isError ?? raw.is_error);
       const block: ToolBlock = {
         title: `${isError ? "失败" : "返回"} · ${toolName}`,

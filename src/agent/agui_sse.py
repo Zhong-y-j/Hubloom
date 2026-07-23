@@ -282,6 +282,73 @@ def run_started_payload(
     return _pack(event)
 
 
+def a2ui_client_tool_call_sse(
+    *,
+    tool_call_id: str,
+    run_id: str,
+    session_id: str | None = None,
+) -> str:
+    """出 A2UI 表单前：下发客户端工具 ``TOOL_CALL_START/ARGS/END``。"""
+    from agent.turn_state import A2UI_ACTION_TOOL_NAME
+
+    tid = (tool_call_id or "").strip()
+    if not tid:
+        raise ValueError("tool_call_id 不能为空")
+    args = json.dumps(
+        {"kind": "a2ui", "run_id": (run_id or "").strip()},
+        ensure_ascii=False,
+    )
+    name, payload = _pack(
+        ToolCallStartEvent(
+            type=EventType.TOOL_CALL_START,
+            tool_call_id=tid,
+            tool_call_name=A2UI_ACTION_TOOL_NAME,
+        ),
+        ToolCallArgsEvent(
+            type=EventType.TOOL_CALL_ARGS,
+            tool_call_id=tid,
+            delta=args,
+        ),
+        ToolCallEndEvent(
+            type=EventType.TOOL_CALL_END,
+            tool_call_id=tid,
+        ),
+    )
+    if session_id:
+        payload["session_id"] = session_id
+    return format_sse(name, payload)
+
+
+def a2ui_client_tool_result_sse(
+    *,
+    tool_call_id: str,
+    content: str,
+    session_id: str | None = None,
+) -> str:
+    """表单 submit/cancel 后：关闭该客户端工具的 ``TOOL_CALL_RESULT``。"""
+    from agent.turn_state import A2UI_ACTION_TOOL_NAME
+
+    tid = (tool_call_id or "").strip()
+    if not tid:
+        raise ValueError("tool_call_id 不能为空")
+    event = ToolCallResultEvent(
+        type=EventType.TOOL_CALL_RESULT,
+        tool_call_id=tid,
+        message_id=_new_id("msg"),
+        content=compact_tool_result(content, max_len=4000),
+        role="tool",
+        raw_event={
+            "isError": False,
+            "toolCallName": A2UI_ACTION_TOOL_NAME,
+            "clientTool": True,
+        },
+    )
+    name, payload = _pack(event)
+    if session_id:
+        payload["session_id"] = session_id
+    return format_sse(name, payload)
+
+
 # ---------------------------------------------------------------------------
 # 下一步还要改哪里
 # ---------------------------------------------------------------------------

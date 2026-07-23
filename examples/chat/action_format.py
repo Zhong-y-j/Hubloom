@@ -7,10 +7,15 @@ from typing import Any
 
 from core.models import Message, Role, ToolCall
 
+from agent.turn_state import A2UI_ACTION_TOOL_NAME
 from examples.chat.schemas import ChatAction
 
-# 与 AG-UI toolCallName / OpenAI tool 名对齐的虚拟工具（非 MCP）
-A2UI_ACTION_TOOL_NAME = "hubloom.a2ui_action"
+__all__ = [
+    "A2UI_ACTION_TOOL_NAME",
+    "action_to_tool_messages",
+    "format_action_display",
+    "format_action_trigger",
+]
 
 
 def format_action_trigger(action: ChatAction) -> str:

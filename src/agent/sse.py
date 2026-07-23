@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 from agent.agui_sse import (  # noqa: F401
+    a2ui_client_tool_call_sse,
+    a2ui_client_tool_result_sse,
     compact_tool_result,
     event_to_sse,
     format_sse,
@@ -15,6 +17,8 @@ from agent.agui_sse import (  # noqa: F401
 )
 
 __all__ = [
+    "a2ui_client_tool_call_sse",
+    "a2ui_client_tool_result_sse",
     "compact_tool_result",
     "event_to_sse",
     "format_sse",

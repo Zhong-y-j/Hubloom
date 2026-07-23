@@ -94,6 +94,44 @@ def test_action_to_tool_messages() -> None:
     assert "[A2UI:confirm_add]" in str(tool.content)
 
 
+def test_a2ui_client_tool_call_and_result_sse() -> None:
+    from agent.agui_sse import (
+        a2ui_client_tool_call_sse,
+        a2ui_client_tool_result_sse,
+    )
+    import json
+    import re
+
+    call = a2ui_client_tool_call_sse(
+        tool_call_id="tc-1", run_id="run-1", session_id="s1"
+    )
+    frames = []
+    for block in re.split(r"\n\n+", call.strip()):
+        line = block.strip()
+        if line.startswith("data:"):
+            frames.append(json.loads(line[5:].strip()))
+    assert [f["type"] for f in frames] == [
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+    ]
+    assert frames[0]["toolCallId"] == "tc-1"
+    assert frames[0]["toolCallName"] == A2UI_ACTION_TOOL_NAME
+    assert json.loads(frames[1]["delta"])["kind"] == "a2ui"
+
+    result = a2ui_client_tool_result_sse(
+        tool_call_id="tc-1", content="已提交", session_id="s1"
+    )
+    rframes = []
+    for block in re.split(r"\n\n+", result.strip()):
+        line = block.strip()
+        if line.startswith("data:"):
+            rframes.append(json.loads(line[5:].strip()))
+    assert rframes[0]["type"] == "TOOL_CALL_RESULT"
+    assert rframes[0]["toolCallId"] == "tc-1"
+    assert rframes[0]["content"] == "已提交"
+
+
 def test_resolve_then_tool_messages_for_action_path() -> None:
     """waiting 带 tool_call_id → resolve → 译成 tool 消息对。"""
     store = TurnStateStore()

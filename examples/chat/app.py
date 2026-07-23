@@ -26,7 +26,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from agent.events import A2uiMessagesEvent, ErrorEvent
 from agent.loop.respond import PresentMode
 from agent.run import RunResult
-from agent.sse import event_to_sse, format_sse, run_started_payload, turn_complete_payload
+from agent.sse import (
+    a2ui_client_tool_call_sse,
+    a2ui_client_tool_result_sse,
+    event_to_sse,
+    format_sse,
+    run_started_payload,
+    turn_complete_payload,
+)
 from agent.turn_state import (
     answer_parts_need_human,
     default_turn_store,
@@ -38,7 +45,7 @@ from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log
 from runtime import HubloomRuntime
 
-from examples.chat.action_format import action_to_tool_messages
+from examples.chat.action_format import action_to_tool_messages, format_action_trigger
 from examples.chat.client_headers import ClientHeaderContext, parse_client_headers
 from examples.chat.history import ChatHistoryResponse, messages_for_display
 from examples.chat.schemas import (
@@ -380,6 +387,12 @@ async def _stream_chat(
                         },
                     )
                     return
+                # 先关闭上一轮客户端工具，再开续跑 run
+                yield a2ui_client_tool_result_sse(
+                    tool_call_id=tcid,
+                    content=format_action_trigger(action),
+                    session_id=session_id,
+                )
                 run_id = _turn_store.begin_run(session_id)
                 trigger_source = "action"
             else:
@@ -428,6 +441,11 @@ async def _stream_chat(
             if final is not None:
                 if saw_a2ui or answer_parts_need_human(final.answer_parts):
                     tcid = _mark_waiting_a2ui(session_id, run_id)
+                    yield a2ui_client_tool_call_sse(
+                        tool_call_id=tcid,
+                        run_id=run_id,
+                        session_id=session_id,
+                    )
                     yield _sse_interaction_waiting(
                         session_id=session_id,
                         run_id=run_id,
