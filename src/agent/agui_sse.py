@@ -5,6 +5,9 @@
 
 兼容：``examples/chat/app.py`` 仍可调用 ``event_to_sse`` / ``format_sse`` /
 ``turn_complete_payload``（经 ``agent.sse`` 再导出）。
+
+文本流请用 ``AguiStreamEncoder``：同一 ``messageId`` 上
+``TEXT_MESSAGE_START → CONTENT* → END``（思考同理）。
 """
 
 from __future__ import annotations
@@ -20,7 +23,11 @@ from ag_ui.core import (
     RunFinishedEvent,
     RunStartedEvent,
     TextMessageContentEvent,
+    TextMessageEndEvent,
+    TextMessageStartEvent,
     ThinkingTextMessageContentEvent,
+    ThinkingTextMessageEndEvent,
+    ThinkingTextMessageStartEvent,
     ToolCallArgsEvent,
     ToolCallEndEvent,
     ToolCallResultEvent,
@@ -43,13 +50,17 @@ from agent.events import (
 )
 
 # app.py 会往 payload 里塞 session_id；工具三段式用此键挂 follow-up
-_HUBLOOM_PAYLOAD_KEYS = frozenset({"session_id", "_agui_followups"})
+_HUBLOOM_PAYLOAD_KEYS = frozenset({"session_id", "run_id", "_agui_followups"})
 
 _ENCODER = EventEncoder()
 
 _TYPE_TO_CLS: dict[str, type[BaseEvent]] = {
+    EventType.TEXT_MESSAGE_START.value: TextMessageStartEvent,
     EventType.TEXT_MESSAGE_CONTENT.value: TextMessageContentEvent,
+    EventType.TEXT_MESSAGE_END.value: TextMessageEndEvent,
+    EventType.THINKING_TEXT_MESSAGE_START.value: ThinkingTextMessageStartEvent,
     EventType.THINKING_TEXT_MESSAGE_CONTENT.value: ThinkingTextMessageContentEvent,
+    EventType.THINKING_TEXT_MESSAGE_END.value: ThinkingTextMessageEndEvent,
     EventType.TOOL_CALL_START.value: ToolCallStartEvent,
     EventType.TOOL_CALL_ARGS.value: ToolCallArgsEvent,
     EventType.TOOL_CALL_END.value: ToolCallEndEvent,
@@ -96,8 +107,8 @@ def _pack(event: BaseEvent, *followups: BaseEvent) -> tuple[str, dict[str, Any]]
 def event_to_sse(ev: AgentEvent) -> tuple[str, dict[str, Any]] | None:
     """``AgentEvent`` → ``(agui_type, payload)``；``None`` 表示不推送。
 
-    文本增量暂映射为 ``TEXT_MESSAGE_CONTENT``（START/END 由下一步在 app 流式会话补全）。
-    工具调用会附带 ARGS + END（经 ``format_sse`` 一次编出多段 SSE）。
+    单事件映射（无会话态）。流式文本请用 ``AguiStreamEncoder``，
+    以保证 ``messageId`` 在 START/CONTENT/END 间稳定。
     """
     mapped = _to_agui_events(ev)
     if not mapped:
@@ -108,7 +119,7 @@ def event_to_sse(ev: AgentEvent) -> tuple[str, dict[str, Any]] | None:
 
 def _to_agui_events(ev: AgentEvent) -> list[BaseEvent]:
     if isinstance(ev, TextDeltaEvent):
-        return [_text_content(ev.delta, source="markdown")]
+        return [_text_content(ev.delta, message_id=_new_id("msg"), source="markdown")]
 
     if isinstance(ev, FinalAnswerDeltaEvent):
         source = (ev.source or "markdown").strip() or "markdown"
@@ -120,7 +131,7 @@ def _to_agui_events(ev: AgentEvent) -> list[BaseEvent]:
                     value={"delta": ev.delta},
                 )
             ]
-        return [_text_content(ev.delta, source=source)]
+        return [_text_content(ev.delta, message_id=_new_id("msg"), source=source)]
 
     if isinstance(ev, A2uiMessagesEvent):
         value: dict[str, Any] = {"messages": ev.messages}
@@ -213,10 +224,15 @@ def _to_agui_events(ev: AgentEvent) -> list[BaseEvent]:
     return []
 
 
-def _text_content(delta: str, *, source: str) -> TextMessageContentEvent:
+def _text_content(
+    delta: str,
+    *,
+    message_id: str,
+    source: str,
+) -> TextMessageContentEvent:
     return TextMessageContentEvent(
         type=EventType.TEXT_MESSAGE_CONTENT,
-        message_id=_new_id("msg"),
+        message_id=message_id,
         delta=delta,
         raw_event={"source": source},
     )
@@ -227,6 +243,7 @@ def format_sse(event_name: str, payload: dict[str, Any]) -> str:
     body = dict(payload or {})
     followups = body.pop("_agui_followups", None) or []
     body.pop("session_id", None)
+    body.pop("run_id", None)
     if "type" not in body:
         body["type"] = event_name
 
@@ -236,6 +253,7 @@ def format_sse(event_name: str, payload: dict[str, Any]) -> str:
             continue
         fol = dict(item)
         fol.pop("session_id", None)
+        fol.pop("run_id", None)
         type_name = str(fol.get("type") or "")
         chunks.append(_ENCODER.encode(_hydrate(type_name, fol)))
     return "".join(chunks)
@@ -272,7 +290,7 @@ def run_started_payload(
     session_id: str,
     run_id: str | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """供下一步在 ``app.py`` 流式开头调用。"""
+    """流式开头 ``RUN_STARTED``。"""
     rid = (run_id or "").strip() or _new_id("run")
     event = RunStartedEvent(
         type=EventType.RUN_STARTED,
@@ -349,11 +367,142 @@ def a2ui_client_tool_result_sse(
     return format_sse(name, payload)
 
 
-# ---------------------------------------------------------------------------
-# 下一步还要改哪里
-# ---------------------------------------------------------------------------
-#
-# 1. examples/chat/app.py — RUN_STARTED；文本 START/END 会话态
-# 2. examples/chat/web — 按 type 解析；CUSTOM hubloom.a2ui → 面板
-# 3. docs/Hubloom-SSE契约.md — 重写事件表
-# 4. 内部 agent/events.py / run.py 可暂不动
+class AguiStreamEncoder:
+    """一轮 run 内的出站编码器：文本 / 思考带 START·END 会话态。"""
+
+    def __init__(self, *, session_id: str = "", run_id: str = "") -> None:
+        self.session_id = (session_id or "").strip()
+        self.run_id = (run_id or "").strip()
+        self._assistant_msg_id: str | None = None
+        self._assistant_source: str = "markdown"
+        self._thinking_open: bool = False
+
+    def _annotate(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.session_id:
+            payload["session_id"] = self.session_id
+        if self.run_id:
+            payload["run_id"] = self.run_id
+        return payload
+
+    def _emit(self, name: str, payload: dict[str, Any]) -> str:
+        return format_sse(name, self._annotate(payload))
+
+    def _close_thinking(self) -> str:
+        if not self._thinking_open:
+            return ""
+        self._thinking_open = False
+        name, payload = _pack(
+            ThinkingTextMessageEndEvent(type=EventType.THINKING_TEXT_MESSAGE_END)
+        )
+        return self._emit(name, payload)
+
+    def _close_assistant(self) -> str:
+        mid = self._assistant_msg_id
+        if not mid:
+            return ""
+        self._assistant_msg_id = None
+        name, payload = _pack(
+            TextMessageEndEvent(
+                type=EventType.TEXT_MESSAGE_END,
+                message_id=mid,
+            )
+        )
+        return self._emit(name, payload)
+
+    def flush(self) -> str:
+        """关闭未结束的思考/助手文本（在 RUN_FINISHED / 客户端 TOOL_CALL 前调用）。"""
+        return self._close_thinking() + self._close_assistant()
+
+    def feed(self, ev: AgentEvent) -> str:
+        """映射一条内部事件为 SSE（可含多帧）。"""
+        out = ""
+
+        # 工具调用前结束当前文本/思考，保证 AG-UI 消息边界清晰
+        if isinstance(ev, (ToolCallEvent, ToolResultEvent)):
+            out += self.flush()
+
+        if isinstance(ev, ThoughtDeltaEvent):
+            if self._assistant_msg_id:
+                out += self._close_assistant()
+            if not self._thinking_open:
+                name, payload = _pack(
+                    ThinkingTextMessageStartEvent(
+                        type=EventType.THINKING_TEXT_MESSAGE_START
+                    )
+                )
+                out += self._emit(name, payload)
+                self._thinking_open = True
+            name, payload = _pack(
+                ThinkingTextMessageContentEvent(
+                    type=EventType.THINKING_TEXT_MESSAGE_CONTENT,
+                    delta=ev.delta,
+                    raw_event={"phase": ev.phase},
+                )
+            )
+            out += self._emit(name, payload)
+            return out
+
+        if isinstance(ev, TextDeltaEvent):
+            return out + self._feed_assistant_text(ev.delta, source="markdown")
+
+        if isinstance(ev, FinalAnswerDeltaEvent):
+            source = (ev.source or "markdown").strip() or "markdown"
+            if source == "a2ui":
+                # A2UI 侧栏文案仍走 CUSTOM，不打断 markdown 文本会话
+                mapped = event_to_sse(ev)
+                if mapped is None:
+                    return out
+                name, payload = mapped
+                return out + self._emit(name, payload)
+            return out + self._feed_assistant_text(ev.delta, source=source)
+
+        # 其余事件：无会话态包装
+        mapped = event_to_sse(ev)
+        if mapped is None:
+            return out
+        name, payload = mapped
+        return out + self._emit(name, payload)
+
+    def _feed_assistant_text(self, delta: str, *, source: str) -> str:
+        out = self._close_thinking()
+        if not delta:
+            return out
+        if self._assistant_msg_id is None:
+            mid = _new_id("msg")
+            self._assistant_msg_id = mid
+            self._assistant_source = source
+            name, payload = _pack(
+                TextMessageStartEvent(
+                    type=EventType.TEXT_MESSAGE_START,
+                    message_id=mid,
+                    role="assistant",
+                    raw_event={"source": source},
+                )
+            )
+            out += self._emit(name, payload)
+        elif source != self._assistant_source:
+            # source 切换：结束旧消息，开新消息
+            out += self._close_assistant()
+            mid = _new_id("msg")
+            self._assistant_msg_id = mid
+            self._assistant_source = source
+            name, payload = _pack(
+                TextMessageStartEvent(
+                    type=EventType.TEXT_MESSAGE_START,
+                    message_id=mid,
+                    role="assistant",
+                    raw_event={"source": source},
+                )
+            )
+            out += self._emit(name, payload)
+
+        assert self._assistant_msg_id is not None
+        name, payload = _pack(
+            _text_content(
+                delta,
+                message_id=self._assistant_msg_id,
+                source=source,
+            )
+        )
+        out += self._emit(name, payload)
+        return out

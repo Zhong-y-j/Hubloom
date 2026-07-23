@@ -39,7 +39,7 @@
 | [产品定位](./docs/Hubloom产品定位.md)     | 是什么 / 不是什么、交付形态与主路径                   |
 | [架构边界](./docs/Hubloom架构边界.md)     | MCP / A2A / A2UI 收敛原则与包边界                     |
 | [总体架构图](./docs/Hubloom总体架构图.md) | 系统分层与主链路示意                                  |
-| [SSE 契约](./docs/Hubloom-SSE契约.md)     | `/v1/chat` 事件名与字段（当前前端契约）               |
+| [SSE 契约](./docs/Hubloom-SSE契约.md)     | `/v1/chat` AG-UI 出站事件（`data.type`）               |
 | [回合交互契约](./docs/Hubloom-回合交互契约.md) | run_id、表单等待与结构化 action 回传                 |
 | [MCP 适配](./docs/Hubloom-MCP适配.md)     | OpenAPI 管线、元工具、Token 透传                      |
 | [A2A 互联](./docs/Hubloom-A2A互联.md)     | 双向 A2A、远程过程上屏                                |
@@ -142,8 +142,8 @@ curl -s http://127.0.0.1:8010/v1/chat \
 | --------- | ---------------------------------- | ------------------------------------ |
 | **MCP**   | Agent ↔ 企业 API / 数据            | 已落地                               |
 | **A2A**   | Agent ↔ Agent 委托                 | 双向 MVP                             |
-| **A2UI**  | 声明式生成式 UI（表单等）          | 已落地（经自研 SSE 下发）            |
-| **AG-UI** | Agent ↔ 用户应用的标准交互事件协议 | **下一步**（替换/并行自研 SSE 契约） |
+| **A2UI**  | 声明式生成式 UI（表单等）          | 已落地（经 AG-UI CUSTOM / 面板）     |
+| **AG-UI** | Agent ↔ 用户应用的标准交互事件协议 | 已落地（`/v1/chat` 出站 + 表单回传） |
 | **ANP**   | 更开放的 Agent 互联                | 探索中                               |
 
 > **A2UI ≠ AG-UI**：A2UI 描述「画什么界面」；AG-UI 描述「Agent 与前端如何用标准事件对话」。二者互补，可叠加使用。

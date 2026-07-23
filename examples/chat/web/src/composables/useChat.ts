@@ -348,6 +348,11 @@ export function useChat() {
       return;
     }
 
+    if (event === "TEXT_MESSAGE_START") {
+      agentPhase.value = "replying";
+      return;
+    }
+
     if (event === "TEXT_MESSAGE_CONTENT") {
       const delta = String(data.delta || "");
       if (!delta) return;
@@ -359,8 +364,22 @@ export function useChat() {
       return;
     }
 
+    if (event === "TEXT_MESSAGE_END") {
+      return;
+    }
+
+    if (event === "THINKING_TEXT_MESSAGE_START") {
+      agentPhase.value = "thinking";
+      status.value = "思考中…";
+      return;
+    }
+
     if (event === "THINKING_TEXT_MESSAGE_CONTENT") {
       current.thought = (current.thought || "") + String(data.delta || "");
+      return;
+    }
+
+    if (event === "THINKING_TEXT_MESSAGE_END") {
       return;
     }
 

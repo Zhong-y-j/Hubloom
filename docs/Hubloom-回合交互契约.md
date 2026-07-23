@@ -69,5 +69,5 @@
 
 ## 后续
 
-- 文本流补全 `TEXT_MESSAGE_START/END` 配对；`docs/Hubloom-SSE契约.md` 与 `agui_sse` 对齐。  
-- 文档中旧 `event: text_delta` 表以 `agui_sse` 为准；前端已按 `data.type` 解析。
+- （可选）`THINKING_START` / `THINKING_END` 与 Activity 事件对齐。  
+- 旧 `event: text_delta` 仅作前端过渡兼容；权威表见 [SSE 契约](./Hubloom-SSE契约.md)。

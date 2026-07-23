@@ -27,9 +27,9 @@ from agent.events import A2uiMessagesEvent, ErrorEvent
 from agent.loop.respond import PresentMode
 from agent.run import RunResult
 from agent.sse import (
+    AguiStreamEncoder,
     a2ui_client_tool_call_sse,
     a2ui_client_tool_result_sse,
-    event_to_sse,
     format_sse,
     run_started_payload,
     turn_complete_payload,
@@ -415,6 +415,7 @@ async def _stream_chat(
                 }
             yield format_sse(started_name, started_payload)
 
+            encoder = AguiStreamEncoder(session_id=session_id, run_id=run_id)
             final: RunResult | None = None
             saw_a2ui = False
             async for item in _runtime.run_stream(
@@ -429,14 +430,19 @@ async def _stream_chat(
                     continue
                 if isinstance(item, A2uiMessagesEvent):
                     saw_a2ui = True
-                mapped = event_to_sse(item)
-                if mapped is not None:
-                    name, payload = mapped
-                    payload["session_id"] = session_id
-                    payload["run_id"] = run_id
-                    yield format_sse(name, payload)
+                chunk = encoder.feed(item)
+                if chunk:
+                    yield chunk
                 if isinstance(item, ErrorEvent) and not item.recoverable:
+                    closed = encoder.flush()
+                    if closed:
+                        yield closed
                     return
+
+            # 结束未闭合的文本/思考，再发客户端 TOOL_CALL / RUN_FINISHED
+            closed = encoder.flush()
+            if closed:
+                yield closed
 
             if final is not None:
                 if saw_a2ui or answer_parts_need_human(final.answer_parts):

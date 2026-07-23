@@ -53,6 +53,60 @@ def test_text_delta_maps_to_text_message_content() -> None:
     assert "session_id" not in frames[0]
 
 
+def test_stream_encoder_pairs_text_start_content_end() -> None:
+    from agent.agui_sse import AguiStreamEncoder
+
+    enc = AguiStreamEncoder(session_id="s1", run_id="run-1")
+    frames = _sse_payloads(enc.feed(TextDeltaEvent(delta="你")))
+    frames += _sse_payloads(enc.feed(TextDeltaEvent(delta="好")))
+    frames += _sse_payloads(enc.flush())
+
+    types = [f["type"] for f in frames]
+    assert types == [
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+    ]
+    mid = frames[0]["messageId"]
+    assert frames[1]["messageId"] == mid
+    assert frames[2]["messageId"] == mid
+    assert frames[3]["messageId"] == mid
+    assert frames[1]["delta"] == "你"
+    assert frames[2]["delta"] == "好"
+
+
+def test_stream_encoder_closes_text_before_tool_call() -> None:
+    from agent.agui_sse import AguiStreamEncoder
+
+    enc = AguiStreamEncoder(session_id="s1", run_id="run-1")
+    frames = _sse_payloads(enc.feed(TextDeltaEvent(delta="先说")))
+    frames += _sse_payloads(
+        enc.feed(ToolCallEvent(call_id="c1", tool_name="list_api", args={}))
+    )
+    types = [f["type"] for f in frames]
+    assert "TEXT_MESSAGE_END" in types
+    assert types.index("TEXT_MESSAGE_END") < types.index("TOOL_CALL_START")
+
+
+def test_stream_encoder_thinking_start_end() -> None:
+    from agent.agui_sse import AguiStreamEncoder
+
+    enc = AguiStreamEncoder(session_id="s1", run_id="run-1")
+    frames = _sse_payloads(
+        enc.feed(ThoughtDeltaEvent(phase="thinking", delta="想"))
+    )
+    frames += _sse_payloads(enc.feed(TextDeltaEvent(delta="答")))
+    frames += _sse_payloads(enc.flush())
+    types = [f["type"] for f in frames]
+    assert types[0] == "THINKING_TEXT_MESSAGE_START"
+    assert "THINKING_TEXT_MESSAGE_CONTENT" in types
+    assert "THINKING_TEXT_MESSAGE_END" in types
+    assert types.index("THINKING_TEXT_MESSAGE_END") < types.index(
+        "TEXT_MESSAGE_START"
+    )
+
+
 def test_final_answer_a2ui_text_is_custom() -> None:
     mapped = event_to_sse(
         FinalAnswerDeltaEvent(delta="请填写", source="a2ui")

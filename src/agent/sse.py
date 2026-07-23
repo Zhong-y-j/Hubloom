@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from agent.agui_sse import (  # noqa: F401
+    AguiStreamEncoder,
     a2ui_client_tool_call_sse,
     a2ui_client_tool_result_sse,
     compact_tool_result,
@@ -17,6 +18,7 @@ from agent.agui_sse import (  # noqa: F401
 )
 
 __all__ = [
+    "AguiStreamEncoder",
     "a2ui_client_tool_call_sse",
     "a2ui_client_tool_result_sse",
     "compact_tool_result",
