@@ -24,6 +24,10 @@ class ChatResponse(BaseModel):
     session_id: str
     reason: str = ""
     answer_parts: list[dict] | None = None
+    run_id: str | None = Field(
+        default=None,
+        description="本轮 Agent run_id；若本轮有待填表单，提交/取消须带同一 run_id",
+    )
 
 
 class McpStatusResponse(BaseModel):

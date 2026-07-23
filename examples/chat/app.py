@@ -23,10 +23,14 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from agent.events import ErrorEvent
+from agent.events import A2uiMessagesEvent, ErrorEvent
 from agent.loop.respond import PresentMode
 from agent.run import RunResult
-from agent.sse import event_to_sse, format_sse, turn_complete_payload
+from agent.sse import event_to_sse, format_sse, run_started_payload, turn_complete_payload
+from agent.turn_state import (
+    answer_parts_need_human,
+    default_turn_store,
+)
 from context import clear_request_context
 from core.models import Message, Role
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
@@ -43,6 +47,39 @@ from examples.chat.schemas import (
 
 _runtime: HubloomRuntime | None = None
 _run_lock = asyncio.Lock()
+_turn_store = default_turn_store
+
+
+def _sse_interaction_superseded(pending, *, session_id: str, new_run_id: str) -> str:
+    """通知前端：旧表单因用户改走对话而被覆盖。"""
+    name, payload = (
+        "CUSTOM",
+        {
+            "type": "CUSTOM",
+            "name": "hubloom.interaction_superseded",
+            "value": {
+                "reason": "user_message",
+                "old_run_id": pending.run_id,
+                "new_run_id": new_run_id,
+                "kind": pending.kind,
+            },
+            "session_id": session_id,
+        },
+    )
+    return format_sse(name, payload)
+
+
+def _sse_interaction_waiting(*, session_id: str, run_id: str) -> str:
+    name, payload = (
+        "CUSTOM",
+        {
+            "type": "CUSTOM",
+            "name": "hubloom.interaction_waiting",
+            "value": {"run_id": run_id, "kind": "a2ui"},
+            "session_id": session_id,
+        },
+    )
+    return format_sse(name, payload)
 
 _ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_CONFIG = _ROOT / "config" / "env.yaml"
@@ -247,8 +284,23 @@ async def _stream_chat(
     assert _runtime is not None
     async with _run_lock:
         try:
+            # P0：新消息若正等待表单 → 覆盖旧交互（允许改走自然语言补全）
+            superseded = _turn_store.supersede_if_waiting(session_id)
+            run_id = _turn_store.begin_run(session_id)
+            if superseded is not None:
+                yield _sse_interaction_superseded(
+                    superseded, session_id=session_id, new_run_id=run_id
+                )
+
+            started_name, started_payload = run_started_payload(
+                session_id=session_id, run_id=run_id
+            )
+            started_payload["session_id"] = session_id
+            yield format_sse(started_name, started_payload)
+
             trigger = Message(role=Role.USER, content=message)
             final: RunResult | None = None
+            saw_a2ui = False
             async for item in _runtime.run_stream(
                 trigger,
                 session_id=session_id,
@@ -258,15 +310,23 @@ async def _stream_chat(
                 if isinstance(item, RunResult):
                     final = item
                     continue
+                if isinstance(item, A2uiMessagesEvent):
+                    saw_a2ui = True
                 mapped = event_to_sse(item)
                 if mapped is not None:
                     name, payload = mapped
                     payload["session_id"] = session_id
+                    payload["run_id"] = run_id
                     yield format_sse(name, payload)
                 if isinstance(item, ErrorEvent) and not item.recoverable:
                     return
 
             if final is not None:
+                if saw_a2ui or answer_parts_need_human(final.answer_parts):
+                    _turn_store.mark_waiting(session_id, run_id, kind="a2ui")
+                    yield _sse_interaction_waiting(
+                        session_id=session_id, run_id=run_id
+                    )
                 name, payload = turn_complete_payload(
                     route=final.present_mode,
                     final_message=(final.content or "").strip(),
@@ -274,11 +334,20 @@ async def _stream_chat(
                     reason="" if final.ok else (final.error or ""),
                     answer_parts=list(final.answer_parts or []) or None,
                 )
+                # 固定本轮 runId，便于前端绑定面板
+                payload["runId"] = run_id
+                payload["threadId"] = session_id
+                if isinstance(payload.get("result"), dict):
+                    payload["result"]["run_id"] = run_id
                 yield format_sse(name, payload)
         except Exception as exc:
             yield format_sse(
-                "error",
-                {"error": str(exc), "session_id": session_id},
+                "RUN_ERROR",
+                {
+                    "type": "RUN_ERROR",
+                    "message": str(exc),
+                    "session_id": session_id,
+                },
             )
         finally:
             clear_request_context()
@@ -294,8 +363,11 @@ async def _run_chat_once(
     assert _runtime is not None
     async with _run_lock:
         try:
+            _turn_store.supersede_if_waiting(session_id)
+            run_id = _turn_store.begin_run(session_id)
             trigger = Message(role=Role.USER, content=message)
             final: RunResult | None = None
+            saw_a2ui = False
             async for item in _runtime.run_stream(
                 trigger,
                 session_id=session_id,
@@ -304,8 +376,14 @@ async def _run_chat_once(
             ):
                 if isinstance(item, RunResult):
                     final = item
+                elif isinstance(item, A2uiMessagesEvent):
+                    saw_a2ui = True
                 elif isinstance(item, ErrorEvent) and not item.recoverable:
                     raise HTTPException(status_code=500, detail=item.error)
+            if final is not None and (
+                saw_a2ui or answer_parts_need_human(final.answer_parts)
+            ):
+                _turn_store.mark_waiting(session_id, run_id, kind="a2ui")
         finally:
             clear_request_context()
 
@@ -320,6 +398,7 @@ async def _run_chat_once(
         session_id=session_id,
         reason="",
         answer_parts=list(final.answer_parts or []) or None,
+        run_id=run_id,
     )
 
 
