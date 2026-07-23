@@ -40,7 +40,7 @@
 | [架构边界](./docs/Hubloom架构边界.md)     | MCP / A2A / A2UI 收敛原则与包边界                     |
 | [总体架构图](./docs/Hubloom总体架构图.md) | 系统分层与主链路示意                                  |
 | [SSE 契约](./docs/Hubloom-SSE契约.md)     | `/v1/chat` 事件名与字段（当前前端契约）               |
-| [回合交互契约](./docs/Hubloom-回合交互契约.md) | run_id、表单等待与新消息覆盖（P0）                 |
+| [回合交互契约](./docs/Hubloom-回合交互契约.md) | run_id、表单等待与结构化 action 回传                 |
 | [MCP 适配](./docs/Hubloom-MCP适配.md)     | OpenAPI 管线、元工具、Token 透传                      |
 | [A2A 互联](./docs/Hubloom-A2A互联.md)     | 双向 A2A、远程过程上屏                                |
 | [工具层](./docs/Hubloom-工具层.md)        | ToolRegistry、ToolRunner 与内置工具                   |

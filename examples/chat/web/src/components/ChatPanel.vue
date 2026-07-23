@@ -19,12 +19,15 @@ const {
   presentMode,
   mcpReady,
   mcpDetail,
+  waitingRunId,
+  interactionEpoch,
   ready,
   persist,
   newSession,
   refreshMcpStatus,
   loadHistory,
   send,
+  sendAction,
 } = useChat();
 
 const draft = ref("");
@@ -255,10 +258,19 @@ async function onSubmit() {
 }
 
 async function onA2uiAction(action: A2uiClientAction) {
-  const text = formatA2uiActionAsChat(action);
   retireA2uiPanel();
-  await send(text);
+  const rid = (waitingRunId.value || "").trim();
+  if (rid) {
+    await sendAction(action, rid);
+    return;
+  }
+  // 刷新后无 waiting 态：兜底走合成消息（新 run）
+  await send(formatA2uiActionAsChat(action));
 }
+
+watch(interactionEpoch, () => {
+  retireA2uiPanel();
+});
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === "Enter" && !e.shiftKey) {

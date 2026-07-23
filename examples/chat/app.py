@@ -37,9 +37,11 @@ from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log
 from runtime import HubloomRuntime
 
+from examples.chat.action_format import format_action_trigger
 from examples.chat.client_headers import ClientHeaderContext, parse_client_headers
 from examples.chat.history import ChatHistoryResponse, messages_for_display
 from examples.chat.schemas import (
+    ChatAction,
     ChatRequest,
     ChatResponse,
     McpStatusResponse,
@@ -200,10 +202,6 @@ async def chat(
     if _runtime is None:
         raise HTTPException(status_code=503, detail="运行时尚未初始化")
 
-    message = body.message.strip()
-    if not message:
-        raise HTTPException(status_code=400, detail="message 不能为空")
-
     session_id = _resolve_session_id(body.session_id, x_session_id)
     if not session_id:
         raise HTTPException(status_code=400, detail="请填写 session_id（用户 ID）")
@@ -223,13 +221,30 @@ async def chat(
         _runtime.default_present_mode,
     )
 
+    if body.action is not None:
+        assert body.run_id is not None
+        trigger_text = format_action_trigger(body.action)
+        trigger_kind = "action"
+        action = body.action
+        action_run_id = body.run_id
+    else:
+        trigger_text = (body.message or "").strip()
+        if not trigger_text:
+            raise HTTPException(status_code=400, detail="message 不能为空")
+        trigger_kind = "message"
+        action = None
+        action_run_id = None
+
     if body.stream:
         return StreamingResponse(
             _stream_chat(
-                message,
+                trigger_text,
                 session_id=session_id,
                 client_ctx=client_ctx,
                 present_mode=present_mode,
+                trigger_kind=trigger_kind,
+                action=action,
+                action_run_id=action_run_id,
             ),
             media_type="text/event-stream",
             headers={
@@ -240,10 +255,13 @@ async def chat(
         )
 
     result = await _run_chat_once(
-        message,
+        trigger_text,
         session_id=session_id,
         client_ctx=client_ctx,
         present_mode=present_mode,
+        trigger_kind=trigger_kind,
+        action=action,
+        action_run_id=action_run_id,
     )
     return JSONResponse(content=result.model_dump())
 
@@ -280,22 +298,63 @@ async def _stream_chat(
     session_id: str,
     client_ctx: ClientHeaderContext,
     present_mode: PresentMode,
+    trigger_kind: str = "message",
+    action: ChatAction | None = None,
+    action_run_id: str | None = None,
 ) -> AsyncIterator[str]:
+    """流式跑一轮。
+
+    - ``message``：新用户话；若正 waiting 则 supersede。
+    - ``action``：在锁内 ``resolve_action`` 后开续跑 run。
+    """
     assert _runtime is not None
     async with _run_lock:
         try:
-            # P0：新消息若正等待表单 → 覆盖旧交互（允许改走自然语言补全）
-            superseded = _turn_store.supersede_if_waiting(session_id)
-            run_id = _turn_store.begin_run(session_id)
-            if superseded is not None:
-                yield _sse_interaction_superseded(
-                    superseded, session_id=session_id, new_run_id=run_id
-                )
+            if trigger_kind == "action":
+                if action is None or not action_run_id:
+                    yield format_sse(
+                        "RUN_ERROR",
+                        {
+                            "type": "RUN_ERROR",
+                            "message": "action 缺少 run_id",
+                            "session_id": session_id,
+                        },
+                    )
+                    return
+                try:
+                    _turn_store.resolve_action(
+                        session_id,
+                        action_run_id,
+                        resolution=action.type,
+                    )
+                except ValueError as exc:
+                    yield format_sse(
+                        "RUN_ERROR",
+                        {
+                            "type": "RUN_ERROR",
+                            "message": str(exc),
+                            "session_id": session_id,
+                        },
+                    )
+                    return
+                run_id = _turn_store.begin_run(session_id)
+            else:
+                superseded = _turn_store.supersede_if_waiting(session_id)
+                run_id = _turn_store.begin_run(session_id)
+                if superseded is not None:
+                    yield _sse_interaction_superseded(
+                        superseded, session_id=session_id, new_run_id=run_id
+                    )
 
             started_name, started_payload = run_started_payload(
                 session_id=session_id, run_id=run_id
             )
             started_payload["session_id"] = session_id
+            if trigger_kind == "action" and action_run_id:
+                started_payload["rawEvent"] = {
+                    "trigger": "action",
+                    "source_run_id": action_run_id,
+                }
             yield format_sse(started_name, started_payload)
 
             trigger = Message(role=Role.USER, content=message)
@@ -359,11 +418,26 @@ async def _run_chat_once(
     session_id: str,
     client_ctx: ClientHeaderContext,
     present_mode: PresentMode,
+    trigger_kind: str = "message",
+    action: ChatAction | None = None,
+    action_run_id: str | None = None,
 ) -> ChatResponse:
     assert _runtime is not None
     async with _run_lock:
         try:
-            _turn_store.supersede_if_waiting(session_id)
+            if trigger_kind == "action":
+                if action is None or not action_run_id:
+                    raise HTTPException(status_code=400, detail="action 缺少 run_id")
+                try:
+                    _turn_store.resolve_action(
+                        session_id,
+                        action_run_id,
+                        resolution=action.type,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+            else:
+                _turn_store.supersede_if_waiting(session_id)
             run_id = _turn_store.begin_run(session_id)
             trigger = Message(role=Role.USER, content=message)
             final: RunResult | None = None
