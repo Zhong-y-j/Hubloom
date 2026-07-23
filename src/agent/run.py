@@ -181,7 +181,7 @@ async def run_stream(
     memory: MemoryManager,
     runner: ToolRunner,
     tools: list[dict[str, Any]],
-    trigger: Message,
+    trigger: Message | list[Message],
     think_system: str,
     respond_markdown_system: str,
     respond_a2ui_system: str,
@@ -192,6 +192,7 @@ async def run_stream(
 ) -> AsyncIterator[AgentEvent | RunResult]:
     """执行一整轮 Agent：落库 trigger → Think/Execute 循环 → Respond。
 
+    ``trigger``：单条用户消息，或 AG-UI 风格的 ``assistant(tool_calls)+tool`` 列表。
     ``think_system``：工具前提示（含 skills/catalog）。
     ``think_system_after``：工具后短提示；缺省则全程用 ``think_system``。
     ``present_mode=auto``：Think 交班后跑 Present（NEED_A2UI），再决定 Markdown / A2UI Respond。
@@ -202,17 +203,31 @@ async def run_stream(
     tool_log: list[dict[str, str]] = []
     after_system = (think_system_after or think_system).strip() or think_system
 
-    trigger_text = trigger.content if isinstance(trigger.content, str) else str(trigger.content)
+    triggers = [trigger] if isinstance(trigger, Message) else list(trigger)
+    if not triggers:
+        raise ValueError("trigger 不能为空")
+
+    preview = triggers[-1].content if isinstance(triggers[-1].content, str) else str(
+        triggers[-1].content
+    )
     agent_trace(
         "run start",
         present_mode=present_mode,
         max_think_rounds=max_think_rounds,
         tools=len(tools),
-        trigger=clip(trigger_text, 120),
+        trigger=clip(preview, 120),
+        trigger_msgs=len(triggers),
     )
 
-    turn_messages: list[Message] = [trigger]
-    await _remember(memory, trigger, source=trigger_source)
+    turn_messages: list[Message] = list(triggers)
+    for msg in triggers:
+        if msg.role == Role.TOOL:
+            src = "action"
+        elif msg.role == Role.ASSISTANT and msg.tool_calls:
+            src = "agent"
+        else:
+            src = trigger_source
+        await _remember(memory, msg, source=src)
 
     yield PhaseEvent(phase="thinking", route=present_mode)
     agent_trace("phase", phase="thinking", present_mode=present_mode)

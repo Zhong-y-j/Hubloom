@@ -14,6 +14,7 @@ export type ChatActionPayload = {
   payload: Record<string, unknown>;
   surface_id?: string;
   source_component_id?: string;
+  tool_call_id?: string;
 };
 
 /** 从按钮名粗判 cancel（其余视为 submit）。 */
@@ -31,9 +32,12 @@ export function inferActionType(name: string): "submit" | "cancel" {
   return "submit";
 }
 
-export function toChatAction(action: A2uiClientAction): ChatActionPayload {
+export function toChatAction(
+  action: A2uiClientAction,
+  toolCallId?: string | null,
+): ChatActionPayload {
   const name = String(action?.name || "").trim() || "unknown";
-  return {
+  const out: ChatActionPayload = {
     type: inferActionType(name),
     name,
     payload:
@@ -43,6 +47,9 @@ export function toChatAction(action: A2uiClientAction): ChatActionPayload {
     surface_id: action.surfaceId,
     source_component_id: action.sourceComponentId,
   };
+  const tcid = (toolCallId || "").trim();
+  if (tcid) out.tool_call_id = tcid;
+  return out;
 }
 
 /** 气泡展示（非发给后端的合成闲聊）。 */

@@ -188,7 +188,7 @@ class HubloomRuntime:
 
     async def run_stream(
         self,
-        trigger: Message,
+        trigger: Message | list[Message],
         *,
         session_id: str,
         present_mode: PresentMode | None = None,
@@ -197,6 +197,8 @@ class HubloomRuntime:
         max_think_rounds: int | None = None,
     ) -> AsyncIterator[AgentEvent | RunResult]:
         """按 session 装配 memory/tools，委托 ``agent.run.run_stream``。
+
+        ``trigger``：单条 ``Message``，或表单回传的 ``assistant+tool`` 消息列表。
 
         ``bearer_token``：当前用户鉴权，写入 request context，供 MCP
         ``call_api`` 经 ``get_bearer_token()`` 透传；为空则回退 MCP_TOKEN。

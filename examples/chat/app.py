@@ -30,6 +30,7 @@ from agent.sse import event_to_sse, format_sse, run_started_payload, turn_comple
 from agent.turn_state import (
     answer_parts_need_human,
     default_turn_store,
+    new_tool_call_id,
 )
 from context import clear_request_context
 from core.models import Message, Role
@@ -37,7 +38,7 @@ from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log
 from runtime import HubloomRuntime
 
-from examples.chat.action_format import format_action_trigger
+from examples.chat.action_format import action_to_tool_messages
 from examples.chat.client_headers import ClientHeaderContext, parse_client_headers
 from examples.chat.history import ChatHistoryResponse, messages_for_display
 from examples.chat.schemas import (
@@ -71,17 +72,52 @@ def _sse_interaction_superseded(pending, *, session_id: str, new_run_id: str) ->
     return format_sse(name, payload)
 
 
-def _sse_interaction_waiting(*, session_id: str, run_id: str) -> str:
+def _sse_interaction_waiting(
+    *,
+    session_id: str,
+    run_id: str,
+    tool_call_id: str,
+) -> str:
     name, payload = (
         "CUSTOM",
         {
             "type": "CUSTOM",
             "name": "hubloom.interaction_waiting",
-            "value": {"run_id": run_id, "kind": "a2ui"},
+            "value": {
+                "run_id": run_id,
+                "kind": "a2ui",
+                "tool_call_id": tool_call_id,
+            },
             "session_id": session_id,
         },
     )
     return format_sse(name, payload)
+
+
+def _mark_waiting_a2ui(session_id: str, run_id: str) -> str:
+    """进入人机等待，分配 toolCallId；返回该 id。"""
+    tcid = new_tool_call_id()
+    _turn_store.mark_waiting(
+        session_id,
+        run_id,
+        kind="a2ui",
+        meta={"tool_call_id": tcid},
+    )
+    return tcid
+
+
+def _resolve_action_tool_call_id(
+    pending_meta: dict,
+    action: ChatAction,
+) -> str:
+    expected = str((pending_meta or {}).get("tool_call_id") or "").strip()
+    got = (action.tool_call_id or "").strip()
+    if got and expected and got != expected:
+        raise ValueError(
+            f"tool_call_id 与当前等待中的交互不一致："
+            f"expect={expected!r} got={got!r}"
+        )
+    return got or expected or new_tool_call_id()
 
 _ROOT = Path(__file__).resolve().parents[2]
 _DEFAULT_CONFIG = _ROOT / "config" / "env.yaml"
@@ -223,7 +259,7 @@ async def chat(
 
     if body.action is not None:
         assert body.run_id is not None
-        trigger_text = format_action_trigger(body.action)
+        trigger_text = ""
         trigger_kind = "action"
         action = body.action
         action_run_id = body.run_id
@@ -305,11 +341,12 @@ async def _stream_chat(
     """流式跑一轮。
 
     - ``message``：新用户话；若正 waiting 则 supersede。
-    - ``action``：在锁内 ``resolve_action`` 后开续跑 run。
+    - ``action``：译为 tool 消息对后进 Runtime。
     """
     assert _runtime is not None
     async with _run_lock:
         try:
+            trigger_source = "user"
             if trigger_kind == "action":
                 if action is None or not action_run_id:
                     yield format_sse(
@@ -322,10 +359,16 @@ async def _stream_chat(
                     )
                     return
                 try:
-                    _turn_store.resolve_action(
+                    resolved = _turn_store.resolve_action(
                         session_id,
                         action_run_id,
                         resolution=action.type,
+                    )
+                    tcid = _resolve_action_tool_call_id(resolved.meta, action)
+                    trigger: Message | list[Message] = action_to_tool_messages(
+                        action,
+                        tool_call_id=tcid,
+                        source_run_id=action_run_id,
                     )
                 except ValueError as exc:
                     yield format_sse(
@@ -338,6 +381,7 @@ async def _stream_chat(
                     )
                     return
                 run_id = _turn_store.begin_run(session_id)
+                trigger_source = "action"
             else:
                 superseded = _turn_store.supersede_if_waiting(session_id)
                 run_id = _turn_store.begin_run(session_id)
@@ -345,6 +389,7 @@ async def _stream_chat(
                     yield _sse_interaction_superseded(
                         superseded, session_id=session_id, new_run_id=run_id
                     )
+                trigger = Message(role=Role.USER, content=message)
 
             started_name, started_payload = run_started_payload(
                 session_id=session_id, run_id=run_id
@@ -357,7 +402,6 @@ async def _stream_chat(
                 }
             yield format_sse(started_name, started_payload)
 
-            trigger = Message(role=Role.USER, content=message)
             final: RunResult | None = None
             saw_a2ui = False
             async for item in _runtime.run_stream(
@@ -365,6 +409,7 @@ async def _stream_chat(
                 session_id=session_id,
                 present_mode=present_mode,
                 bearer_token=client_ctx["bearer_token"],
+                trigger_source=trigger_source,
             ):
                 if isinstance(item, RunResult):
                     final = item
@@ -382,9 +427,11 @@ async def _stream_chat(
 
             if final is not None:
                 if saw_a2ui or answer_parts_need_human(final.answer_parts):
-                    _turn_store.mark_waiting(session_id, run_id, kind="a2ui")
+                    tcid = _mark_waiting_a2ui(session_id, run_id)
                     yield _sse_interaction_waiting(
-                        session_id=session_id, run_id=run_id
+                        session_id=session_id,
+                        run_id=run_id,
+                        tool_call_id=tcid,
                     )
                 name, payload = turn_complete_payload(
                     route=final.present_mode,
@@ -425,21 +472,29 @@ async def _run_chat_once(
     assert _runtime is not None
     async with _run_lock:
         try:
+            trigger_source = "user"
             if trigger_kind == "action":
                 if action is None or not action_run_id:
                     raise HTTPException(status_code=400, detail="action 缺少 run_id")
                 try:
-                    _turn_store.resolve_action(
+                    resolved = _turn_store.resolve_action(
                         session_id,
                         action_run_id,
                         resolution=action.type,
                     )
+                    tcid = _resolve_action_tool_call_id(resolved.meta, action)
+                    trigger: Message | list[Message] = action_to_tool_messages(
+                        action,
+                        tool_call_id=tcid,
+                        source_run_id=action_run_id,
+                    )
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail=str(exc)) from exc
+                trigger_source = "action"
             else:
                 _turn_store.supersede_if_waiting(session_id)
+                trigger = Message(role=Role.USER, content=message)
             run_id = _turn_store.begin_run(session_id)
-            trigger = Message(role=Role.USER, content=message)
             final: RunResult | None = None
             saw_a2ui = False
             async for item in _runtime.run_stream(
@@ -447,6 +502,7 @@ async def _run_chat_once(
                 session_id=session_id,
                 present_mode=present_mode,
                 bearer_token=client_ctx["bearer_token"],
+                trigger_source=trigger_source,
             ):
                 if isinstance(item, RunResult):
                     final = item
@@ -457,7 +513,7 @@ async def _run_chat_once(
             if final is not None and (
                 saw_a2ui or answer_parts_need_human(final.answer_parts)
             ):
-                _turn_store.mark_waiting(session_id, run_id, kind="a2ui")
+                _mark_waiting_a2ui(session_id, run_id)
         finally:
             clear_request_context()
 

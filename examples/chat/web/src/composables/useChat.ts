@@ -165,6 +165,8 @@ export function useChat() {
   const currentRunId = ref<string | null>(null);
   /** 服务端 waiting 中的表单 run_id（提交 action 须带此值） */
   const waitingRunId = ref<string | null>(null);
+  /** waiting 时下发的 toolCallId */
+  const waitingToolCallId = ref<string | null>(null);
   /** 递增：interaction_superseded 时通知面板关闭 */
   const interactionEpoch = ref(0);
 
@@ -201,6 +203,7 @@ export function useChat() {
     agentPhase.value = null;
     currentRunId.value = null;
     waitingRunId.value = null;
+    waitingToolCallId.value = null;
     persist();
     status.value = ready.value ? "就绪" : "请填写用户 ID";
   }
@@ -328,11 +331,16 @@ export function useChat() {
       if (name === "hubloom.interaction_waiting") {
         const rid = String(value.run_id || value.runId || "").trim();
         if (rid) waitingRunId.value = rid;
+        const tcid = String(
+          value.tool_call_id || value.toolCallId || "",
+        ).trim();
+        waitingToolCallId.value = tcid || null;
         return;
       }
 
       if (name === "hubloom.interaction_superseded") {
         waitingRunId.value = null;
+        waitingToolCallId.value = null;
         interactionEpoch.value += 1;
         return;
       }
@@ -605,13 +613,18 @@ export function useChat() {
   async function sendAction(
     clientAction: A2uiClientAction,
     runId: string,
+    toolCallId?: string | null,
   ) {
     const rid = runId.trim();
     if (!rid) return;
-    const action: ChatActionPayload = toChatAction(clientAction);
+    const action: ChatActionPayload = toChatAction(
+      clientAction,
+      toolCallId ?? waitingToolCallId.value,
+    );
     const key = normalizeSessionKey(sessionId.value);
     // 乐观清除 waiting，避免双击；失败时由错误气泡体现
     waitingRunId.value = null;
+    waitingToolCallId.value = null;
     await runChatRequest(
       {
         action,
@@ -638,6 +651,7 @@ export function useChat() {
     mcpDetail,
     currentRunId,
     waitingRunId,
+    waitingToolCallId,
     interactionEpoch,
     ready,
     persist,

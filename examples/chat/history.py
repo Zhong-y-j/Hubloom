@@ -86,13 +86,28 @@ def _coerce_answer_parts(raw: Any) -> list[dict[str, Any]] | None:
 
 def messages_for_display(rows: list[dict[str, str]]) -> list[HistoryMessage]:
     """过滤并清洗消息，供前端展示（含思考过程 / A2UI metadata）。"""
+    from examples.chat.action_format import A2UI_ACTION_TOOL_NAME
+
     out: list[HistoryMessage] = []
     for row in rows:
         role = row.get("role", "")
-        if role not in ("user", "assistant"):
-            continue
         content = (row.get("content") or "").strip()
         meta = _parse_metadata(row.get("metadata_json"))
+
+        # 表单回传：tool(hubloom.a2ui_action) → 用户侧摘要气泡
+        if role == "tool" and (row.get("name") or "").strip() == A2UI_ACTION_TOOL_NAME:
+            if content:
+                out.append(
+                    HistoryMessage(
+                        role="user",
+                        content=content,
+                        created_at=row.get("created_at"),
+                    )
+                )
+            continue
+
+        if role not in ("user", "assistant"):
+            continue
         if role == "assistant" and not _is_display_assistant(meta):
             continue
         thought = (meta.get("thought") or "").strip() or None

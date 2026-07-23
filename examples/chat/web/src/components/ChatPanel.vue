@@ -20,6 +20,7 @@ const {
   mcpReady,
   mcpDetail,
   waitingRunId,
+  waitingToolCallId,
   interactionEpoch,
   ready,
   persist,
@@ -261,7 +262,7 @@ async function onA2uiAction(action: A2uiClientAction) {
   retireA2uiPanel();
   const rid = (waitingRunId.value || "").trim();
   if (rid) {
-    await sendAction(action, rid);
+    await sendAction(action, rid, waitingToolCallId.value);
     return;
   }
   // 刷新后无 waiting 态：兜底走合成消息（新 run）

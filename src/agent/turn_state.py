@@ -1,4 +1,4 @@
-"""本轮 run / 人机等待态（P0）：表单提交须绑定 run_id；新消息可覆盖等待中的表单。
+"""本轮 run / 人机等待态：表单提交须绑定 run_id；新消息可覆盖等待中的表单。
 
 约定见 ``docs/Hubloom-回合交互契约.md``。
 """
@@ -20,6 +20,11 @@ Resolution = Literal[
 
 def new_run_id() -> str:
     return f"run-{uuid.uuid4().hex[:12]}"
+
+
+def new_tool_call_id() -> str:
+    """人机表单对应的虚拟 toolCallId（对齐 AG-UI）。"""
+    return f"tc-{uuid.uuid4().hex[:12]}"
 
 
 @dataclass
@@ -128,7 +133,7 @@ class TurnStateStore:
         *,
         resolution: Literal["submit", "cancel"],
     ) -> PendingInteraction:
-        """校验通过后结束 waiting（P1 入站 action 时调用）。"""
+        """校验通过后结束 waiting（入站 action 时调用）。"""
         with self._lock:
             cur = self.validate_action(session_id, run_id)
             cur.status = resolution

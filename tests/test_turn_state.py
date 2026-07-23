@@ -1,4 +1,4 @@
-"""P0：TurnStateStore 回合 / 人机等待规则。"""
+"""TurnStateStore 回合 / 人机等待规则。"""
 
 from __future__ import annotations
 

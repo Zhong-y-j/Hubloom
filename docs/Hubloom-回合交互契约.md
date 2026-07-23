@@ -11,7 +11,7 @@
 
 出站：`RUN_STARTED` / `RUN_FINISHED` 携带 `runId`（见 `agui_sse`）。  
 人机等待中：进程内 `TurnStateStore` 按 session 保存至多一个 `waiting`。  
-等待时额外推送 `CUSTOM name=hubloom.interaction_waiting`（`value.run_id`）。
+等待时额外推送 `CUSTOM name=hubloom.interaction_waiting`（`value.run_id`、`value.tool_call_id`）。
 
 ## 入站：`POST /v1/chat`
 
@@ -29,12 +29,15 @@
   "type": "submit",
   "name": "confirm_add_community",
   "payload": { "name": "阳光花园" },
+  "tool_call_id": "tc-…",
   "surface_id": optional,
   "source_component_id": optional
 }
 ```
 
-服务端在锁内 `resolve_action` 后开**新** `run_id` 续跑 Agent；触发正文为结构化文案（含 `[A2UI:name]`，标明非闲聊），**不再**把表单伪造成普通用户气泡文本由前端拼接发送（有 `waitingRunId` 时）。
+服务端在锁内 `resolve_action` 后，将 `action` **译为** `assistant(tool_calls)+tool`（`toolCallId` / `hubloom.a2ui_action`）再进 Runtime；触发正文含 `[A2UI:name]` 且标明非闲聊。前端有 `waitingRunId` 时走结构化提交，不再合成假用户闲聊。
+
+`tool_call_id` 可选带回；若与 waiting 时下发的不一致则拒绝。
 
 ## 两种完成「添加」等任务的路径
 
@@ -65,5 +68,5 @@
 
 ## 后续
 
-- 对齐 AG-UI：`action` 译为 `role: tool` + `toolCallId` 再进 Runtime。  
+- 出表单前先发真实 `TOOL_CALL_*`，回传天然带同一 `toolCallId`（完全客户端 tool 模型）。  
 - 文档中旧 `event: text_delta` 表以 `agui_sse` 为准；前端已按 `data.type` 解析。

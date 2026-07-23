@@ -22,6 +22,10 @@ class ChatAction(BaseModel):
     )
     surface_id: str | None = None
     source_component_id: str | None = None
+    tool_call_id: str | None = Field(
+        default=None,
+        description="与 waiting 时下发的 toolCallId 一致（可选，有则校验）",
+    )
 
 
 class ChatRequest(BaseModel):
