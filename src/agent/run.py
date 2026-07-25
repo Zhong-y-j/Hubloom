@@ -316,6 +316,7 @@ async def run_stream(
                 decision.tool_calls,
                 runner,
                 think_content=decision.content,
+                reasoning_content=decision.reasoning_content,
             ):
                 if isinstance(item, ToolCallEvent):
                     tool_calls += 1
@@ -366,6 +367,8 @@ async def run_stream(
                 meta: dict[str, Any] | None = None
                 if msg.role == Role.ASSISTANT and msg.tool_calls:
                     meta = {"display": False}
+                    if msg.reasoning_content:
+                        meta["reasoning_content"] = msg.reasoning_content
                 await _remember(memory, msg, source="agent", metadata=meta)
                 turn_messages.append(msg)
             continue

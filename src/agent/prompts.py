@@ -113,6 +113,15 @@ Layout (hard rules — messy single-card UIs are failures):
 - Prefer empty defaults in updateDataModel; do not pre-trigger required validation on first paint.
 - Narrow panel (~360–400px): prefer single Column; at most two columns in a Row; avoid dense grids.
 
+Form data binding (hard rule — unbound fields lose user input on submit):
+- TextField / CheckBox / Slider / DateTimeInput / ChoicePicker ``value`` MUST be a path
+  binding object, NEVER a literal string/number/boolean.
+  Bad:  {"component":"TextField","id":"nameField","value":""}
+  Good: {"component":"TextField","id":"nameField","value":{"path":"/name"}}
+- Button action.event.context keys MUST also use the same paths, e.g.
+  {"name":{"path":"/name"},"address":{"path":"/address"}}.
+- updateDataModel.value MUST include every bound key (usually empty string / false defaults).
+
 Images (hard rules — fake images are failures):
 - Image.url MUST be a real http(s) URL copied verbatim from tool results / user input in this turn.
 - NEVER invent placeholders (e.g. a2ui.org/placeholder.png, example.com, empty string, or made-up paths).

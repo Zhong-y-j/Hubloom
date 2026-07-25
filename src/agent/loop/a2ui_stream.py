@@ -11,6 +11,7 @@ from a2ui.parser.payload_fixer import parse_and_fix
 from a2ui.schema.constants import A2UI_CLOSE_TAG, A2UI_OPEN_TAG
 
 from agent.agent_log import agent_trace
+from agent.loop.a2ui_bind import bind_editable_field_paths
 
 EmitKind = Literal["text", "a2ui"]
 
@@ -105,10 +106,12 @@ def parse_a2ui_json_block(inner: str, *, stage: str = "block") -> list[dict[str,
         dump_a2ui_parse_failure(raw=cleaned, error=cause, stage=stage)
         raise
     if isinstance(data, list):
-        return [m for m in data if isinstance(m, dict)]
-    if isinstance(data, dict):
-        return [data]
-    return []
+        msgs = [m for m in data if isinstance(m, dict)]
+    elif isinstance(data, dict):
+        msgs = [data]
+    else:
+        return []
+    return bind_editable_field_paths(msgs)
 
 
 def _suffix_is_open_prefix(buf: str) -> int:

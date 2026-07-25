@@ -367,6 +367,9 @@ class LLM(LLMProvider):
                 msg_dict["tool_call_id"] = msg.tool_call_id
             if msg.name:
                 msg_dict["name"] = msg.name
+            # DeepSeek：tool_calls 轮次的 reasoning_content 必须回传
+            if msg.reasoning_content is not None:
+                msg_dict["reasoning_content"] = msg.reasoning_content
             converted.append(msg_dict)
         return converted
 

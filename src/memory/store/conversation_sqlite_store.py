@@ -106,6 +106,10 @@ class ConversationSQLitesStore:
             else json.dumps(message.content, ensure_ascii=False)
         )
 
+        meta = dict(metadata or {})
+        if message.reasoning_content is not None:
+            meta.setdefault("reasoning_content", message.reasoning_content)
+
         self.conn.execute(
             """
             INSERT INTO conversation_memory
@@ -121,7 +125,7 @@ class ConversationSQLitesStore:
                 tool_calls_json,
                 message.tool_call_id,
                 message.name,
-                json.dumps(metadata or {}, ensure_ascii=False),
+                json.dumps(meta, ensure_ascii=False),
                 source,
                 token_count,
                 turn_index,
@@ -361,10 +365,26 @@ class ConversationSQLitesStore:
             tool_calls=tool_calls,
             tool_call_id=row["tool_call_id"],
             name=row["name"],
+            reasoning_content=_reasoning_from_metadata(row["metadata_json"]),
         )
 
     def close(self) -> None:
         self.conn.close()
+
+
+def _reasoning_from_metadata(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    text = data.get("reasoning_content")
+    if text is None:
+        return None
+    return str(text)
 
 
 if __name__ == "__main__":

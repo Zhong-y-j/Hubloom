@@ -114,6 +114,8 @@ class Message:
     tool_calls: Optional[list[ToolCall]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
+    # DeepSeek thinking 模式：含 tool_calls 的 assistant 须在后续请求回传
+    reasoning_content: Optional[str] = None
 
 
 @dataclass

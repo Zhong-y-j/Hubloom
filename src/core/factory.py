@@ -6,11 +6,16 @@ from .provider import LLMProvider
 
 
 def _with_thinking_params(params: dict | None, *, enable_thinking: bool) -> dict:
+    """DeepSeek v4 等默认 thinking=enabled；未开启时须显式 disabled，否则工具轮次回传会 400。"""
     merged = dict(params or {})
-    if not enable_thinking:
-        return merged
     extra = dict(merged.get("extra_body") or {})
-    extra.setdefault("enable_thinking", True)
+    if enable_thinking:
+        extra.setdefault("thinking", {"type": "enabled"})
+        extra.setdefault("enable_thinking", True)
+    else:
+        # 显式关闭（覆盖模型默认开启）
+        extra["thinking"] = {"type": "disabled"}
+        extra.pop("enable_thinking", None)
     merged["extra_body"] = extra
     return merged
 

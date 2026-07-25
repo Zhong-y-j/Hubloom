@@ -31,6 +31,8 @@ class ThinkDecision:
 
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+    # DeepSeek thinking：含 tool_calls 时须写入 assistant.reasoning_content 并回传
+    reasoning_content: str = ""
 
     @property
     def should_execute(self) -> bool:
@@ -69,6 +71,7 @@ async def think(
     )
 
     content_parts: list[str] = []
+    reasoning_parts: list[str] = []
     tool_calls: list[ToolCall] = []
     stop: StopReason | None = None
 
@@ -78,7 +81,7 @@ async def think(
     ):
         if isinstance(ev, ReasoningDeltaEvent):
             if ev.delta:
-                content_parts.append(ev.delta)
+                reasoning_parts.append(ev.delta)
                 yield ThoughtDeltaEvent(phase="think", delta=ev.delta)
         elif isinstance(ev, DeltaEvent):
             if ev.delta:
@@ -87,7 +90,10 @@ async def think(
         elif isinstance(ev, StreamErrorEvent):
             agent_trace("think llm error", error=str(ev.error)[:200])
             yield ErrorEvent(error=str(ev.error))
-            yield ThinkDecision(content="".join(content_parts).strip())
+            yield ThinkDecision(
+                content="".join(content_parts).strip(),
+                reasoning_content="".join(reasoning_parts).strip(),
+            )
             return
         elif isinstance(ev, StreamEndEvent):
             stop = ev.output.stop_reason
@@ -95,24 +101,29 @@ async def think(
             if not content_parts and ev.output.content:
                 content_parts.append(ev.output.content)
                 yield ThoughtDeltaEvent(phase="think", delta=ev.output.content)
-            if not content_parts and getattr(ev.output, "thinking", None):
-                thinking = str(ev.output.thinking or "")
-                if thinking:
-                    content_parts.append(thinking)
-                    yield ThoughtDeltaEvent(phase="think", delta=thinking)
+            thinking = str(getattr(ev.output, "thinking", None) or "").strip()
+            if thinking and not reasoning_parts:
+                reasoning_parts.append(thinking)
+                yield ThoughtDeltaEvent(phase="think", delta=thinking)
             break
 
     cleaned = "".join(content_parts).strip()
+    reasoning = "".join(reasoning_parts).strip()
     if stop == StopReason.TOOL_CALLS and tool_calls:
         agent_trace(
             "think llm done",
             route="execute",
             stop=stop.value if stop else None,
             content_len=len(cleaned),
+            reasoning_len=len(reasoning),
             tool_calls=len(tool_calls),
             tools=",".join(tc.name for tc in tool_calls),
         )
-        yield ThinkDecision(content=cleaned, tool_calls=tool_calls)
+        yield ThinkDecision(
+            content=cleaned,
+            tool_calls=tool_calls,
+            reasoning_content=reasoning,
+        )
     else:
         agent_trace(
             "think llm done",
@@ -121,4 +132,8 @@ async def think(
             content_len=len(cleaned),
             tool_calls=0,
         )
-        yield ThinkDecision(content=cleaned, tool_calls=[])
+        yield ThinkDecision(
+            content=cleaned,
+            tool_calls=[],
+            reasoning_content=reasoning,
+        )

@@ -8,6 +8,7 @@ import { MessageProcessor } from "@a2ui/web_core/v0_9";
 import { basicCatalog } from "@a2ui/lit/v0_9";
 import type { A2uiMessage } from "@/types/a2ui";
 import type { A2uiClientAction } from "@/utils/a2uiAction";
+import { bindEditableFieldPaths } from "@/utils/a2uiBind";
 import A2uiSurfaceHost from "@/components/A2uiSurfaceHost.vue";
 
 const props = defineProps<{
@@ -51,18 +52,49 @@ function asClientAction(raw: unknown): A2uiClientAction | null {
 }
 
 function enrichContext(action: A2uiClientAction): A2uiClientAction {
-  const ctx = action.context || {};
-  if (Object.keys(ctx).length > 0) return action;
+  const ctx = { ...(action.context || {}) };
   const root =
     surfaceModel?.dataModel?.get("/") ?? surfaceModel?.dataModel?.get("");
-  if (root && typeof root === "object" && !Array.isArray(root)) {
-    return { ...action, context: { ...(root as Record<string, unknown>) } };
+  const rootObj =
+    root && typeof root === "object" && !Array.isArray(root)
+      ? (root as Record<string, unknown>)
+      : null;
+
+  const resolved: Record<string, unknown> = { ...ctx };
+  for (const [key, value] of Object.entries(resolved)) {
+    if (value && typeof value === "object" && "path" in (value as object)) {
+      const path = String((value as { path: unknown }).path || "");
+      if (path && surfaceModel?.dataModel?.get) {
+        resolved[key] = surfaceModel.dataModel.get(path);
+      }
+    }
   }
-  return action;
+  if (rootObj) {
+    for (const [key, value] of Object.entries(rootObj)) {
+      const cur = resolved[key];
+      if (cur === undefined || cur === null || cur === "") {
+        resolved[key] = value;
+      }
+    }
+    if (Object.keys(resolved).length === 0) {
+      return { ...action, context: { ...rootObj } };
+    }
+  }
+  return { ...action, context: resolved };
+}
+
+/** A2UI 消息是纯 JSON；用 JSON 拷贝避开 Vue Proxy（structuredClone 会报 can not be cloned）。 */
+function cloneA2uiMessages(messages: A2uiMessage[]): A2uiMessage[] {
+  try {
+    return JSON.parse(JSON.stringify(messages || [])) as A2uiMessage[];
+  } catch {
+    return [...(messages || [])];
+  }
 }
 
 function patchCatalog(messages: A2uiMessage[]): A2uiMessage[] {
-  return messages.map((m) => {
+  const patched = bindEditableFieldPaths(cloneA2uiMessages(messages));
+  return patched.map((m) => {
     if ("createSurface" in m && m.createSurface) {
       return {
         ...m,

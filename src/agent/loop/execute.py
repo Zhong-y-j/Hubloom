@@ -29,6 +29,7 @@ async def execute(
     runner: ToolRunner,
     *,
     think_content: str = "",
+    reasoning_content: str = "",
 ) -> AsyncIterator[AgentEvent | ExecuteResult]:
     """按序执行 tool_calls。
 
@@ -45,6 +46,7 @@ async def execute(
         role=Role.ASSISTANT,
         content=think_content or "",
         tool_calls=list(tool_calls),
+        reasoning_content=(reasoning_content or None),
     )
     out_messages: list[Message] = [assistant]
     results: list[tuple[ToolCall, str, bool]] = []
