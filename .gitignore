@@ -60,3 +60,5 @@ src/logs/
 !/skills/account-access/**
 !/skills/select-before-act/
 !/skills/select-before-act/**
+!/skills/events/
+!/skills/events/**

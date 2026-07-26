@@ -132,6 +132,14 @@ class HubloomConfig:
     # skills：默认注入 skills_dir 下全部 SKILL.md；skills_exclude 为目录名黑名单
     skills_dir: str | None = "skills"
     skills_exclude: list[str] = field(default_factory=list)
+
+    # events：业务推送入站（POST /v1/events）
+    events_enable: bool = False
+    events_shared_secret: str | None = None
+    events_result_callback_url: str | None = None
+    events_default_bearer_token: str | None = None
+    events_catalog: dict[str, Any] = field(default_factory=dict)
+
     source_path: str | None = field(default=None, repr=False)
 
     @classmethod
@@ -166,10 +174,20 @@ class HubloomConfig:
         neo4j = _section(data, "neo4j")
         mcp = _section(data, "mcp")
         a2a = _section(data, "a2a")
+        events = _section(data, "events")
 
         enable_mcp = _as_bool(mcp.get("enable"))
         if enable_mcp is None:
             enable_mcp = True
+
+        events_enable = _as_bool(events.get("enable"))
+        if events_enable is None:
+            events_enable = False
+
+        catalog_raw = events.get("catalog")
+        events_catalog: dict[str, Any] = (
+            dict(catalog_raw) if isinstance(catalog_raw, dict) else {}
+        )
 
         skills_dir = _clean(data.get("skills_dir")) or "skills"
 
@@ -212,5 +230,10 @@ class HubloomConfig:
             neo4j_skip_dns_check=_as_bool(neo4j.get("skip_dns_check")),
             skills_dir=skills_dir,
             skills_exclude=_as_str_list(data.get("skills_exclude")),
+            events_enable=events_enable,
+            events_shared_secret=_clean(events.get("shared_secret")),
+            events_result_callback_url=_clean(events.get("result_callback_url")),
+            events_default_bearer_token=_clean(events.get("default_bearer_token")),
+            events_catalog=events_catalog,
             source_path=str(cfg_path.resolve()),
         )

@@ -505,7 +505,14 @@ onMounted(async () => {
           </div>
 
           <template v-for="m in messages" :key="m.id">
-            <div v-if="m.role === 'user'" class="msg user">{{ m.content }}</div>
+            <div
+              v-if="m.role === 'user'"
+              class="msg user"
+              :class="{ 'msg-event': m.source === 'event' }"
+            >
+              <span v-if="m.source === 'event'" class="event-tag">事件</span>
+              {{ m.content }}
+            </div>
             <div
               v-else
               class="msg assistant turn"

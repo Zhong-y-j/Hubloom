@@ -258,6 +258,7 @@ export function useChat() {
             : undefined,
         answerParts: coerceAnswerParts(m.answer_parts),
         a2uiProse: a2uiProseFromParts(coerceAnswerParts(m.answer_parts)),
+        source: m.source || undefined,
       }));
       status.value = rows.length ? `已加载 ${rows.length} 条历史` : "就绪";
     } catch {

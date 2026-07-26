@@ -35,6 +35,8 @@ export type ChatMessage = {
   answerParts?: AnswerPart[];
   streaming?: boolean;
   error?: boolean;
+  /** conversation source：user / event / action … */
+  source?: string;
 };
 
 export type HistoryMessage = {
@@ -47,4 +49,5 @@ export type HistoryMessage = {
   a2ui?: import("@/types/a2ui").A2uiMessage[] | null;
   answer_parts?: AnswerPart[] | null;
   created_at?: string | null;
+  source?: string | null;
 };

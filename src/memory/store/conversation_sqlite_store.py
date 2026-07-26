@@ -274,7 +274,7 @@ class ConversationSQLitesStore:
         """
         rows = self.conn.execute(
             """
-            SELECT role, content, created_at, metadata_json, name
+            SELECT role, content, created_at, metadata_json, name, source
             FROM conversation_memory
             WHERE session_id = ?
               AND role IN ('user', 'assistant', 'tool')
@@ -290,6 +290,7 @@ class ConversationSQLitesStore:
                 "created_at": row["created_at"],
                 "metadata_json": row["metadata_json"] or "{}",
                 "name": row["name"] or "",
+                "source": row["source"] or "",
             }
             for row in rows
         ]

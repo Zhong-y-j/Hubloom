@@ -23,6 +23,8 @@ class HistoryMessage(BaseModel):
     # 正文与 A2UI 交错段；旧记录无此字段时前端回退为 content → a2ui
     answer_parts: list[dict[str, Any]] | None = None
     created_at: str | None = None
+    # conversation_memory.source：user / event / action / agent …
+    source: str | None = None
 
 
 class ChatHistoryResponse(BaseModel):
@@ -102,6 +104,7 @@ def messages_for_display(rows: list[dict[str, str]]) -> list[HistoryMessage]:
                         role="user",
                         content=content,
                         created_at=row.get("created_at"),
+                        source="action",
                     )
                 )
             continue
@@ -114,6 +117,7 @@ def messages_for_display(rows: list[dict[str, str]]) -> list[HistoryMessage]:
         route = (meta.get("route") or "").strip() or None
         a2ui = _coerce_a2ui(meta.get("a2ui"))
         answer_parts = _coerce_answer_parts(meta.get("answer_parts"))
+        source = (row.get("source") or "").strip() or None
         tools_raw = meta.get("tools") or []
         tools: list[ToolHistoryItem] = []
         if isinstance(tools_raw, list):
@@ -149,6 +153,7 @@ def messages_for_display(rows: list[dict[str, str]]) -> list[HistoryMessage]:
                 a2ui=a2ui,
                 answer_parts=answer_parts,
                 created_at=row.get("created_at"),
+                source=source,
             )
         )
     return out

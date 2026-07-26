@@ -27,11 +27,25 @@ skills/
   <skill-id>/
     SKILL.md                # 必填：YAML frontmatter + Markdown 正文
     scripts/                # 可选：附带脚本（当前 Runtime 不会自动执行）
+  events/                   # 事件总册（合法单 Skill：id=events）
+    SKILL.md                # 总则 + 分册索引（注入名片 / read_skill）
+    locker-created.md       # 分册：frontmatter.event = locker.created
+    locker-offline.md
+    order-refund.md
 ```
 
 - **目录名** = Skill **id**（`read_skill` 推荐用这个，如 `account-access`）
 - frontmatter **name** 可与 id 不同；解析时 **id 优先，其次 name**
 - 以 `.` 开头的目录会被忽略
+- **不要**写成 `skills/events/locker-created/SKILL.md`（嵌套不会被 `load_skills` 扫描）
+
+### 事件分册（`skills/events/`）
+
+| 约定 | 说明 |
+|------|------|
+| 真相源 | 除 `SKILL.md` 外带 `event:` 的 `*.md`；`POST /v1/events` 与 `GET /v1/events/types` 据此发现 type |
+| 入站 | Dispatcher 把对应分册正文注入触发消息，减少「未读 skill 就总结」 |
+| 覆盖 | `config` 里 `events.catalog.<type>` 可覆盖 title / playbook / payload_fields |
 
 ## `SKILL.md` 格式
 

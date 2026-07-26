@@ -747,6 +747,25 @@ body {
   color: #1e3a5f;
 }
 
+.msg.user.msg-event {
+  align-self: flex-start;
+  background: var(--info-bg);
+  border-color: #bfdbfe;
+}
+
+.msg.user .event-tag {
+  display: inline-block;
+  margin-right: 0.4rem;
+  padding: 0.05rem 0.35rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--info);
+  background: #dbeafe;
+  border-radius: 4px;
+  vertical-align: 0.05em;
+}
+
 .msg.assistant.turn {
   align-self: stretch;
   width: 100%;

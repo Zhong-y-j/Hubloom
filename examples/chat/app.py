@@ -3,6 +3,8 @@
 接口：
 - ``POST /v1/chat`` — SSE / 非流式对话
 - ``GET  /v1/chat/history`` — 会话历史
+- ``POST /v1/events`` — 业务事件入站（需配置 events.enable）
+- ``GET  /v1/events/types`` — 支持的事件类型（扫 skills/events）
 - ``GET  /v1/mcp/status`` — MCP 就绪状态
 - ``GET  /health``
 
@@ -15,11 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import os
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -41,6 +45,8 @@ from agent.turn_state import (
 )
 from context import clear_request_context
 from core.models import Message, Role
+from events import EventDispatcher, normalize_event
+from events.catalog import EventCatalog, resolve_events_skill_dir
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log
 from runtime import HubloomRuntime
@@ -52,10 +58,12 @@ from examples.chat.schemas import (
     ChatAction,
     ChatRequest,
     ChatResponse,
+    EventIngestResponse,
     McpStatusResponse,
 )
 
 _runtime: HubloomRuntime | None = None
+_dispatcher: EventDispatcher | None = None
 _run_lock = asyncio.Lock()
 _turn_store = default_turn_store
 
@@ -159,7 +167,7 @@ def _normalize_present_mode(raw: str | None, default: PresentMode) -> PresentMod
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    global _runtime
+    global _runtime, _dispatcher
     # 写入 logs/debug.log（默认不刷控制台，避免与 uvicorn access 叠两份）
     setup_log()
     cfg_path = _config_path()
@@ -172,17 +180,33 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         cfg_path,
         default_present_mode=present,  # type: ignore[arg-type]
     )
+    events_dir = resolve_events_skill_dir(
+        skills_dir=_runtime.cfg.skills_dir,
+        source_path=_runtime.cfg.source_path,
+    )
+    catalog = EventCatalog.load(
+        events_dir=events_dir,
+        config_catalog=_runtime.cfg.events_catalog,
+    )
+    _dispatcher = EventDispatcher(
+        catalog=catalog,
+        result_callback_url=_runtime.cfg.events_result_callback_url,
+        default_bearer_token=_runtime.cfg.events_default_bearer_token,
+        present_mode="markdown",
+    )
+    _dispatcher.bind_runtime(_runtime)
     try:
         yield
     finally:
         if _runtime is not None:
             await _runtime.aclose()
         _runtime = None
+        _dispatcher = None
 
 
 app = FastAPI(
     title="Hubloom Chat",
-    description="示例站：HubloomRuntime + SSE 对话 / 历史",
+    description="示例站：HubloomRuntime + SSE 对话 / 历史 / 事件入站",
     version="0.3.0",
     lifespan=lifespan,
 )
@@ -199,6 +223,67 @@ app.add_middleware(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def _check_event_secret(header_secret: str | None) -> None:
+    assert _runtime is not None
+    expected = (_runtime.cfg.events_shared_secret or "").strip()
+    if not expected:
+        return
+    got = (header_secret or "").strip()
+    if not got or not secrets.compare_digest(got, expected):
+        raise HTTPException(status_code=401, detail="无效的 X-Event-Secret")
+
+
+@app.get("/v1/events/types")
+async def list_event_types(
+    x_event_secret: str | None = Header(default=None, alias="X-Event-Secret"),
+) -> dict[str, Any]:
+    """列出当前支持的事件类型（来自 ``skills/events/*.md`` 扫描）。"""
+    if _runtime is None or _dispatcher is None:
+        raise HTTPException(status_code=503, detail="运行时尚未初始化")
+    if not _runtime.cfg.events_enable:
+        raise HTTPException(status_code=503, detail="事件入口未启用（events.enable=false）")
+    _check_event_secret(x_event_secret)
+    types = _dispatcher.catalog.list_types()
+    return {
+        "skill_id": "events",
+        "events_dir": _dispatcher.catalog.events_dir,
+        "types": types,
+        "total": len(types),
+    }
+
+
+@app.post("/v1/events", response_model=EventIngestResponse)
+async def ingest_event(
+    request: Request,
+    x_event_secret: str | None = Header(default=None, alias="X-Event-Secret"),
+) -> EventIngestResponse:
+    """业务推送事件：注入分册规程后主动跑一轮 Agent，写入指定 session 历史。"""
+    if _runtime is None or _dispatcher is None:
+        raise HTTPException(status_code=503, detail="运行时尚未初始化")
+    if not _runtime.cfg.events_enable:
+        raise HTTPException(status_code=503, detail="事件入口未启用（events.enable=false）")
+
+    _check_event_secret(x_event_secret)
+
+    try:
+        body: Any = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="请求体须为 JSON object") from exc
+
+    try:
+        event = normalize_event(body if isinstance(body, dict) else {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    async with _run_lock:
+        try:
+            result = await _dispatcher.dispatch(event)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return EventIngestResponse(**result.to_dict())
 
 
 @app.get("/v1/mcp/status", response_model=McpStatusResponse)

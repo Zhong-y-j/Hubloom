@@ -17,6 +17,7 @@
 - **AG-UI 回合交互**：`/v1/chat` 出站对齐 AG-UI 事件；表单等待用 `run_id` / `toolCallId`，提交走结构化 `action`（非假闲聊）
 - **从建议到闭环**：经 MCP 元工具调用真实 REST，把「能说会道」变成「能做完事」
 - **可演进的运营智能**：配置 + Skill 固化领域 Know-how；记忆与 RAG 沉淀上下文；A2A 支撑多智能体协同与自动化闭环
+- **事件驱动入站**：业务 Webhook（`POST /v1/events`）注入 `skills/events` 分册规程后主动跑 Agent，结果写入会话历史
 - **过程可审计**：轨迹、工具链与 SSE 契约可上屏、可复盘，满足落地对透明与可控的要求
 
 ---
@@ -42,6 +43,7 @@
 | [总体架构图](./docs/Hubloom总体架构图.md) | 系统分层与主链路示意                                  |
 | [SSE 契约](./docs/Hubloom-SSE契约.md)     | `/v1/chat` AG-UI 出站事件（`data.type`）               |
 | [回合交互契约](./docs/Hubloom-回合交互契约.md) | run_id、表单等待与结构化 action 回传                 |
+| [事件驱动](./docs/Hubloom-事件驱动.md)    | Webhook 入站、`skills/events` 分册、幂等与类型发现     |
 | [MCP 适配](./docs/Hubloom-MCP适配.md)     | OpenAPI 管线、元工具、Token 透传                      |
 | [A2A 互联](./docs/Hubloom-A2A互联.md)     | 双向 A2A、远程过程上屏                                |
 | [工具层](./docs/Hubloom-工具层.md)        | ToolRegistry、ToolRunner 与内置工具                   |
@@ -113,6 +115,23 @@ curl -s http://127.0.0.1:8010/v1/chat \
 默认 SSE（`"stream": true`）。历史：`GET /v1/chat/history?session_id=demo-session`。  
 呈现模式可在请求或侧栏选择 `auto` / `markdown` / `a2ui`。
 
+**事件入站（需 `events.enable: true`）**
+
+契约与 Skill 分册约定见 **[事件驱动](./docs/Hubloom-事件驱动.md)**。支持的 `type` 由 [`skills/events/`](./skills/events/) 扫描；`GET /v1/events/types` 可查。幂等键是 `event_id`（不是 `session_id`）。
+
+```bash
+# 查看支持的事件类型
+curl -s http://127.0.0.1:8010/v1/events/types \
+  -H "X-Event-Secret: change-me"
+
+# 推送事件（请换真实 deviceId / Token；或用 scripts）
+export HUBLOOM_BEARER_TOKEN='your-business-token'
+export HUBLOOM_SESSION_ID='demo-session'
+./examples/chat/scripts/post_locker_created.sh
+```
+
+结果写入该 `session_id` 历史（刷新对话页可见「事件」标记）。新增事件类型：在 `skills/events/` 增加带 `event:` 的分册 md 后重启即可。
+
 ---
 
 ## 路线图
@@ -128,10 +147,11 @@ curl -s http://127.0.0.1:8010/v1/chat \
 - [x] 多轮会话与工具链感知的历史裁剪
 - [x] 可选长期记忆与 RAG 知识库
 - [x] **A2A 双向 MVP**：入站 Server、出站 `list_agents` / `delegate_task`、远程过程上屏
+- [x] **事件驱动 Webhook MVP**：`POST /v1/events`、`skills/events` 分册注入、幂等与类型发现（见 [事件驱动](./docs/Hubloom-事件驱动.md)）
 
 ### 下一步
 
-- [ ] **事件驱动与主动任务**：监听业务/系统事件（Webhook、消息队列、定时与告警等）触发 Agent 任务，支持 Agent **主动推送**结果与待办，而不只被动应答对话
+- [ ] **事件驱动增强**：消息队列 / 定时告警入站、结果回调完善、打开会话时主动推屏（非仅刷新历史）
 - [ ] **IM / 多端触达**：接入企业微信、钉钉、飞书、Slack 等 IM 与通知通道，把对话、审批与推送延伸到日常工作入口
 - [ ] **自动化运营增强**：在配置 + Skill 之上强化流程编排与无人值守执行，向自主运营与多智能体协同再进一步
 - [ ] **文档对齐**：总体架构图 / ADP 编排文档与 Think–Present–Respond、元工具单轨表述一致

@@ -91,3 +91,16 @@ class McpStatusResponse(BaseModel):
     group_count: int = 0
     tool_count: int = 0
     detail: str = ""
+
+
+class EventIngestResponse(BaseModel):
+    """POST /v1/events 同步响应。"""
+
+    event_id: str
+    session_id: str
+    type: str
+    ok: bool
+    duplicate: bool = False
+    summary: str = ""
+    error: str | None = None
+    turn_count: int = 0
