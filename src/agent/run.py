@@ -23,6 +23,7 @@ from agent.assemble import (
     assemble_present,
     assemble_respond_a2ui,
     assemble_respond_markdown,
+    extract_respond_grounding,
     assemble_think,
     select_think_system,
     turn_has_tool_result,
@@ -207,8 +208,10 @@ async def run_stream(
     if not triggers:
         raise ValueError("trigger 不能为空")
 
-    preview = triggers[-1].content if isinstance(triggers[-1].content, str) else str(
+    preview = (
         triggers[-1].content
+        if isinstance(triggers[-1].content, str)
+        else str(triggers[-1].content)
     )
     agent_trace(
         "run start",
@@ -244,9 +247,7 @@ async def run_stream(
             round=round_i,
             turn_messages=len(turn_messages),
             think_phase=(
-                "after_tools"
-                if turn_has_tool_result(turn_messages)
-                else "before_tools"
+                "after_tools" if turn_has_tool_result(turn_messages) else "before_tools"
             ),
         )
         messages = await assemble_think(
@@ -429,10 +430,12 @@ async def run_stream(
 
             md_messages = None
             a2ui_messages_ctx = None
+            respond_grounding = extract_respond_grounding(turn_messages)
             if plan.run_markdown:
                 md_messages = assemble_respond_markdown(
                     system_prompt=respond_markdown_system,
                     think_content=think_text,
+                    grounding=respond_grounding,
                 )
                 dump_llm_context(
                     phase="respond",
@@ -444,6 +447,7 @@ async def run_stream(
                 a2ui_messages_ctx = assemble_respond_a2ui(
                     system_prompt=respond_a2ui_system,
                     think_content=think_text,
+                    grounding=respond_grounding,
                 )
                 dump_llm_context(
                     phase="respond",
@@ -648,9 +652,7 @@ async def run_stream(
                     a2ui_visible = ""
 
             if plan.run_markdown:
-                stored_content = md_visible or (
-                    "（交互界面）" if a2ui_messages else ""
-                )
+                stored_content = md_visible or ("（交互界面）" if a2ui_messages else "")
             else:
                 stored_content = a2ui_visible or (
                     "（交互界面）" if a2ui_messages else ""

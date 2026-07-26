@@ -51,6 +51,17 @@ def format_action_trigger(action: ChatAction) -> str:
         lines.append(f"surface_id: {action.surface_id}")
     if action.source_component_id:
         lines.append(f"source_component_id: {action.source_component_id}")
+
+    # 给 Think 的硬约束：避免「误触发」叙事与 Respond 另造列表
+    lower = name.lower()
+    lines.append(
+        "说明: 以上为用户真实提交的字段，必须采信；禁止当作误触发或忽略 payload。"
+    )
+    if any(k in lower for k in ("delete", "remove")) or "删除" in name:
+        lines.append(
+            "说明: 若为删除/移除确认，payload 中的目标 ID 即为已确认对象；"
+            "应据此 call_api，不要再编造其它候选项列表。"
+        )
     return "\n".join(lines)
 
 

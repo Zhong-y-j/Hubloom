@@ -38,6 +38,59 @@ def turn_has_tool_result(turn_messages: list[Message] | None) -> bool:
     return any(m.role == Role.TOOL for m in (turn_messages or []))
 
 
+_GROUNDING_HEADER = (
+    "【本轮事实 · 仅可引用下列内容，禁止编造未出现的实体/行/字段】"
+)
+
+
+def extract_respond_grounding(
+    turn_messages: list[Message] | None,
+    *,
+    max_chars: int = 3500,
+) -> str:
+    """从本轮 tool 回传摘录事实，供 Respond 锚定（防幻觉）。
+
+    优先保留 ``hubloom.a2ui_action`` 与较新的 ``call_api`` 结果。
+    """
+    tools: list[Message] = [
+        m for m in (turn_messages or []) if m.role == Role.TOOL and (m.content or "").strip()
+    ]
+    if not tools:
+        return ""
+
+    def _prio(item: tuple[int, Message]) -> tuple[int, int]:
+        idx, m = item
+        name = (m.name or "").strip()
+        # 人机动作最优先；业务 call_api 次之；其余靠后
+        if name == "hubloom.a2ui_action" or "人机动作" in (m.content or ""):
+            bucket = 0
+        elif name == "call_api" or '"tool"' in (m.content or "")[:80]:
+            bucket = 1
+        else:
+            bucket = 2
+        return (bucket, -idx)
+
+    ordered = [m for _, m in sorted(enumerate(tools), key=_prio)]
+    chunks: list[str] = []
+    used = 0
+    for m in ordered:
+        text = (m.content or "").strip()
+        label = (m.name or "tool").strip() or "tool"
+        block = f"({label})\n{text}"
+        if used + len(block) + 2 > max_chars:
+            remain = max_chars - used - 2
+            if remain < 80:
+                break
+            block = block[:remain] + "…"
+            chunks.append(block)
+            break
+        chunks.append(block)
+        used += len(block) + 2
+    if not chunks:
+        return ""
+    return _GROUNDING_HEADER + "\n" + "\n---\n".join(chunks)
+
+
 def build_think_system(
     *,
     skills_dir: Path,
@@ -198,17 +251,27 @@ async def assemble_think(
     return out
 
 
+def _respond_user_body(think_content: str, grounding: str = "") -> str:
+    think = (think_content or "").strip()
+    facts = (grounding or "").strip()
+    if think and facts:
+        return f"{think}\n\n{facts}"
+    return think or facts
+
+
 def assemble_respond_markdown(
     *,
     system_prompt: str,
     think_content: str,
+    grounding: str = "",
 ) -> list[Message]:
-    """Respond(Markdown)：与 A2UI 相同，仅 system + 本轮最后一轮 Think 正文。"""
-    body = (think_content or "").strip()
+    """Respond(Markdown)：system + Think 结论 + 可选本轮 tool/action 事实。"""
+    body = _respond_user_body(think_content, grounding)
     agent_trace(
         "assemble respond",
         present_mode="markdown",
-        think_len=len(body),
+        think_len=len((think_content or "").strip()),
+        grounding_len=len((grounding or "").strip()),
     )
     return [
         Message(role=Role.SYSTEM, content=system_prompt),
@@ -220,13 +283,15 @@ def assemble_respond_a2ui(
     *,
     system_prompt: str,
     think_content: str,
+    grounding: str = "",
 ) -> list[Message]:
-    """Respond(A2UI)：仅官方 system + 本轮最后一轮 Think 正文。"""
-    body = (think_content or "").strip()
+    """Respond(A2UI)：官方 system + Think 结论 + 可选本轮事实。"""
+    body = _respond_user_body(think_content, grounding)
     agent_trace(
         "assemble respond",
         present_mode="a2ui",
-        think_len=len(body),
+        think_len=len((think_content or "").strip()),
+        grounding_len=len((grounding or "").strip()),
         system_len=len(system_prompt or ""),
     )
     return [
