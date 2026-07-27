@@ -1,12 +1,15 @@
 # Hubloom
 
-**Hubloom —— Agentic Runtime：让大模型真正「长进」业务系统，把存量 API 与数据资产升级为可编排、可交互、可自动化、可审计的智能运营能力。**
+如果说 Spring Boot 是后端接口的「地基」，Vue Admin 是后台页面的「脚手架」，那 **Hubloom 就是 AI Agent 时代的基座脚手架**。
 
-> Hubloom 是一套 Agentic Runtime：把 OpenAPI/Swagger 与业务数据接进来，让智能体在真实系统上完成「理解 → 调用工具 → 呈现结果」。说明用 Markdown，办事用 A2UI；扩展靠 **配置与 Skill**，业务逻辑仍留在自有系统。
->
-> 作为 Agent 基座，把工具调用、上下文与会话、结果呈现、鉴权透传和过程可观测打通成一条可运行链路：经 MCP 连接真实 REST，用 Markdown / A2UI 双通道交付结果，并为上层能力留出扩展位——可选记忆、RAG 与 A2A 跨 Agent 协作。在此之上，从对话闭环再走向事件触发任务、Agent 主动推送、IM 多端触达，以及自动化、自主运营与多智能体协同。
+它不是一个独立的聊天机器人，而是一层让**现有业务系统**长出 AI 手脚的胶水：接上你现有的 Swagger/OpenAPI 文档，Agent 就能在真实 API 上完成「理解 → 调工具 → 出结果」。说明用 Markdown，办事用 A2UI（表单 / 表格 / 确认）。**业务逻辑依然留在你的系统里，Hubloom 只做「翻译」和「路由」。**
 
-协议栈上：**MCP** 连接业务 API 与数据，**A2A** 支撑跨 Agent 委托，**A2UI** 生成式界面与 **AG-UI** 标准交互事件（出站 SSE + 表单回传）已就绪；更远期探索 **ANP** 开放互联。
+**你主要做：** 配 LLM 与 Swagger、写 Skill、按需定制前端界面或嵌入门户。  
+**底座替你搞定：** 工具调用（MCP）、SSE 流式回合（AG-UI）、会话记忆、鉴权透传与过程可观测。
+
+交付分两层：**示例站**（`examples/chat`）开箱演示；**Runtime**（`HubloomRuntime` / `/v1/chat` 等）嵌入自有应用。记忆、RAG、A2A、事件 Webhook、企微入口等为可选能力，默认不挡主路径。
+
+协议要点：**MCP** 把 HTTP 变成工具；**A2UI** 负责生成式界面；**AG-UI** 负责前端交互事件。细节见 [docs/](./docs/) 与 [产品定位](./docs/Hubloom产品定位.md)。
 
 ## 特性
 
@@ -37,21 +40,21 @@
 
 示例站（`examples/chat`）负责开箱演示；Runtime（`HubloomRuntime` / `/v1/chat`）负责嵌入门户与自有应用。分层与协议边界见 [docs/](./docs/)：
 
-| 文档                                      | 说明                                                  |
-| ----------------------------------------- | ----------------------------------------------------- |
-| [产品定位](./docs/Hubloom产品定位.md)     | 是什么 / 不是什么、交付形态与主路径                   |
-| [架构边界](./docs/Hubloom架构边界.md)     | MCP / A2A / A2UI / AG-UI 收敛原则与包边界             |
-| [总体架构图](./docs/Hubloom总体架构图.md) | 系统分层与主链路示意                                  |
-| [SSE 契约](./docs/Hubloom-SSE契约.md)     | `/v1/chat` AG-UI 出站事件（`data.type`）               |
-| [回合交互契约](./docs/Hubloom-回合交互契约.md) | run_id、表单等待与结构化 action 回传                 |
-| [事件驱动](./docs/Hubloom-事件驱动.md)    | Webhook 入站、`skills/events` 分册、幂等与类型发现     |
-| [IM 企微](./docs/Hubloom-IM企微.md)       | 自建应用单聊、业务换 Token、异步推送 Markdown           |
-| [MCP 适配](./docs/Hubloom-MCP适配.md)     | OpenAPI 管线、元工具、Token 透传                      |
-| [A2A 互联](./docs/Hubloom-A2A互联.md)     | 双向 A2A、远程过程上屏                                |
-| [工具层](./docs/Hubloom-工具层.md)        | ToolRegistry、ToolRunner 与内置工具                   |
-| [记忆系统](./docs/Hubloom-记忆系统.md)    | 会话 / 长期记忆                                       |
-| [RAG 知识库](./docs/Hubloom-RAG知识库.md) | 文档入库与检索                                        |
-| [ADP 编排](./docs/Hubloom-ADP编排.md)     | 历史双路径说明（文档待与 Think/Present/Respond 对齐） |
+| 文档                                           | 说明                                                  |
+| ---------------------------------------------- | ----------------------------------------------------- |
+| [产品定位](./docs/Hubloom产品定位.md)          | 是什么 / 不是什么、交付形态与主路径                   |
+| [架构边界](./docs/Hubloom架构边界.md)          | MCP / A2A / A2UI / AG-UI 收敛原则与包边界             |
+| [总体架构图](./docs/Hubloom总体架构图.md)      | 系统分层与主链路示意                                  |
+| [SSE 契约](./docs/Hubloom-SSE契约.md)          | `/v1/chat` AG-UI 出站事件（`data.type`）              |
+| [回合交互契约](./docs/Hubloom-回合交互契约.md) | run_id、表单等待与结构化 action 回传                  |
+| [事件驱动](./docs/Hubloom-事件驱动.md)         | Webhook 入站、`skills/events` 分册、幂等与类型发现    |
+| [IM 企微](./docs/Hubloom-IM企微.md)            | 自建应用单聊、业务换 Token、异步推送 Markdown         |
+| [MCP 适配](./docs/Hubloom-MCP适配.md)          | OpenAPI 管线、元工具、Token 透传                      |
+| [A2A 互联](./docs/Hubloom-A2A互联.md)          | 双向 A2A、远程过程上屏                                |
+| [工具层](./docs/Hubloom-工具层.md)             | ToolRegistry、ToolRunner 与内置工具                   |
+| [记忆系统](./docs/Hubloom-记忆系统.md)         | 会话 / 长期记忆                                       |
+| [RAG 知识库](./docs/Hubloom-RAG知识库.md)      | 文档入库与检索                                        |
+| [ADP 编排](./docs/Hubloom-ADP编排.md)          | 历史双路径说明（文档待与 Think/Present/Respond 对齐） |
 
 ---
 
@@ -168,13 +171,13 @@ export HUBLOOM_SESSION_ID='demo-session'
 
 ### 协议栈演进
 
-| 协议      | 角色                               | 状态                                 |
-| --------- | ---------------------------------- | ------------------------------------ |
-| **MCP**   | Agent ↔ 企业 API / 数据            | 已落地                               |
-| **A2A**   | Agent ↔ Agent 委托                 | 双向 MVP                             |
-| **A2UI**  | 声明式生成式 UI（表单等）          | 已落地（经 AG-UI CUSTOM / 面板）     |
+| 协议      | 角色                               | 状态                                  |
+| --------- | ---------------------------------- | ------------------------------------- |
+| **MCP**   | Agent ↔ 企业 API / 数据            | 已落地                                |
+| **A2A**   | Agent ↔ Agent 委托                 | 双向 MVP                              |
+| **A2UI**  | 声明式生成式 UI（表单等）          | 已落地（经 AG-UI CUSTOM / 面板）      |
 | **AG-UI** | Agent ↔ 用户应用的标准交互事件协议 | 已落地（出站 SSE + 表单 action 回传） |
-| **ANP**   | 更开放的 Agent 互联                | 探索中                               |
+| **ANP**   | 更开放的 Agent 互联                | 探索中                                |
 
 > **A2UI ≠ AG-UI**：A2UI 描述「画什么界面」；AG-UI 描述「Agent 与前端如何用标准事件对话」。二者互补，可叠加使用。
 
