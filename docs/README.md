@@ -56,6 +56,7 @@
 | 🔧 会配项目，要接业务 API | [接入 Swagger](usage/import-swagger.md) + [编写 Skill](usage/write-skill.md)        |
 | 🏢 要嵌进现有门户 / App   | [嵌入 Runtime](usage/embed-runtime.md)                                              |
 | 🔍 只想查配置或排错       | [配置项说明](reference/configuration.md) · [FAQ](reference/faq.md)                  |
+| 🧭 要翻源码 / 二开模块    | [模块导读](modules/README.md)                                                       |
 
 ---
 
@@ -86,6 +87,7 @@
 | ------------- | ---------------------------------------- | --------------------------------------------------------------------- |
 | 🪜 入门指南   | 第一天：是什么、安装、跑通、第一个 Skill | [guide/](guide/README.md)                                             |
 | 🧠 核心概念   | 架构与协议（短文 + 图）                  | [core-concepts/](core-concepts/README.md)                             |
+| 🗂️ 模块导读   | 全仓代码地图：Runtime / Agent / MCP…     | [modules/](modules/README.md)                                         |
 | 🔧 使用指南   | 配模型、接 Swagger、写 Skill、定制与嵌入 | [usage/](usage/README.md)                                             |
 | 🚀 进阶功能   | 记忆、RAG、A2A、事件、企微（可选）       | [advanced/](advanced/README.md)                                       |
 | 📚 参考与社区 | API、配置全表、FAQ、贡献与更新日志       | [reference/](reference/README.md) · [community/](community/README.md) |
@@ -104,6 +106,7 @@
 
 ✅ 先 **跑通**（入门 → 快速上手）  
 ✅ 再 **补概念**（核心概念）  
+✅ 要二开 / 跟代码 → **模块导读**  
 ✅ 再按项目需要进 **使用指南**  
 ⏭️ 进阶章**默认跳过**，直到你真的要开长期记忆、事件或企微
 

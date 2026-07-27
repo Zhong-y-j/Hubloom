@@ -15,6 +15,20 @@
   * [AG-UI 协议](core-concepts/ag-ui-protocol.md)
   * [Skill](core-concepts/skill.md)
 
+* 模块导读
+  * [概览](modules/README.md)
+  * [Runtime](modules/runtime.md)
+  * [Agent](modules/agent.md)
+  * [Tools](modules/tools.md)
+  * [MCP Adapter](modules/mcp-adapter.md)
+  * [Skill](modules/skill.md)
+  * [Memory](modules/memory.md)
+  * [Retrieval](modules/retrieval.md)
+  * [Events](modules/events.md)
+  * [企业微信](modules/im-wecom.md)
+  * [A2A Adapter](modules/a2a-adapter.md)
+  * [示例站](modules/examples-chat.md)
+
 * 使用指南
   * [概览](usage/README.md)
   * [配置 LLM](usage/configure-llm.md)
