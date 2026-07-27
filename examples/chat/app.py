@@ -5,6 +5,7 @@
 - ``GET  /v1/chat/history`` — 会话历史
 - ``POST /v1/events`` — 业务事件入站（需配置 events.enable）
 - ``GET  /v1/events/types`` — 支持的事件类型（扫 skills/events）
+- ``GET/POST /v1/im/wecom/callback`` — 企业微信自建应用回调
 - ``GET  /v1/mcp/status`` — MCP 就绪状态
 - ``GET  /health``
 
@@ -23,9 +24,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 
 from agent.events import A2uiMessagesEvent, ErrorEvent
 from agent.loop.respond import PresentMode
@@ -47,6 +48,14 @@ from context import clear_request_context
 from core.models import Message, Role
 from events import EventDispatcher, normalize_event
 from events.catalog import EventCatalog, resolve_events_skill_dir
+from im.wecom.adapter import (
+    WeComAdapterConfig,
+    WeComChatAdapter,
+    run_agent_via_runtime,
+)
+from im.wecom.client import WeComAppClient
+from im.wecom.crypto import WeComCrypto, WeComCryptoError
+from im.wecom.token_resolve import BusinessTokenResolver, TokenResolveConfig
 from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log
 from runtime import HubloomRuntime
@@ -64,8 +73,65 @@ from examples.chat.schemas import (
 
 _runtime: HubloomRuntime | None = None
 _dispatcher: EventDispatcher | None = None
+_wecom_adapter: WeComChatAdapter | None = None
 _run_lock = asyncio.Lock()
 _turn_store = default_turn_store
+
+
+def _build_wecom_adapter(runtime: HubloomRuntime) -> WeComChatAdapter | None:
+    cfg = runtime.cfg
+    if not cfg.wecom_enable:
+        return None
+    resolve_cfg = TokenResolveConfig.from_dict(cfg.wecom_token_resolve)
+    if resolve_cfg is None:
+        raise RuntimeError(
+            "im.wecom.enable=true 时必须配置 im.wecom.token_resolve.url"
+        )
+    if not (
+        cfg.wecom_corp_id
+        and cfg.wecom_corp_secret
+        and cfg.wecom_agent_id is not None
+        and cfg.wecom_token
+        and cfg.wecom_encoding_aes_key
+    ):
+        raise RuntimeError(
+            "im.wecom.enable=true 时须配置 corp_id / corp_secret / "
+            "agent_id / token / encoding_aes_key"
+        )
+    crypto = WeComCrypto(
+        cfg.wecom_token,
+        cfg.wecom_encoding_aes_key,
+        cfg.wecom_corp_id,
+    )
+    client = WeComAppClient(
+        corp_id=cfg.wecom_corp_id,
+        corp_secret=cfg.wecom_corp_secret,
+        agent_id=cfg.wecom_agent_id,
+    )
+
+    async def _run(
+        message: str,
+        *,
+        session_id: str,
+        bearer_token: str,
+    ) -> str:
+        return await run_agent_via_runtime(
+            message,
+            session_id=session_id,
+            bearer_token=bearer_token,
+            runtime=runtime,
+            run_lock=_run_lock,
+        )
+
+    return WeComChatAdapter(
+        crypto=crypto,
+        client=client,
+        token_resolver=BusinessTokenResolver(resolve_cfg),
+        run_agent=_run,
+        config=WeComAdapterConfig(
+            session_prefix=cfg.wecom_session_prefix or "wecom",
+        ),
+    )
 
 
 def _sse_interaction_superseded(pending, *, session_id: str, new_run_id: str) -> str:
@@ -167,7 +233,7 @@ def _normalize_present_mode(raw: str | None, default: PresentMode) -> PresentMod
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    global _runtime, _dispatcher
+    global _runtime, _dispatcher, _wecom_adapter
     # 写入 logs/debug.log（默认不刷控制台，避免与 uvicorn access 叠两份）
     setup_log()
     cfg_path = _config_path()
@@ -195,6 +261,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         present_mode="markdown",
     )
     _dispatcher.bind_runtime(_runtime)
+    _wecom_adapter = _build_wecom_adapter(_runtime)
     try:
         yield
     finally:
@@ -202,11 +269,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await _runtime.aclose()
         _runtime = None
         _dispatcher = None
+        _wecom_adapter = None
 
 
 app = FastAPI(
     title="Hubloom Chat",
-    description="示例站：HubloomRuntime + SSE 对话 / 历史 / 事件入站",
+    description="示例站：HubloomRuntime + SSE 对话 / 历史 / 事件入站 / 企微回调",
     version="0.3.0",
     lifespan=lifespan,
 )
@@ -223,6 +291,81 @@ app.add_middleware(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.post("/v1/dev/wecom-token")
+async def wecom_dev_token(request: Request) -> dict[str, str]:
+    """本地联调：模拟业务「企微 UserId → Bearer」。生产请改 token_resolve.url 指向真实接口。"""
+    if _runtime is None:
+        raise HTTPException(status_code=503, detail="运行时尚未初始化")
+    if not _runtime.cfg.wecom_enable:
+        raise HTTPException(status_code=503, detail="企微入口未启用")
+    token = (_runtime.cfg.wecom_dev_bearer_token or "").strip()
+    if not token:
+        raise HTTPException(
+            status_code=503,
+            detail="未配置 im.wecom.dev_bearer_token（本地 mock 用）",
+        )
+    # 接受任意 JSON body（与 token_resolve body_template 对齐即可）
+    try:
+        await request.json()
+    except Exception:
+        pass
+    return {"accessToken": token}
+
+
+@app.get("/v1/im/wecom/callback")
+async def wecom_callback_verify(
+    msg_signature: str = Query(...),
+    timestamp: str = Query(...),
+    nonce: str = Query(...),
+    echostr: str = Query(...),
+) -> Response:
+    """企微配置回调 URL 时的 GET 验证。"""
+    if _runtime is None:
+        raise HTTPException(status_code=503, detail="运行时尚未初始化")
+    if not _runtime.cfg.wecom_enable or _wecom_adapter is None:
+        raise HTTPException(status_code=503, detail="企微入口未启用（im.wecom.enable=false）")
+    try:
+        plain = _wecom_adapter.verify_url(
+            msg_signature=msg_signature,
+            timestamp=timestamp,
+            nonce=nonce,
+            echostr=echostr,
+        )
+    except WeComCryptoError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return PlainTextResponse(content=plain)
+
+
+@app.post("/v1/im/wecom/callback")
+async def wecom_callback_message(
+    request: Request,
+    msg_signature: str = Query(...),
+    timestamp: str = Query(...),
+    nonce: str = Query(...),
+) -> Response:
+    """接收企微消息：立即空串 200，异步换 Token + 跑 Agent + 主动推送。"""
+    if _runtime is None:
+        raise HTTPException(status_code=503, detail="运行时尚未初始化")
+    if not _runtime.cfg.wecom_enable or _wecom_adapter is None:
+        raise HTTPException(status_code=503, detail="企微入口未启用（im.wecom.enable=false）")
+
+    body = await request.body()
+    try:
+        _, msg = _wecom_adapter.handle_callback_sync_ack(
+            msg_signature=msg_signature,
+            timestamp=timestamp,
+            nonce=nonce,
+            post_data=body,
+        )
+    except WeComCryptoError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if msg is not None:
+        _wecom_adapter.schedule_handle_message(msg)
+    # 企微要求 5 秒内应答；空串表示成功且不做被动回复
+    return Response(content=b"", media_type="text/plain")
 
 
 def _check_event_secret(header_secret: str | None) -> None:

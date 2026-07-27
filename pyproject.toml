@@ -24,6 +24,7 @@ dependencies = [
     "a2ui-agent-sdk>=0.2.4",
     "ag-ui-protocol>=0.1.19",
     "google-adk>=2.5.0",
+    "cryptography>=42.0.0",
 ]
 
 [build-system]

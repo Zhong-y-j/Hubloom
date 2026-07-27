@@ -18,6 +18,7 @@
 - **从建议到闭环**：经 MCP 元工具调用真实 REST，把「能说会道」变成「能做完事」
 - **可演进的运营智能**：配置 + Skill 固化领域 Know-how；记忆与 RAG 沉淀上下文；A2A 支撑多智能体协同与自动化闭环
 - **事件驱动入站**：业务 Webhook（`POST /v1/events`）注入 `skills/events` 分册规程后主动跑 Agent，结果写入会话历史
+- **企微对话入口**：自建应用单聊回调；企微账号经业务接口换 Token 后跑同一 Runtime，Markdown 主动推回
 - **过程可审计**：轨迹、工具链与 SSE 契约可上屏、可复盘，满足落地对透明与可控的要求
 
 ---
@@ -44,6 +45,7 @@
 | [SSE 契约](./docs/Hubloom-SSE契约.md)     | `/v1/chat` AG-UI 出站事件（`data.type`）               |
 | [回合交互契约](./docs/Hubloom-回合交互契约.md) | run_id、表单等待与结构化 action 回传                 |
 | [事件驱动](./docs/Hubloom-事件驱动.md)    | Webhook 入站、`skills/events` 分册、幂等与类型发现     |
+| [IM 企微](./docs/Hubloom-IM企微.md)       | 自建应用单聊、业务换 Token、异步推送 Markdown           |
 | [MCP 适配](./docs/Hubloom-MCP适配.md)     | OpenAPI 管线、元工具、Token 透传                      |
 | [A2A 互联](./docs/Hubloom-A2A互联.md)     | 双向 A2A、远程过程上屏                                |
 | [工具层](./docs/Hubloom-工具层.md)        | ToolRegistry、ToolRunner 与内置工具                   |
@@ -132,6 +134,10 @@ export HUBLOOM_SESSION_ID='demo-session'
 
 结果写入该 `session_id` 历史（刷新对话页可见「事件」标记）。新增事件类型：在 `skills/events/` 增加带 `event:` 的分册 md 后重启即可。
 
+**企业微信对话（需 `im.wecom.enable: true` + `token_resolve`）**
+
+契约见 **[IM 企微](./docs/Hubloom-IM企微.md)**。回调：`https://<公网>/v1/im/wecom/callback`（须 HTTPS）。会话 ID 为 `wecom:{UserId}`，业务 Token 由配置的换票接口按企微账号解析。
+
 ---
 
 ## 路线图
@@ -148,11 +154,12 @@ export HUBLOOM_SESSION_ID='demo-session'
 - [x] 可选长期记忆与 RAG 知识库
 - [x] **A2A 双向 MVP**：入站 Server、出站 `list_agents` / `delegate_task`、远程过程上屏
 - [x] **事件驱动 Webhook MVP**：`POST /v1/events`、`skills/events` 分册注入、幂等与类型发现（见 [事件驱动](./docs/Hubloom-事件驱动.md)）
+- [x] **企微对话入口 MVP**：自建应用回调、业务换 Token、异步 Markdown 推送（见 [IM 企微](./docs/Hubloom-IM企微.md)）
 
 ### 下一步
 
 - [ ] **事件驱动增强**：消息队列 / 定时告警入站、结果回调完善、打开会话时主动推屏（非仅刷新历史）
-- [ ] **IM / 多端触达**：接入企业微信、钉钉、飞书、Slack 等 IM 与通知通道，把对话、审批与推送延伸到日常工作入口
+- [ ] **IM 增强**：事件结果推企微、钉钉 / 飞书 / Slack、企微内表单/卡片
 - [ ] **自动化运营增强**：在配置 + Skill 之上强化流程编排与无人值守执行，向自主运营与多智能体协同再进一步
 - [ ] **文档对齐**：总体架构图 / ADP 编排文档与 Think–Present–Respond、元工具单轨表述一致
 - [ ] **A2A 增强**：链式委托、动态发现、正式凭证 Provider

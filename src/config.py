@@ -140,6 +140,18 @@ class HubloomConfig:
     events_default_bearer_token: str | None = None
     events_catalog: dict[str, Any] = field(default_factory=dict)
 
+    # im.wecom：企业微信自建应用对话入口
+    wecom_enable: bool = False
+    wecom_corp_id: str | None = None
+    wecom_corp_secret: str | None = None
+    wecom_agent_id: int | None = None
+    wecom_token: str | None = None
+    wecom_encoding_aes_key: str | None = None
+    wecom_session_prefix: str = "wecom"
+    wecom_token_resolve: dict[str, Any] = field(default_factory=dict)
+    # 仅本地联调：/v1/dev/wecom-token 返回的业务 Bearer（勿用于生产）
+    wecom_dev_bearer_token: str | None = None
+
     source_path: str | None = field(default=None, repr=False)
 
     @classmethod
@@ -175,6 +187,8 @@ class HubloomConfig:
         mcp = _section(data, "mcp")
         a2a = _section(data, "a2a")
         events = _section(data, "events")
+        im = _section(data, "im")
+        wecom = _section(im, "wecom")
 
         enable_mcp = _as_bool(mcp.get("enable"))
         if enable_mcp is None:
@@ -188,6 +202,18 @@ class HubloomConfig:
         events_catalog: dict[str, Any] = (
             dict(catalog_raw) if isinstance(catalog_raw, dict) else {}
         )
+
+        wecom_enable = _as_bool(wecom.get("enable"))
+        if wecom_enable is None:
+            wecom_enable = False
+
+        token_resolve_raw = wecom.get("token_resolve")
+        wecom_token_resolve: dict[str, Any] = (
+            dict(token_resolve_raw) if isinstance(token_resolve_raw, dict) else {}
+        )
+
+        agent_id = _as_int(wecom.get("agent_id"))
+        session_prefix = _clean(wecom.get("session_prefix")) or "wecom"
 
         skills_dir = _clean(data.get("skills_dir")) or "skills"
 
@@ -235,5 +261,14 @@ class HubloomConfig:
             events_result_callback_url=_clean(events.get("result_callback_url")),
             events_default_bearer_token=_clean(events.get("default_bearer_token")),
             events_catalog=events_catalog,
+            wecom_enable=wecom_enable,
+            wecom_corp_id=_clean(wecom.get("corp_id")),
+            wecom_corp_secret=_clean(wecom.get("corp_secret")),
+            wecom_agent_id=agent_id,
+            wecom_token=_clean(wecom.get("token")),
+            wecom_encoding_aes_key=_clean(wecom.get("encoding_aes_key")),
+            wecom_session_prefix=session_prefix,
+            wecom_token_resolve=wecom_token_resolve,
+            wecom_dev_bearer_token=_clean(wecom.get("dev_bearer_token")),
             source_path=str(cfg_path.resolve()),
         )
