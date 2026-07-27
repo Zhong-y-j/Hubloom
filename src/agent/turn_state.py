@@ -1,6 +1,6 @@
 """本轮 run / 人机等待态：表单提交须绑定 run_id；新消息可覆盖等待中的表单。
 
-约定见 ``docs/Hubloom-回合交互契约.md``。
+约定见 ``docs/core-concepts/ag-ui-protocol.md``（正文待补；表单回合契约将写入该章 / API 参考）。
 """
 
 from __future__ import annotations

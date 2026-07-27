@@ -9,7 +9,7 @@
 
 交付分两层：**示例站**（`examples/chat`）开箱演示；**Runtime**（`HubloomRuntime` / `/v1/chat` 等）嵌入自有应用。记忆、RAG、A2A、事件 Webhook、企微入口等为可选能力，默认不挡主路径。
 
-协议要点：**MCP** 把 HTTP 变成工具；**A2UI** 负责生成式界面；**AG-UI** 负责前端交互事件。细节见 [docs/](./docs/) 与 [产品定位](./docs/Hubloom产品定位.md)。
+协议要点：**MCP** 把 HTTP 变成工具；**A2UI** 负责生成式界面；**AG-UI** 负责前端交互事件。完整手册见 [docs/](./docs/)（Docsify）。
 
 ## 特性
 
@@ -38,23 +38,25 @@
 
 ## 架构文档
 
-示例站（`examples/chat`）负责开箱演示；Runtime（`HubloomRuntime` / `/v1/chat`）负责嵌入门户与自有应用。分层与协议边界见 [docs/](./docs/)：
+示例站（`examples/chat`）负责开箱演示；Runtime（`HubloomRuntime` / `/v1/chat`）负责嵌入门户与自有应用。
 
-| 文档                                           | 说明                                                  |
-| ---------------------------------------------- | ----------------------------------------------------- |
-| [产品定位](./docs/Hubloom产品定位.md)          | 是什么 / 不是什么、交付形态与主路径                   |
-| [架构边界](./docs/Hubloom架构边界.md)          | MCP / A2A / A2UI / AG-UI 收敛原则与包边界             |
-| [总体架构图](./docs/Hubloom总体架构图.md)      | 系统分层与主链路示意                                  |
-| [SSE 契约](./docs/Hubloom-SSE契约.md)          | `/v1/chat` AG-UI 出站事件（`data.type`）              |
-| [回合交互契约](./docs/Hubloom-回合交互契约.md) | run_id、表单等待与结构化 action 回传                  |
-| [事件驱动](./docs/Hubloom-事件驱动.md)         | Webhook 入站、`skills/events` 分册、幂等与类型发现    |
-| [IM 企微](./docs/Hubloom-IM企微.md)            | 自建应用单聊、业务换 Token、异步推送 Markdown         |
-| [MCP 适配](./docs/Hubloom-MCP适配.md)          | OpenAPI 管线、元工具、Token 透传                      |
-| [A2A 互联](./docs/Hubloom-A2A互联.md)          | 双向 A2A、远程过程上屏                                |
-| [工具层](./docs/Hubloom-工具层.md)             | ToolRegistry、ToolRunner 与内置工具                   |
-| [记忆系统](./docs/Hubloom-记忆系统.md)         | 会话 / 长期记忆                                       |
-| [RAG 知识库](./docs/Hubloom-RAG知识库.md)      | 文档入库与检索                                        |
-| [ADP 编排](./docs/Hubloom-ADP编排.md)          | 历史双路径说明（文档待与 Think/Present/Respond 对齐） |
+**本地预览文档站（Docsify，与 Hello-Agents 同类）：**
+
+```bash
+npx --yes serve docs -p 3000
+```
+
+浏览器打开 `http://127.0.0.1:3000`。文档按学习路径组织：
+
+| 部分 | 说明 |
+|------|------|
+| [文档首页](./docs/README.md) | Docsify 入口 |
+| [入门指南](./docs/guide/README.md) | 是什么、安装、快速上手、第一个 Skill |
+| [核心概念](./docs/core-concepts/README.md) | 架构与 MCP / A2UI / AG-UI / Skill |
+| [使用指南](./docs/usage/README.md) | 配 LLM、接 Swagger、写 Skill、定制与嵌入 |
+| [进阶功能](./docs/advanced/README.md) | 记忆、RAG、A2A、事件、企微 |
+| [参考文档](./docs/reference/README.md) | API、配置项、FAQ |
+| [社区](./docs/community/README.md) | 贡献与更新日志 |
 
 ---
 
@@ -122,7 +124,7 @@ curl -s http://127.0.0.1:8010/v1/chat \
 
 **事件入站（需 `events.enable: true`）**
 
-契约与 Skill 分册约定见 **[事件驱动](./docs/Hubloom-事件驱动.md)**。支持的 `type` 由 [`skills/events/`](./skills/events/) 扫描；`GET /v1/events/types` 可查。幂等键是 `event_id`（不是 `session_id`）。
+契约与 Skill 分册约定见 **[事件 Webhook](./docs/advanced/webhook.md)**。支持的 `type` 由 [`skills/events/`](./skills/events/) 扫描；`GET /v1/events/types` 可查。幂等键是 `event_id`（不是 `session_id`）。
 
 ```bash
 # 查看支持的事件类型
@@ -139,7 +141,7 @@ export HUBLOOM_SESSION_ID='demo-session'
 
 **企业微信对话（需 `im.wecom.enable: true` + `token_resolve`）**
 
-契约见 **[IM 企微](./docs/Hubloom-IM企微.md)**。回调：`https://<公网>/v1/im/wecom/callback`（须 HTTPS）。会话 ID 为 `wecom:{UserId}`，业务 Token 由配置的换票接口按企微账号解析。
+契约见 **[企业微信入口](./docs/advanced/wecom-integration.md)**。回调：`https://<公网>/v1/im/wecom/callback`（须 HTTPS）。会话 ID 为 `wecom:{UserId}`，业务 Token 由配置的换票接口按企微账号解析。
 
 ---
 
@@ -151,13 +153,13 @@ export HUBLOOM_SESSION_ID='demo-session'
 - [x] **Think → Present → Respond** 统一编排环
 - [x] **双呈现**：Markdown + A2UI（含 `present_mode=auto`）
 - [x] **[AG-UI](https://docs.ag-ui.com/)** 出站 SSE（`RUN_*` / `TEXT_MESSAGE_*` / `TOOL_CALL_*` / `CUSTOM` 等）与官方 `ag-ui-protocol` 编码
-- [x] **表单回合**：`run_id` 等待态、客户端 `hubloom.a2ui_action`、结构化 `action` 回传（见 [回合交互契约](./docs/Hubloom-回合交互契约.md)）
+- [x] **表单回合**：`run_id` 等待态、客户端 `hubloom.a2ui_action`、结构化 `action` 回传（见 [AG-UI](./docs/core-concepts/ag-ui-protocol.md)）
 - [x] Web 对话页：交互面板、本轮 A2UI 生命周期、AG-UI 事件消费
 - [x] 多轮会话与工具链感知的历史裁剪
 - [x] 可选长期记忆与 RAG 知识库
 - [x] **A2A 双向 MVP**：入站 Server、出站 `list_agents` / `delegate_task`、远程过程上屏
-- [x] **事件驱动 Webhook MVP**：`POST /v1/events`、`skills/events` 分册注入、幂等与类型发现（见 [事件驱动](./docs/Hubloom-事件驱动.md)）
-- [x] **企微对话入口 MVP**：自建应用回调、业务换 Token、异步 Markdown 推送（见 [IM 企微](./docs/Hubloom-IM企微.md)）
+- [x] **事件驱动 Webhook MVP**：`POST /v1/events`、`skills/events` 分册注入、幂等与类型发现（见 [事件 Webhook](./docs/advanced/webhook.md)）
+- [x] **企微对话入口 MVP**：自建应用回调、业务换 Token、异步 Markdown 推送（见 [企业微信入口](./docs/advanced/wecom-integration.md)）
 
 ### 下一步
 
