@@ -1,68 +1,108 @@
 # Retrieval（RAG）
 
-## Retrieval 是什么？
+## Retrieval 介绍
 
-**Retrieval / RAG（检索增强生成）**解决的是：模型上下文里**没有**你的产品手册、制度、内部说明时，回答容易瞎编。做法是：先把外部文档切块、向量化存进知识库；提问时按问题**检索相关片段**，再交给模型结合这些片段作答。
+大模型上下文里**通常没有**你的产品手册、制度条文、内部说明。用户问「Hubloom 是什么」「柜子编号规则写在哪」时，若不加约束，模型容易用通用知识瞎猜，甚至编造。  
+**Retrieval / RAG（检索增强生成）**要解决的，就是先把外部文档切块、向量化放进知识库；提问时按问题**检索相关片段**，再交给模型结合这些片段作答——让回答有据可查，而不是凭空发挥。
 
-一句话：
+可以把它想成：柜台上永远摊着一本《菜单 / 产品手册》。客人问规格，店员先翻到相关页再回答；这和「记得住刚才那通电话说了什么」（会话 Memory）、以及「笔记本上写着常客偏好」（长期 Memory）不是同一件事。实时状态——「A 区 3 号现在空闲吗」——更适合调业务 API，手册未必有此刻数据。
 
-> **RAG 管「文档知识库里有什么、怎么搜出来」；不管聊天记录，也不管业务接口怎么调。**
+和邻近概念的分界：
 
----
+- **会话记忆**：这一条对话线里刚发生过什么
+- **长期记忆**：这个用户名下提炼过的偏好 / 事实（按 session 隔离）
+- **RAG**：共享（或项目级）文档知识库里有什么
+- **MCP / API**：业务系统此刻的状态与操作
 
-## 用例子建立感觉
+一句话：  
+**RAG 管「文档知识库里有什么、怎么搜出来」；不管聊天记录，也不管业务接口怎么调。**
 
-假设用户问：「Hubloom 是什么？」
+在 Hubloom 里，入库大致是「文件 → 转成 Markdown → 按结构切块 → embedding → 写入 Chroma」；提问则是「query →（可选改写）→ embedding → 向量 Top-K → 片段交给模型」。核心类型是 `KnowledgeBase`。模块与 `search_documents` 工具已写好，但当前 `HubloomRuntime` 主路径**尚未默认挂载**——学管线可跑演示脚本；要让在线 Agent 真会搜文档，还需后续装配。
 
-| 做法                        | 会发生什么                                                           |
-| --------------------------- | -------------------------------------------------------------------- |
-| 不靠文档                    | 模型可能用通用知识猜，或编造                                         |
-| 有 RAG                      | 先从 `docs/README.md` 等手册里搜到「基座脚手架」片段，再基于片段回答 |
-| 问「A 区 3 号现在空闲吗？」 | 更适合 **MCP 调业务 API**；手册未必有实时状态                        |
-
-对照 Memory：
-
-| 用户问题                        | 主要靠什么             |
-| ------------------------------- | ---------------------- |
-| 「刚才那个柜子」                | **会话记忆**           |
-| 「我一般先看 A 区」（隔天偏好） | **长期记忆**（若开启） |
-| 「产品手册里柜子编号规则」      | **RAG**                |
-| 「现在帮我占用 3 号」           | **MCP / API**          |
+读完上面，你应能分清 RAG 与 Memory / API、以及「先检索再生成」在解决什么问题。下一节讲设计取舍；再往后是动手与实现地图。
 
 ---
 
-## 在 Hubloom 里怎么落地？
+## 设计思路
 
-### 管线（入库 → 检索）
+介绍里说的是「要解决什么」。这一节说的是：**为什么建成现在这样，而不是另一种样子**。
+
+### 1. 向量 RAG，而不是分词倒排当主检索
+
+也可以走 jieba 一类分词 + 倒排索引。Hubloom 选择的主路径是：文本切块 → embedding → 相似度检索。中英混合、语义相近但用词不同的问法，更适合向量；Token 估算只用来**控块大小**，不参与匹配。  
+代价是依赖 embedder 质量，且入库与检索必须同一套模型与维度，否则分数无意义。
+
+### 2. 先统一成 Markdown，再按标题结构切块
+
+PDF / docx / md 格式各异。先用 Loader（MarkItDown 等）收成一份 Markdown，后面切块只认「带结构的文本」，避免为每种格式写一套切法。  
+切块优先按标题分 section，再在 section 内按 Token 上限切，并给块加上 `section_path` 前缀、保留 overlap、合并过短块——让命中片段可读、少碎、边界不那么脆。不是「整篇塞进一个向量」，也不是「无视结构均匀切字」。
+
+### 3. 知识库默认共享，与 Memory 分库
+
+产品手册通常是团队共用，不是「每个 session 一本手册」。因此 RAG 默认不按 `session_id` 隔离；长期 Memory 才按 namespace 分户。  
+后端也分开：RAG 用本地 Chroma（目录持久化，演示友好）；长期 Memory 常用 Qdrant。工具分别是 `search_documents` 与 `search_memory`，避免一个库里既塞聊天笔记又塞制度全文。
+
+### 4. 入库与检索共用 Embedder；查询优化可选、默认关掉
+
+生产用真实 `OpenAIEmbedder`（或同类）；演示可用假向量——分数别当真。  
+HyDE / MQE 等查询优化能改善抽象题或模糊题，但依赖额外 LLM 调用，所以默认 `optimize=none`；需要时再挂 `QueryOptimizer`。未挂优化器时传 hyde/mqe 也会退回直接检索。
+
+### 5. 模块先完备，Runtime 装配后置
+
+能力（KB、切块、工具类）可以先在仓库里跑通；对话主路径是否挂载是产品开关与装配问题。当前与长期记忆类似：**模块可用，Runtime 默认未接**。这样学模块不必等整站装配；上线时再 `create_knowledge_base` + 注册 `search_documents`。
+
+### 6. 批量入库按文件名跳过，避免重复索引
+
+`ingest_rag_sources` 若发现同名 `doc_name` 已在库中则跳过。这是工程上的省事默认，不是内容哈希去重——改了文件内容但文件名不变时，需要自行删旧再入或换策略。
+
+一句话对照：
+
+| 若做成…                 | 我们选择…               | 主要理由               |
+| ----------------------- | ----------------------- | ---------------------- |
+| 分词倒排做主检索        | 向量相似度 Top-K        | 语义召回、中英混合更稳 |
+| 按格式各写切块器        | 先 Markdown 再结构切块  | 管线单一               |
+| 每用户一本手册库        | 默认共享知识库          | 文档生命周期不同       |
+| 与长期记忆同一后端      | Chroma vs Qdrant 等分库 | 隔离语义清晰           |
+| 默认 HyDE/MQE           | 默认直接搜，优化可选    | 控成本与复杂度         |
+| 等 Runtime 挂好再写模块 | 模块先完备 + 演示脚本   | 可独立验证             |
+
+---
+
+## 本章怎么读
+
+1. **落地速览**：管线、配置、装配现状（紧接下一节）
+2. **动手**：[`tests/test_retrieval.py`](../../tests/test_retrieval.py)（临时 Chroma + 假 embedder，不必起聊天服务）
+3. **设计细节**：如何存 / 切 / 读
+4. **设计怎么控**：目录职责与控制流
+
+---
+
+## 落地速览
 
 ```text
 文档文件（md / pdf / …）
-    → DocumentLoader（MarkItDown 等转成 Markdown）
+    → DocumentLoader（转成 Markdown）
     → SemanticSplitter（按结构切块）
     → Embedder（文本 → 向量）
-    → ChromaDB（本地持久化：文本 + 向量 + 元数据）
+    → ChromaDB（文本 + 向量 + 元数据）
 
 提问 query
-    → Embedder
+    → Embedder（可选 QueryOptimizer）
     → Chroma 向量检索
-    → 返回若干 {text, metadata, score}
-    →（对话里）常经工具 search_documents 交给模型
+    → [{text, metadata, score}, ...]
+    →（目标）工具 search_documents → 模型作答
 ```
 
-核心类型是 **`KnowledgeBase`**（`src/retrieval/knowledge_base.py`）：负责 `add_document` / `search` / `clear`。
+核心类型：`KnowledgeBase`（`add_document` / `search` / `clear`）。工厂：`create_knowledge_base` / `ingest_rag_sources`（`src/retrieval/rag_bootstrap.py`）。
 
-### 和 Memory 的差别（别混库）
+|            | Memory 长期                   | Retrieval                  |
+| ---------- | ----------------------------- | -------------------------- |
+| 存什么     | 对话提炼出的笔记              | 外部文档切块               |
+| 默认后端   | Qdrant（可选）                | **Chroma**（本地目录）     |
+| Agent 工具 | `search_memory`               | `search_documents`         |
+| 隔离       | 按 `session_id` / `namespace` | 知识库通常是**共享文档库** |
 
-|            | Memory 长期                   | Retrieval                                          |
-| ---------- | ----------------------------- | -------------------------------------------------- |
-| 存什么     | 对话提炼出的笔记              | 外部文档切块                                       |
-| 默认后端   | Qdrant（可选）                | **Chroma**（本地目录）                             |
-| Agent 工具 | `search_memory`               | `search_documents`                                 |
-| 隔离       | 按 `session_id` / `namespace` | 知识库通常是**共享文档库**（不按用户各备一本手册） |
-
-### 配置旋钮
-
-`config/env.yaml` 里：
+`config/env.yaml`：
 
 ```yaml
 rag:
@@ -71,23 +111,14 @@ rag:
   docs: '' # 逗号分隔的文件或目录；相对仓库根
 ```
 
-| 配置         | 作用                                                 |
-| ------------ | ---------------------------------------------------- |
-| `rag.enable` | 是否启用（与 `docs` 组合，见 `is_rag_enabled`）      |
-| `rag.kb_dir` | Chroma 持久化目录                                    |
-| `rag.docs`   | 启动时要入库的文档路径列表                           |
-| `llm.*`      | 生产环境给 **真实 Embedder**（及可选查询优化 LLM）用 |
+| 配置         | 作用                                            |
+| ------------ | ----------------------------------------------- |
+| `rag.enable` | 是否启用（与 `docs` 组合，见 `is_rag_enabled`） |
+| `rag.kb_dir` | Chroma 持久化目录                               |
+| `rag.docs`   | 启动时要入库的文档路径                          |
+| `llm.*`      | 生产给真实 Embedder（及可选查询优化 LLM）用     |
 
-工厂入口：`create_knowledge_base` / `ingest_rag_sources`（`src/retrieval/rag_bootstrap.py`）。
-
-### 当前装配现状（重要）
-
-模块与工具类 **已经写好**（含 `SearchDocumentsTool`），但 **`HubloomRuntime` 当前主路径并未挂载知识库 / `search_documents`**——和长期记忆类似：能力在仓库里，默认对话装配还没接到配置开关上。
-
-因此：
-
-- 学模块、验管线 → 跑下面的演示脚本即可；
-- 要让在线 Agent 真正会搜文档 → 还需在 Runtime / 示例站装配 `KnowledgeBase` 并注册工具（后续优化）。
+**现状**：模块与工具类已就绪；`HubloomRuntime` 主路径尚未挂载 KB / `search_documents`。学管线跑演示脚本即可；在线 Agent 要会搜文档，需后续装配。
 
 ---
 
@@ -147,7 +178,7 @@ hits = await kb.search("介绍一下Hubloom", top_k=3, optimize="none")
 
 ## 设计细节：如何存、如何切、如何读
 
-前面是「管线一览」。这一节按实现讲清：**一片文档进库时发生了什么、块怎么切、检索时怎么拿回来**。  
+前面是介绍、设计思路与落地/动手。这一节按实现讲清：**一片文档进库时发生了什么、块怎么切、检索时怎么拿回来**。  
 代码主战场：`KnowledgeBase` + `SemanticSplitter` + `Embedder` + Chroma。
 
 ### 总原则
