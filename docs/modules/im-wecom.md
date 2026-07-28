@@ -21,17 +21,19 @@ IM 层自己负责加解密、去重、换票、推送和会话键约定——�
 
 最容易走偏的做法，是在 IM 里另写一套对话引擎：自己拼提示、自己调业务、自己决定回复格式。那样会和网页路径分叉，工具面和记忆都要维护两份。Hubloom 反过来：`WeComChatAdapter` 只做通道适配——验签解密、去重、换票、调用注入进来的 `run_agent`、把结果 `send_markdown` 推回——真正办事仍走 Runtime 的 `run_stream`。代价是企微侧的体验受 Agent 快慢影响；收益是网页会的，企微里也能用。
 
-回调协议上也故意拆开。企微推来的是加密包，必须用 Token、EncodingAESKey、企业 corp_id 按官方算法验签解密，这一层放在 `crypto`，与「怎么跑 Agent」无关。主动发消息走应用 `gettoken` + `message/send`，放在 `client`，网页对话根本用不到这套 API。适配器把两段粘起来，但测试时可以只用 client 做 send、或只用 crypto+client 做 echo，**不经 Agent 也能验证管道**——这正是本章后面动手脚本的设计动机：先证明「收得到、发得回」，再接换票和编排，排障时不会把密钥错误和模型错误混在一起。
+回调协议上也故意拆开。企微推来的是加密包，必须用 Token、EncodingAESKey、企业 corp_id 按官方算法验签解密，这一层放在 `crypto`，与「怎么跑 Agent」无关。主动发消息走应用 `gettoken` + `message/send`，放在 `client`，网页对话根本用不到这套 API。适配器把两段粘起来，但测试时可以只用 client 做 send、或只用 crypto+client 做 echo，**不经 Agent 也能验证管道**——这正是本章后面动手脚本的设计动机：先证明「收得到、发得回」，再接换票和编排，排障时不会把密钥错误和模型错误混在一起。主动推送还受企微「企业可信 IP」约束：cloudflared 只解决回调打进来，本机调 `message/send` 仍走宽带公网 IP，白名单要单独配。
 
-身份上不假设企微 UserId 能直接当业务 Token。正式路径通过可配置的 `token_resolve` HTTP 去换 Bearer；未绑定账号时给用户一句人话提示，而不是让 Agent 带着空权限去调 API。本地可以用示例站的 mock 换票地址加 `dev_bearer_token` 顶上。会话键用 `wecom:{UserId}`（前缀可配），与网页 `session_id` 同一套记忆隔离语义，只是命名空间不同。同一 MsgId 在进程内去重，避免企微重试导致重复跑轮；这是 MVP 级排重，不是跨实例分布式锁——多副本部署时若要对齐，需要再增强。
+身份上不假设企微 UserId 能直接当业务 Token。正式路径通过可配置的 `token_resolve` HTTP 去换 Bearer；未绑定账号时给用户一句人话提示，而不是让 Agent 带着空权限去调 API。本地可以用示例站的 mock 换票地址加 `dev_bearer_token` 顶上。会话键用 `wecom:{UserId}`（前缀可配），与网页 `session_id` 同一套记忆隔离语义——产品上一人一会话，Web 与企微若共用同一键，就不能靠「只给企微加全局锁」了事。
 
-HTTP 路由留在示例站（或联调脚本自己起的最小服务），`src/im/wecom` 保持可嵌入：换主机、换端口、配 cloudflared 公网 HTTPS，都是部署问题，不是模块内核。企微要求接收消息 URL 必须是 HTTPS，本地开发用临时隧道是务实做法，不是架构缺陷。当前只认真支持文字；图片等类型先回一句「请发文字」，表单与卡片推送留给后续 IM 增强，以免适配器同时变成完整企微机器人平台。
+同用户连发、多实例重试，不能只靠进程内字典。IM 模块已落地 **按 session 的 Redis 队列**（`im/session_queue`）：入站先入队并尽快 ACK，再由持锁的 Worker FIFO **一条一条**消费；MsgId 走 Redis 幂等键。适配器可选注入该队列（注入后 `schedule_handle_message` 走入队）；未注入时仍保留进程内 `create_task`，方便示例站尚未改装配时继续跑。队列 Handler 与取任务接口使用 `list[SessionJob]`，并留有 `merged_from`、`request_cancel` / `active` 等扩展点——当前不做多条合并与打断，但以后加上时不必换存储模型。Web / 示例站接同一套队列是后续装配，本期先把 IM 侧能力与对外 API 备好。
+
+HTTP 路由留在示例站（或联调脚本自己起的最小服务），`src/im/wecom` 与 `session_queue` 保持可嵌入：换主机、换端口、配 cloudflared 公网 HTTPS，都是部署问题，不是模块内核。企微要求接收消息 URL 必须是 HTTPS，本地开发用临时隧道是务实做法。当前只认真支持文字；图片等类型先回一句「请发文字」，表单与卡片推送留给后续 IM 增强。
 
 ---
 
 ## 本章怎么读
 
-介绍与设计思路之后，先用最小脚本做**不经 Agent** 的收发联调（send / echo），确认加解密与推送；再看代码锚点，需要完整对话时接示例站与 Runtime。进阶后台与可信 IP 等见：[企业微信入口](../advanced/wecom-integration.md)。
+介绍与设计思路之后，先用最小脚本做**不经 Agent** 的收发联调（send / echo），再用 `queue` 验证 Redis 会话串行；需要完整对话时再接示例站与 Runtime（示例站接队列尚待装配）。进阶后台与可信 IP 等见：[企业微信入口](../advanced/wecom-integration.md)。
 
 ---
 
@@ -173,16 +175,79 @@ POST /v1/im/wecom/callback?... 200 OK
 
 ---
 
+## Redis 会话队列（IM 模块已落地）
+
+按 **session（用户）** 串行的入站队列在 `im/session_queue/`，**不依赖 Runtime / 示例站**。当前行为是一条一条处理；Handler 与 `take_jobs` 使用 `list[SessionJob]`，并预留 `merged_from` / `request_cancel`，后期合并或打断不必换存储模型。
+
+### 对外用法
+
+```python
+from im import SessionJob, SessionWorker, create_session_queue
+
+queue = create_session_queue(redis_url="redis://localhost:6379/0")
+
+async def handle_jobs(jobs: list[SessionJob]) -> None:
+    # 现在 len(jobs)==1；后期合并时可能多条
+    job = jobs[0]
+    ...
+
+worker = SessionWorker(queue, handle_jobs)
+await worker.enqueue_and_kick(
+    SessionJob(
+        session_id="wecom:ZhongYuJian",
+        source="wecom",
+        text="你好",
+        dedupe_key="msgid-optional",
+        meta={"wecom_userid": "ZhongYuJian"},
+    )
+)
+```
+
+企微适配器可选注入同一套队列（示例站尚未改装配时仍走进程内 `create_task`）::
+
+```python
+from im import create_session_queue
+from im.wecom import WeComChatAdapter
+
+queue = create_session_queue(redis_url=...)
+adapter = WeComChatAdapter(
+    ...,
+    session_queue=queue,  # 注入后 schedule_handle_message → Redis 入队
+)
+```
+
+也可用 `wecom_message_to_job(...)` / `adapter.enqueue_message(msg)` 自行入队。
+
+本地只验队列（需 Redis，不连企微）::
+
+```bash
+PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py queue
+```
+
+### Redis 键
+
+| 键 | 作用 |
+| --- | --- |
+| `hubloom:im:q:{session_id}` | 待处理 List |
+| `hubloom:im:processing:{session_id}` | 在途（防崩溃丢任务） |
+| `hubloom:im:lock:{session_id}` | 消费者锁 |
+| `hubloom:im:dedupe:{key}` | MsgId 等幂等 |
+| `hubloom:im:active:{session_id}` | 当前 Job（供后期打断） |
+| `hubloom:im:cancel:{session_id}` | 取消标记（API 已暴露，主路径暂不自动打断） |
+
+---
+
 ## 代码锚点
 
-| 路径                        | 职责                                   |
-| --------------------------- | -------------------------------------- |
-| `im/wecom/crypto.py`        | 回调验签、加解密、明文 XML 解析        |
-| `im/wecom/client.py`        | `gettoken`、应用消息 text / markdown   |
-| `im/wecom/adapter.py`       | 正式适配器：去重、换票、跑 Agent、推送 |
-| `im/wecom/token_resolve.py` | 企微 UserId → 业务 Bearer              |
-| `tests/test_im_wecom.py`    | 本文 send / echo 联调                  |
-| `examples/chat/app.py`      | 挂 Runtime 的完整回调                  |
+| 路径 | 职责 |
+| --- | --- |
+| `im/session_queue/` | Redis 会话队列 / Worker / Job |
+| `im/wecom/crypto.py` | 回调验签、加解密、明文 XML 解析 |
+| `im/wecom/client.py` | `gettoken`、应用消息 text / markdown |
+| `im/wecom/adapter.py` | 适配器；可选 Redis 入队 |
+| `im/wecom/token_resolve.py` | 企微 UserId → 业务 Bearer |
+| `tests/test_im_wecom.py` | send / echo / queue |
+| `examples/chat/app.py` | 挂 Runtime 的完整回调（尚未接队列） |
 
 ---
 

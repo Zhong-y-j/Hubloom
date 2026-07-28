@@ -1,4 +1,8 @@
-"""企微回调 → 换 Token → HubloomRuntime → 主动推送。"""
+"""企微回调 → 换 Token → HubloomRuntime → 主动推送。
+
+可选注入 ``RedisSessionQueue`` + ``SessionWorker``：文字消息入 Redis 按 session 串行；
+未注入时保持原进程内 ``create_task``（示例站未改装配前仍可用）。
+"""
 
 from __future__ import annotations
 
@@ -13,6 +17,12 @@ from loguru import logger
 from agent.run import RunResult
 from context import clear_request_context
 from core.models import Message, Role
+from im.session_queue import (
+    EnqueueResult,
+    RedisSessionQueue,
+    SessionJob,
+    SessionWorker,
+)
 from im.wecom.client import WeComAppClient
 from im.wecom.crypto import WeComCrypto, WeComCryptoError, parse_message_xml
 from im.wecom.token_resolve import (
@@ -31,7 +41,7 @@ class WeComAdapterConfig:
 
 
 class MsgIdDeduper:
-    """进程内 MsgId 排重。"""
+    """进程内 MsgId 排重（无 Redis 队列时作补充；队列侧另有 Redis dedupe）。"""
 
     def __init__(self, max_size: int = 2000) -> None:
         self._max = max_size
@@ -52,8 +62,34 @@ class MsgIdDeduper:
             return False
 
 
+def wecom_message_to_job(
+    msg: dict[str, Any],
+    *,
+    session_id: str,
+    text: str | None = None,
+) -> SessionJob:
+    """把企微明文消息 dict 转成 ``SessionJob``（供外部入队）。"""
+    userid = (msg.get("FromUserName") or "").strip()
+    msg_id = (msg.get("MsgId") or "").strip()
+    content = (text if text is not None else (msg.get("Content") or "")).strip()
+    return SessionJob(
+        session_id=session_id,
+        source="wecom",
+        text=content,
+        dedupe_key=msg_id or None,
+        meta={
+            "wecom_userid": userid,
+            "msg_type": (msg.get("MsgType") or "").strip(),
+            "msg_id": msg_id,
+        },
+    )
+
+
 class WeComChatAdapter:
-    """处理 URL 验证与消息回调（异步跑 Agent）。"""
+    """处理 URL 验证与消息回调（异步跑 Agent）。
+
+    装配 Redis 队列时传入 ``session_queue``；``session_worker`` 可省略（自动创建）。
+    """
 
     def __init__(
         self,
@@ -64,6 +100,8 @@ class WeComChatAdapter:
         run_agent: RunAgentFn,
         config: WeComAdapterConfig | None = None,
         deduper: MsgIdDeduper | None = None,
+        session_queue: RedisSessionQueue | None = None,
+        session_worker: SessionWorker | None = None,
     ) -> None:
         self.crypto = crypto
         self.client = client
@@ -71,6 +109,17 @@ class WeComChatAdapter:
         self.run_agent = run_agent
         self.config = config or WeComAdapterConfig()
         self.deduper = deduper or MsgIdDeduper()
+        self.session_queue = session_queue
+        if session_queue is not None:
+            self.session_worker = session_worker or SessionWorker(
+                session_queue, self._handle_jobs
+            )
+        else:
+            self.session_worker = session_worker
+
+    @property
+    def uses_redis_queue(self) -> bool:
+        return self.session_queue is not None and self.session_worker is not None
 
     def session_id_for(self, userid: str) -> str:
         prefix = (self.config.session_prefix or "wecom").strip() or "wecom"
@@ -105,7 +154,80 @@ class WeComChatAdapter:
         return plain, msg
 
     def schedule_handle_message(self, msg: dict[str, Any]) -> None:
-        asyncio.create_task(self._safe_handle(msg))
+        if self.uses_redis_queue:
+            asyncio.create_task(self._safe_enqueue(msg))
+        else:
+            asyncio.create_task(self._safe_handle(msg))
+
+    async def enqueue_message(self, msg: dict[str, Any]) -> EnqueueResult | None:
+        """显式入队（需已装配 Redis 队列）。非文本会直接推送提示并返回 None。"""
+        if not self.uses_redis_queue:
+            raise RuntimeError("未装配 session_queue，无法 enqueue_message")
+        return await self._enqueue_from_msg(msg)
+
+    async def _safe_enqueue(self, msg: dict[str, Any]) -> None:
+        try:
+            await self._enqueue_from_msg(msg)
+        except Exception:
+            logger.exception("wecom enqueue failed")
+
+    async def _enqueue_from_msg(self, msg: dict[str, Any]) -> EnqueueResult | None:
+        assert self.session_worker is not None
+        msg_type = (msg.get("MsgType") or "").strip().lower()
+        userid = (msg.get("FromUserName") or "").strip()
+        if not userid:
+            logger.warning("wecom message missing FromUserName")
+            return None
+
+        if msg_type != "text":
+            await self._push(userid, "暂只支持文字消息，请直接发送文本问题。")
+            return None
+
+        content = (msg.get("Content") or "").strip()
+        if not content:
+            await self._push(userid, "请发送非空文字消息。")
+            return None
+
+        session_id = self.session_id_for(userid)
+        job = wecom_message_to_job(msg, session_id=session_id, text=content)
+        result = await self.session_worker.enqueue_and_kick(job)
+        if result.duplicate:
+            logger.info(
+                "wecom duplicate skipped via redis | dedupe={} | job_id={}",
+                job.dedupe_key,
+                job.job_id,
+            )
+        return result
+
+    async def _handle_jobs(self, jobs: list[SessionJob]) -> None:
+        """Worker 回调：现在 jobs 长度为 1；后期合并时可能多条。"""
+        if not jobs:
+            return
+        # 预留：合并期在此拼接 texts / merged_from，再跑一轮
+        job = jobs[0]
+        userid = str(job.meta.get("wecom_userid") or "").strip()
+        if not userid:
+            logger.warning("wecom job missing wecom_userid | job_id={}", job.job_id)
+            return
+
+        try:
+            bearer = job.bearer_token or await self.token_resolver.resolve(userid)
+        except TokenResolveError as exc:
+            await self._push(userid, str(exc))
+            return
+
+        try:
+            reply = await self.run_agent(
+                job.text,
+                session_id=job.session_id,
+                bearer_token=bearer,
+            )
+        except Exception as exc:
+            logger.exception("wecom agent run failed | user={}", userid)
+            await self._push(userid, f"处理失败：{str(exc)[:200]}")
+            return
+
+        await self._push(userid, self._format_reply(reply, job.session_id))
 
     async def _safe_handle(self, msg: dict[str, Any]) -> None:
         try:
@@ -114,6 +236,7 @@ class WeComChatAdapter:
             logger.exception("wecom handle_message failed")
 
     async def handle_message(self, msg: dict[str, Any]) -> None:
+        """进程内直接处理（无 Redis 队列时的路径）。"""
         msg_type = (msg.get("MsgType") or "").strip().lower()
         userid = (msg.get("FromUserName") or "").strip()
         msg_id = (msg.get("MsgId") or "").strip()
@@ -155,27 +278,24 @@ class WeComChatAdapter:
             await self._push(userid, f"处理失败：{str(exc)[:200]}")
             return
 
+        await self._push(userid, self._format_reply(reply, session_id))
+
+    def _format_reply(self, reply: str, session_id: str) -> str:
         text = (reply or "").strip() or "（无回复内容）"
-        # 表单场景简单提示（MVP 无 A2UI）
-        if "【人机" in text or "请到" in text:
-            pass
         max_chars = self.config.max_reply_chars
         if len(text) > max_chars:
-            text = (
+            return (
                 text[: max_chars - 40]
                 + f"\n\n…(已截断)\n完整记录 session：`{session_id}`"
             )
-        else:
-            # 短注：可在网页用同一 session 查看
-            if len(text) < max_chars - 80:
-                text = f"{text}\n\n——\n会话 `{session_id}`（网页历史可查）"
-        await self._push(userid, text)
+        if len(text) < max_chars - 80:
+            return f"{text}\n\n——\n会话 `{session_id}`（网页历史可查）"
+        return text
 
     async def _push(self, userid: str, content: str) -> None:
         try:
             await self.client.send_markdown(userid=userid, content=content)
         except Exception:
-            # markdown 失败再试 text
             logger.warning("wecom markdown send failed, fallback text")
             await self.client.send_text(userid=userid, content=content)
 
@@ -206,7 +326,6 @@ async def run_agent_via_runtime(
             if not final.ok:
                 raise RuntimeError(final.error or "运行失败")
             content = (final.content or "").strip()
-            # 若本轮产生了 A2UI 等待，提示去网页
             if final.a2ui_messages or (
                 final.answer_parts
                 and any(

@@ -9,18 +9,19 @@
 用法（仓库根目录）::
 
     # 推一条到企微（把 UserId 换成你在通讯录里的账号）
-    WECOM_TO_USER=ZhangSan \\
-      PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py send
+    WECOM_TO_USER=ZhangSan PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py send
 
     # 或显式传参
-    PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py send --to ZhangSan \\
-      --text "Hubloom IM 联调：你好"
+    PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py send --to ZhongYuJian --text "Hubloom IM 联调：你好"
 
     # 收消息并原路回一条（需公网 HTTPS 指到本服务，例如 cloudflared）
     PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py echo --port 8765
 
-配置读 ``HUBLOOM_CONFIG`` 或默认 ``config/env.yaml`` 里的 ``im.wecom.*``。
+    # Redis 会话队列（不连企微）：同 session 串行 + MsgId 幂等
+    HUBLOOM_EVENTS_REDIS_URL=redis://localhost:6379/0 \\
+      PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py queue
 
+配置读 ``HUBLOOM_CONFIG`` 或默认 ``config/env.yaml`` 里的 ``im.wecom.*``。
 起临时公网隧道 cloudflared tunnel --url http://127.0.0.1:8765，终端出现类似 https://xxxx.trycloudflare.com 的地址
 """
 
@@ -30,13 +31,16 @@ import argparse
 import asyncio
 import os
 import sys
+import uuid
 from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
+from redis.asyncio import Redis
 from uvicorn import run as uvicorn_run
 
 from config import HubloomConfig
+from im.session_queue import SessionJob, SessionWorker, create_session_queue
 from im.wecom.client import WeComAppClient
 from im.wecom.crypto import WeComCrypto, parse_message_xml
 
@@ -205,6 +209,97 @@ def cmd_echo(*, host: str, port: int) -> None:
     uvicorn_run(app, host=host, port=port, log_level="info")
 
 
+def _redis_url() -> str:
+    return (
+        os.environ.get("HUBLOOM_IM_REDIS_URL")
+        or os.environ.get("HUBLOOM_EVENTS_REDIS_URL")
+        or "redis://localhost:6379/0"
+    ).strip()
+
+
+async def cmd_queue() -> None:
+    """本地 Redis：验证同 session 串行入队与 MsgId 幂等（假 handler，不连企微）。"""
+    url = _redis_url()
+    tag = uuid.uuid4().hex[:8]
+    print("【模式】 queue（Redis 会话队列，不经企微 / Agent）")
+    print("【Redis】", url)
+    print("【本轮后缀】", tag)
+
+    client = Redis.from_url(url, decode_responses=True)
+    try:
+        print("【ping】", await client.ping())
+    except Exception as exc:
+        raise SystemExit(
+            f"无法连接 Redis（{url}）。请先启动，例如：\n"
+            "  docker run -d --name redis -p 6379:6379 redis:7\n"
+            f"详情: {exc}"
+        ) from exc
+
+    queue = create_session_queue(redis_url=url, redis=client)
+    done: list[str] = []
+    order_gate = asyncio.Event()
+
+    async def _handler(jobs: list[SessionJob]) -> None:
+        # 现在恒为 1 条；签名留 list 给后期合并
+        job = jobs[0]
+        print("  · 处理", job.job_id[:8], job.text)
+        if "#1-" in job.text:
+            await asyncio.sleep(0.2)
+            order_gate.set()
+        else:
+            await order_gate.wait()
+        done.append(job.text)
+
+    worker = SessionWorker(queue, _handler)
+    sid = f"wecom:demo-{tag}"
+
+    r1 = await worker.enqueue_and_kick(
+        SessionJob(
+            session_id=sid,
+            source="wecom",
+            text=f"msg-a#1-{tag}",
+            dedupe_key=f"mid-a-{tag}",
+            meta={"wecom_userid": "demo"},
+        )
+    )
+    r2 = await worker.enqueue_and_kick(
+        SessionJob(
+            session_id=sid,
+            source="wecom",
+            text=f"msg-b#2-{tag}",
+            dedupe_key=f"mid-b-{tag}",
+            meta={"wecom_userid": "demo"},
+        )
+    )
+    r_dup = await worker.enqueue_and_kick(
+        SessionJob(
+            session_id=sid,
+            source="wecom",
+            text="should-skip",
+            dedupe_key=f"mid-a-{tag}",
+            meta={"wecom_userid": "demo"},
+        )
+    )
+    print("【入队】", r1.accepted, r2.accepted, "dup=", r_dup.duplicate)
+
+    for _ in range(100):
+        if len(done) >= 2:
+            break
+        await asyncio.sleep(0.05)
+    print("【处理顺序】", done)
+    print("【期望】 先 #1 后 #2；重复 mid-a 被拒绝")
+    ok = (
+        len(done) == 2
+        and done[0].startswith("msg-a#1")
+        and done[1].startswith("msg-b#2")
+        and r_dup.duplicate
+    )
+    print("【结果】", "通过" if ok else "未通过")
+    await client.aclose()
+    if not ok:
+        raise SystemExit(1)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="企微 IM 真机联调（不经 Agent）")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -221,11 +316,15 @@ def main(argv: list[str] | None = None) -> None:
     p_echo.add_argument("--host", default="0.0.0.0")
     p_echo.add_argument("--port", type=int, default=8765)
 
+    sub.add_parser("queue", help="Redis 会话队列串行 + 幂等（不连企微）")
+
     args = parser.parse_args(argv)
     if args.cmd == "send":
         asyncio.run(cmd_send(to_user=args.to, text=args.text))
     elif args.cmd == "echo":
         cmd_echo(host=args.host, port=args.port)
+    elif args.cmd == "queue":
+        asyncio.run(cmd_queue())
     else:
         parser.error(f"未知命令: {args.cmd}")
 
