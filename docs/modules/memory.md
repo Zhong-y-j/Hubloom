@@ -381,9 +381,27 @@ result = await memory.recall(
 
 ---
 
-## 设计怎么控？（结构 + 谁调用谁）
+## 设计细节：如何存、如何读、如何控
 
-前面两节回答「存什么、怎么亲手写读」。这一节回答：**Hubloom 里 Memory 由谁装配、对话热路径写什么、长期从哪开、检索门槛在哪**。
+前面两节回答「存什么、怎么亲手写读」。这一节按实现讲清：**会话行怎么落库、长期笔记怎么进向量库、读的时候各走哪条路、谁在控制开关与裁剪**。
+
+### 总原则
+
+Memory **不是**一套库两种用法，而是 **统一 Manager + 多种 Handler**：
+
+| 类型 | 存什么 | 怎么读 | 后端 |
+| --- | --- | --- | --- |
+| `conversation` | 完整 `Message`（含 tool） | **按时间**最近 N 条 | SQLite |
+| `episodic` / `semantic` | 笔记 `content` + 向量 | **按 query 向量检索** | Qdrant |
+| `associative` | 实体 / 关系 | **图邻域** | Neo4j（可选） |
+
+和 RAG 的对比（避免混）：
+
+| | Memory 会话 | Memory 长期 | RAG |
+| --- | --- | --- | --- |
+| 切块 / 分词？ | 不切；一条消息一行 | 不切文档；一条笔记一条向量 | 文档切块 + Token 估算 |
+| 隔离 | `session_id` | 同键作 `namespace` | 通常共享文档库 |
+| 主读法 | 时间序 | 相似度 | 相似度 |
 
 ### 分层：统一入口，按类型分派
 
@@ -394,7 +412,7 @@ result = await memory.recall(
 create_memory_manager(...)     ← factory：按开关挂上哪些 Handler
         │
         ▼
-MemoryManager                  ← 统一 remember / recall / clear_all
+MemoryManager                  ← 统一 remember / recall / clear_all / forget
         │  按 memory_type 分派
         ├─ conversation  → ConversationHandler → SQLite
         ├─ episodic      → EpisodicQdrantHandler → Qdrant（需 vector）
@@ -404,78 +422,183 @@ MemoryManager                  ← 统一 remember / recall / clear_all
 
 要点：
 
-- **对外只认 Manager**：业务代码一般不直接碰 Store。
-- **类型决定参数**：`conversation` 传 `message=`；长期传 `content=`（associative 还可带关系 metadata）。
-- **没挂上的类型会报错**：`vector_backend="none"` 时没有 episodic/semantic handler；不是「空库」，是根本没装配。
+- **对外只认 Manager**；业务一般不直接碰 Store。
+- **类型决定参数**：`conversation` 必须 `message=`；长期必须 `content=`。
+- **没挂上的类型会报错**：`vector_backend="none"` 时没有 episodic handler——不是「空库」，是根本没装配。
 
 相关文件：
 
-| 角色           | 路径                                                                                      |
-| -------------- | ----------------------------------------------------------------------------------------- |
-| 工厂           | `src/memory/factory.py`                                                                   |
-| 统一入口       | `src/memory/manager.py`                                                                   |
-| 各类型 Handler | `src/memory/handlers/`                                                                    |
-| 存储           | `src/memory/store/`（SQLite / Qdrant / Neo4j）                                            |
-| 会话拼进提示   | `src/agent/assemble.py`（`load_conversation`）                                            |
-| 长期检索适配   | `src/memory/memory_context.py` + 工具 `SearchMemoryTool`                                  |
-| 离线巩固       | `src/memory/memory_worker.py`、`batch_consolidator.py`；CLI `python -m memory.run_worker` |
+| 角色 | 路径 |
+| --- | --- |
+| 工厂 | `src/memory/factory.py` |
+| 统一入口 | `src/memory/manager.py` |
+| Handler | `src/memory/handlers/` |
+| Store | `src/memory/store/`（SQLite / Qdrant / Neo4j） |
+| 会话拼进提示 | `src/agent/assemble.py`、`memory/context.py`（裁剪） |
+| 长期检索适配 | `src/memory/memory_context.py` + `SearchMemoryTool` |
+| 生命周期 | `src/memory/lifecycle.py` |
+| 离线巩固 | `memory_worker.py`、`batch_consolidator.py`；`python -m memory.run_worker` |
 
-### 两路控制：对话热路径 vs 离线巩固
+---
 
-|                | **热路径（一次 `run_stream`）**                                     | **离线（cron / CLI worker）**                |
-| -------------- | ------------------------------------------------------------------- | -------------------------------------------- |
-| 谁触发         | `HubloomRuntime` → `agent.run`                                      | `memory.run_worker`                          |
-| 主要写什么     | **几乎只写 conversation**（用户 / 助手 / 工具消息）                 | 从会话提炼 **episodic / semantic**（可选图） |
-| 主要读什么     | `assemble.load_conversation`：按时间取最近历史并裁剪                | 不服务当前用户请求；写完供以后检索           |
-| 长期怎么进对话 | 工具 **`search_memory`**（底层 `MemoryContextProvider`）按 query 搜 | —                                            |
+### 如何存
 
-热路径里会话的控制很直接：
+#### 会话（conversation → SQLite）
 
-1. Runtime 用 `session_id` 调 `create_memory_manager(namespace=session_id, ...)`
-2. Agent 回合里 `_remember(...)` → `memory.remember(memory_type="conversation", message=...)`
-3. 拼 Think / Respond 前 `load_conversation` → `recall(memory_type="conversation")`，过长再 `trim_conversation_history`
+热路径几乎每轮：`memory.remember(memory_type="conversation", message=...)`  
+→ `ConversationHandler.append` → `ConversationSQLitesStore.add_message`。
 
-长期**不会**在每轮 Think 里自动把全库笔记塞进提示；需要时由模型调 `search_memory`，或由上层显式走 `MemoryContextProvider`。
+表 `conversation_memory` 核心列：
 
-### 开关与装配：谁决定「有没有长期」
+| 列 | 含义 |
+| --- | --- |
+| `id` | 消息主键 |
+| `session_id` | 隔离键（= Runtime 的 `session_id`） |
+| `role` / `content` | 角色与正文 |
+| `tool_calls` | JSON：助手发起的工具调用列表 |
+| `tool_call_id` / `name` | 工具回传时对齐某次 call |
+| `created_at` | 时间（取最近 N 条的排序依据） |
+| `metadata_json` / `source` / `token_count` / `turn_index` | 扩展；巩固定位 turn 会用到 id |
 
-配置（`config/env.yaml`）里常见旋钮：
+设计选择：
 
-| 配置                           | 作用                                                                 |
-| ------------------------------ | -------------------------------------------------------------------- |
-| `memory.db_path`               | 会话 SQLite 路径（会话层几乎总开）                                   |
-| `memory.enable_long_term`      | 给 **Worker** 等读：是否按长期后端去提炼 / 淘汰                      |
-| `memory.consolidate_min_turns` | 未处理 USER 轮数达到该值才巩固                                       |
-| `qdrant.*` / `neo4j.*`         | 向量库 / 图库连接                                                    |
-| `llm.*`                        | 巩固用 LLM；真实 embedding 也常用同一套 key（网关需支持 embeddings） |
+- **整条 Message 落库**（含 tool 过程），拼上下文时才能还原工具回合。
+- **不做向量、不做分词检索**；会话层就是流水账。
+- 索引：`(session_id, created_at)`，按会话取最近消息。
+- Handler 层 **不提供单条 forget**（`forget` 恒为 false）；清空用 `clear_all`。
+- 存储层不做会话 TTL——**过长历史靠组装时 trim**，不靠删库。
 
-工厂参数与配置的对应：
+#### 长期（episodic / semantic → Qdrant）
+
+`remember(memory_type="episodic"|"semantic", content=...)`  
+→ Handler：`embedder.embed([content])` → 组装 Item → `QdrantMemoryStore` upsert。
+
+常见字段：
+
+| 字段 | 含义 |
+| --- | --- |
+| `content` | 笔记正文（检索主文本） |
+| `namespace` | 隔离键（与 session 同值装配） |
+| `memory_type` | collection 内区分 episodic / semantic |
+| embedding | 向量（写入时算好） |
+| `importance` / `ref_session_id` | 可选；淘汰与溯源 |
+| `created_at` / `last_accessed_at` | TTL / 维护用 |
+
+写入来源：
+
+1. **演示 / 显式 API**：手写 `remember(content=...)`
+2. **离线 Worker**：读 SQLite 会话 → LLM 提炼 → 再 `remember` 长期类型（主生产路径）
+
+**Associative（可选）**：`remember` + metadata（`from_name`/`to_name` 建关系，或挂 MemoryRef 指向向量记忆 id）；存在 Neo4j。
+
+---
+
+### 如何读
+
+#### 会话：按时间，不是按问题
+
+```text
+recall(memory_type="conversation", top_k=N)
+  → store.get_recent(session_id, N)
+  → ORDER BY created_at DESC LIMIT N，再反转为时间正序
+  → list[Message]
+```
+
+`query` / `mode` 在 Handler 里预留，**当前忽略**。
+
+进提示词之前还有第二道闸：
+
+```text
+assemble.load_conversation(top_k=…)
+  → trim_conversation_history(messages, max_tokens=…)
+```
+
+`trim_conversation_history`（`memory/context.py`）按**估算 token**裁掉偏旧内容，尽量保留较新回合。  
+注意：**裁剪发生在组装层，不删除 SQLite 里的历史。**
+
+#### 长期：按 query 向量检索
+
+```text
+# 单路
+recall(memory_type="episodic"|"semantic", query=..., top_k=...)
+
+# 多路（默认）
+recall(query=..., mode="hybrid", top_k=...)
+  → 分别搜 episodic + semantic → Manager 去重后截断到 top_k
+
+# 图
+recall(memory_type="associative", query=..., filters={hops, ...})
+  → 结果在 RecallResult.graph
+```
+
+Handler：`embed(query)` → Qdrant search → 带 `metadata["score"]` 的条目。  
+默认 **`score_threshold ≈ 0.55`**：低于门槛直接丢弃（「写成了但搜不到」的常见原因）。
+
+对话里常见消费：
+
+- **`SearchMemoryTool`** → `MemoryContextProvider.recall_for_context(query)`（hybrid + 可选图摘要）
+- 或上层显式调 Provider / Manager（当前 Runtime 未自动把长期预取进每轮 system）
+
+---
+
+### 如何控（开关、两路、淘汰）
+
+#### 两路：热路径 vs 离线
+
+| | **热路径（`run_stream`）** | **离线（`run_worker`）** |
+| --- | --- | --- |
+| 谁触发 | Runtime → Agent | cron / CLI |
+| 主要写 | **conversation** | 提炼后的 **episodic / semantic**（可选图） |
+| 主要读 | 时间序会话 + trim | 不服务当次用户请求 |
+| 长期进对话 | 模型调 `search_memory`（需 Handler 已装配） | — |
+
+热路径会话三步：
+
+1. `_make_memory(session_id)` → `create_memory_manager(namespace=session_id, …)`
+2. `_remember` → `remember(conversation, message=…)`
+3. `load_conversation` → `recall(conversation)` → trim → 拼 Think/Respond
+
+长期**不会**每轮自动灌进提示；要搜才搜。
+
+#### 配置与工厂
+
+| 配置 | 作用 |
+| --- | --- |
+| `memory.db_path` | 会话 SQLite 路径（几乎总开） |
+| `memory.enable_long_term` | **Worker** 是否按长期后端提炼 / 淘汰 |
+| `memory.consolidate_min_turns` | 未处理 USER 轮数 ≥ N 才巩固 |
+| `qdrant.*` / `neo4j.*` | 向量 / 图连接 |
+| `llm.*` | 巩固用 LLM；真实 embedding 常用同一套（需 embeddings 能力） |
+
+工厂：
 
 - `vector_backend="qdrant"` → 挂 episodic + semantic
 - `graph_backend="neo4j"` → 挂 associative
-- `"none"` → 不挂对应 Handler
+- `"none"` → 不挂
 
-**当前 Runtime 装配要注意的一点**：`HubloomRuntime._make_memory` 里目前**写死** `vector_backend="none"`、`graph_backend="none"`——也就是说：
+**现状（重要）**：`HubloomRuntime._make_memory` **写死** `vector/graph=none`。
 
-- 线上对话主路径默认仍是 **只开会话 SQLite**；
-- 仍会注册 `SearchMemoryTool`，但 Manager 上没有长期 Handler 时，搜长期会失败或空；
-- 长期写入 / 检索要靠：**演示脚本那种显式开 qdrant**，或 **Worker 用 `enable_long_term` 装配**，或以后把 Runtime 的 `_make_memory` 接到配置上。
+- 对话主路径默认 **只有会话 SQLite**；
+- 仍可能注册 `SearchMemoryTool`，但没有长期 Handler 时搜不到；
+- `enable_long_term` **主要驱动 Worker**，≠「Runtime 已连上 Qdrant」；
+- 要联调长期：演示脚本显式开 qdrant，或跑 Worker，或以后把 Runtime 接到配置。
 
-这是「控制」上很关键的现状：配置里的 `enable_long_term` **主要驱动离线 Worker**，并不等于「对话 Runtime 已自动连上 Qdrant」。
+#### 质量与淘汰旋钮
 
-### 检索与淘汰：质量旋钮
+| 旋钮 | 在哪 | 作用 |
+| --- | --- | --- |
+| `top_k` | recall / 工具 / `load_conversation` | 条数上限 |
+| 会话 token 预算 | `trim_conversation_history` / ContextAssembler | 组装时裁历史 |
+| `mode=hybrid` 等 | `MemoryManager.recall` | 长期多路怎么合 |
+| `score_threshold`（≈0.55） | Qdrant Handler | 过滤低相关命中 |
+| TTL / `max_items` | `TTLBasedPolicy`（默认约 30 天 / 1000 条）+ `run_maintenance` | 长期过期或超额淘汰 |
+| `importance` | 长期 metadata | 策略层可优先保留 |
 
-| 旋钮                                 | 在哪                                                       | 作用                                                           |
-| ------------------------------------ | ---------------------------------------------------------- | -------------------------------------------------------------- |
-| `mode=hybrid` / 单路 `memory_type`   | `MemoryManager.recall`                                     | hybrid 合并 episodic+semantic；conversation / associative 另走 |
-| `top_k`                              | recall / SearchMemoryTool                                  | 最多返回条数                                                   |
-| `score_threshold`（默认约 **0.55**） | Qdrant Handler / Store                                     | 相似度低于门槛的命中直接丢掉                                   |
-| TTL / 容量                           | `lifecycle` + Worker `run_maintenance`                     | 长期条目过期或超额淘汰                                         |
-| 会话 `top_k` + token 裁剪            | `assemble.load_conversation` / `trim_conversation_history` | 防止历史把上下文撑爆                                           |
+会话 Handler 的 `run_maintenance` **故意返回 0**：会话不靠存储 TTL 删，靠组装裁剪。
 
-教学脚本里把门槛降到 `0.0`，只为假 embedder 能演示「搜得到」；生产应保留门槛 + 真实 embedding。
+教学脚本把长期门槛降到 `0.0` 只为假 embedder；生产应保留门槛 + 真实 embedding。
 
-### 一张总图（控制流）
+#### 总控制流
 
 ```text
 请求 session_id
@@ -484,19 +607,23 @@ MemoryManager                  ← 统一 remember / recall / clear_all
     │       └─ 当前：仅 conversation（vector/graph=none）
     │
     ├─ Agent 热路径
-    │       ├─ remember(conversation)  ← 每轮消息
-    │       ├─ recall(conversation)    ← 拼上下文
-    │       └─（可选）search_memory   ← 模型主动搜长期
+    │       ├─ remember(conversation)     ← 每轮消息整行落 SQLite
+    │       ├─ recall(conversation)+trim  ← 按时间取最近，再按 token 裁
+    │       └─（可选）search_memory       ← query 搜长期（需已装配）
     │
     └─ 离线 Worker（enable_long_term + qdrant…）
-            ├─ 读 SQLite 会话，满 N 轮则 LLM 提炼
+            ├─ 读 SQLite，满 N 轮 USER → LLM 提炼
             ├─ remember(episodic/semantic/…)
-            └─ run_maintenance 淘汰
+            └─ run_maintenance（TTL / 容量）
 ```
 
-读完这一节，你应能回答：
+---
 
-1. **谁统一对外？** `MemoryManager`。
-2. **对话默认控什么？** 会话写入与按时间召回；长期默认未接到 Runtime。
-3. **长期谁打开？** factory 的 backend 开关 +（现状下）Worker / 显式脚本。
-4. **搜不到可能是？** 没装配 Handler、门槛过滤、或 embedder/query 不匹配——不一定是「没写入」。
+读完「设计细节」你应能回答：
+
+1. **谁统一对外？** `MemoryManager`；按 `memory_type` 分派。
+2. **会话如何存 / 读？** SQLite 整行 Message；按时间 `get_recent`，组装再 trim。
+3. **长期如何存 / 读？** content→embedding→Qdrant；按 query 检索 + 分数门槛。
+4. **对话默认控什么？** 会话读写；长期默认未接到 Runtime。
+5. **长期谁打开？** factory backend +（现状）Worker / 显式脚本。
+6. **搜不到可能是？** 没装配 Handler、门槛过滤、embedder/query 不匹配——不一定没写入。
