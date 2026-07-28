@@ -1,7 +1,4 @@
-"""批量记忆提炼：读取 conversation 片段 → LLM 产出 Experience Case JSON → 写入 Qdrant。
-
-编排层（CortexAgent）只负责 recall；本模块供离线 worker / 定时任务调用。
-"""
+"""批量记忆提炼：读取 conversation 片段 → LLM 产出 Experience Case JSON → 写入 Qdrant。"""
 
 from __future__ import annotations
 

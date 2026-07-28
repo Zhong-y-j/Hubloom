@@ -1,7 +1,4 @@
-"""离线记忆编排：定量批量提炼 + Qdrant 生命周期淘汰。
-
-由 cron / CLI 调用，不在 CortexAgent 热路径执行。
-"""
+"""离线记忆编排：定量批量提炼 + Qdrant 生命周期淘汰。"""
 
 from __future__ import annotations
 
