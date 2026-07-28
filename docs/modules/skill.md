@@ -38,21 +38,31 @@
 
 ### 目录结构
 
-一个 Skill 就是一个文件夹。最小只要有一份 `SKILL.md`；需要时再加附属资源：
+一个 Skill 就是一个文件夹。在 Hubloom 里，**当前真正参与运行的只有 `SKILL.md`**（元数据 + 正文）：
 
 ```text
 my-skill/                 # 文件夹名 = 技能 id（建议小写、短横线）
-  SKILL.md                # 必填：元数据 + 正文
-  scripts/                # 可选：脚本（是否执行取决于具体产品）
-  references/             # 可选：补充说明、长文档
-  assets/                 # 可选：模板、样例等
+  SKILL.md                # 必填：元数据 + 正文（Hubloom 会扫描 / read_skill）
+  scripts/                # 可选目录；当前 Runtime 不执行
+  references/             # 可选目录；当前不会自动注入上下文
+  assets/                 # 可选目录；当前不会自动使用
 ```
 
-常见约定：
+关于后三个目录（请勿误解为已支持）：
 
-- **一层一个 Skill**：不要写成 `skills/foo/bar/SKILL.md` 还指望被自动扫成独立技能（多数实现只认「技能根目录下的 `SKILL.md`」）。
-- **文件夹名**用来标识这个技能（调用、排除名单时常用它）。
-- 以 `.` 开头的目录通常忽略；给人看的总说明（如 `README.md`）一般**不会**当成 Skill 正文注入模型。
+| 目录 | Hubloom 现状 |
+| --- | --- |
+| `scripts/` | **暂不支持**自动执行；没有 `run_skill_script`，正文里写「去跑 scripts/…」模型也跑不起来 |
+| `references/` | **暂不支持**按需加载附属文档；只有 `SKILL.md` 正文会通过 `read_skill` 进入上下文 |
+| `assets/` | **暂不支持**由 Runtime 消费模板/样例资源 |
+
+它们可以留在仓库里给人看或本地手跑，但**不要**写进规程当成 Agent 必经步骤。业界 Skill 约定里常有这三类附属资源；Hubloom 现阶段只落地了「名片 + `SKILL.md` 正文」这条主路径。
+
+其它常见约定：
+
+- **一层一个 Skill**：不要写成 `skills/foo/bar/SKILL.md` 还指望被自动扫成独立技能（`load_skills` 只认一层子目录下的 `SKILL.md`）。
+- **文件夹名**用来标识这个技能（`read_skill`、排除名单时常用它）。
+- 以 `.` 开头的目录会忽略；给人看的总说明（如 `README.md`）**不会**注入模型。
 
 多个技能并排放在同一父目录下，例如：
 
