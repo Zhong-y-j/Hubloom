@@ -46,8 +46,15 @@ from agent.turn_state import (
 )
 from context import clear_request_context
 from core.models import Message, Role
-from events import EventDispatcher, normalize_event
-from events.catalog import EventCatalog, resolve_events_skill_dir
+from events import (
+    EventCatalog,
+    EventDispatcher,
+    StreamHostAgentRunner,
+    normalize_event,
+)
+from events.catalog import resolve_events_skill_dir
+from events.idempotency import create_idempotency_store
+from events.session_gate import create_session_gate
 from im.wecom.adapter import (
     WeComAdapterConfig,
     WeComChatAdapter,
@@ -254,19 +261,34 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         events_dir=events_dir,
         config_catalog=_runtime.cfg.events_catalog,
     )
+    # 事件幂等 / 会话串行仅支持 Redis（默认本机 6379）
+    _events_redis = (
+        os.environ.get("HUBLOOM_EVENTS_REDIS_URL") or "redis://localhost:6379/0"
+    ).strip()
+    from redis.asyncio import Redis
+
+    _events_redis_client = Redis.from_url(_events_redis, decode_responses=True)
     _dispatcher = EventDispatcher(
         catalog=catalog,
+        idempotency=create_idempotency_store(
+            redis_url=_events_redis, redis=_events_redis_client
+        ),
+        session_gate=create_session_gate(
+            redis_url=_events_redis, redis=_events_redis_client
+        ),
         result_callback_url=_runtime.cfg.events_result_callback_url,
         default_bearer_token=_runtime.cfg.events_default_bearer_token,
         present_mode="markdown",
     )
-    _dispatcher.bind_runtime(_runtime)
+    # 接 Agent 能力（run_stream 宿主），不改 runtime 模块本身
+    _dispatcher.bind_agent(StreamHostAgentRunner(_runtime))
     _wecom_adapter = _build_wecom_adapter(_runtime)
     try:
         yield
     finally:
         if _runtime is not None:
             await _runtime.aclose()
+        await _events_redis_client.aclose()
         _runtime = None
         _dispatcher = None
         _wecom_adapter = None
