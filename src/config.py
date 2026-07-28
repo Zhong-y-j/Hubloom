@@ -85,10 +85,16 @@ class HubloomConfig:
 
     # mcp
     enable_mcp: bool = True
+    mcp_transport: str | None = None  # stdio | http；默认 stdio
     mcp_swagger_url: str | None = None
     mcp_base_url: str | None = None
+    mcp_url: str | None = None  # transport=http 时主路 URL
     mcp_auth_scheme: str | None = None
     mcp_token: str | None = None
+    mcp_remotes: list[dict[str, Any]] = field(default_factory=list)
+    mcp_serve_host: str | None = None
+    mcp_serve_port: int | None = None
+    mcp_serve_path: str | None = None
 
     # memory / session
     memory_db_path: str | None = None
@@ -194,6 +200,22 @@ class HubloomConfig:
         if enable_mcp is None:
             enable_mcp = True
 
+        mcp_transport = (_clean(mcp.get("transport")) or "stdio").lower()
+        if mcp_transport not in ("stdio", "http"):
+            raise ValueError(
+                f"mcp.transport 仅支持 stdio|http，收到: {mcp_transport!r}"
+            )
+
+        remotes_raw = mcp.get("remotes")
+        mcp_remotes: list[dict[str, Any]] = []
+        if isinstance(remotes_raw, list):
+            for i, item in enumerate(remotes_raw):
+                if not isinstance(item, dict):
+                    raise ValueError(f"mcp.remotes[{i}] 必须是 mapping")
+                mcp_remotes.append(dict(item))
+
+        serve = _section(mcp, "serve")
+
         events_enable = _as_bool(events.get("enable"))
         if events_enable is None:
             events_enable = False
@@ -223,10 +245,16 @@ class HubloomConfig:
             openai_base_url=_clean(llm.get("base_url")),
             openai_timeout=_as_int(llm.get("timeout")),
             enable_mcp=enable_mcp,
+            mcp_transport=mcp_transport,
             mcp_swagger_url=_clean(mcp.get("swagger_url")),
             mcp_base_url=_clean(mcp.get("base_url")),
+            mcp_url=_clean(mcp.get("url")),
             mcp_auth_scheme=_clean(mcp.get("auth_scheme")),
             mcp_token=_clean(mcp.get("token")),
+            mcp_remotes=mcp_remotes,
+            mcp_serve_host=_clean(serve.get("host")),
+            mcp_serve_port=_as_int(serve.get("port")),
+            mcp_serve_path=_clean(serve.get("path")),
             memory_db_path=_clean(memory.get("db_path")),
             enable_long_term_memory=_as_bool(memory.get("enable_long_term")),
             consolidate_min_turns=_as_int(memory.get("consolidate_min_turns")),

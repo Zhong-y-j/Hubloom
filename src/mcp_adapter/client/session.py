@@ -1,4 +1,4 @@
-"""MCP stdio 客户端：连接全量 backend worker（或旧网关），发现/调用工具。"""
+"""MCP 客户端：stdio（本地 worker）或 Streamable HTTP（独立 / 线上 MCP）。"""
 
 from __future__ import annotations
 
@@ -8,10 +8,12 @@ import threading
 import time
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any, Literal, TextIO
 
+import httpx
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.client.streamable_http import streamable_http_client
 
 from mcp_adapter.auth import auth_trace, build_auth_meta, resolve_auth_token
 from mcp_adapter.client.result import (
@@ -20,6 +22,8 @@ from mcp_adapter.client.result import (
     tool_input_schema,
 )
 from mcp_adapter.log import clip_text, dumps_clip, mcp_log
+
+TransportKind = Literal["stdio", "http"]
 
 
 def _worker_errlog() -> TextIO:
@@ -33,26 +37,45 @@ def _worker_errlog() -> TextIO:
 
 
 class MCPToolClient:
-    """通过子进程 stdio 与 MCP Server（全量 worker）通信。
+    """与 MCP Server 通信的客户端。
 
-    stdio 客户端的 anyio cancel scope 必须在同一 asyncio task 内进入/退出，
+    - **stdio**：拉起子进程（现有 OpenAPI worker），保持原行为。
+    - **http**：连接独立部署或线上的 Streamable HTTP MCP。
+
+    stdio / http 的 anyio cancel scope 须在同一 asyncio task 内进入/退出，
     因此连接生命周期运行在独立后台事件循环中。
     """
 
     def __init__(
         self,
-        command: str,
-        args: list[str],
+        command: str | None = None,
+        args: list[str] | None = None,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         timeout: float = 120.0,
+        *,
+        url: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
-        self.server_params = StdioServerParameters(
-            command=command,
-            args=args,
-            env=env,
-            cwd=cwd,
-        )
+        http_url = (url or "").strip()
+        if http_url:
+            self._transport: TransportKind = "http"
+            self._url = http_url
+            self._headers = dict(headers or {})
+            self.server_params = None
+        else:
+            if not command:
+                raise ValueError("MCPToolClient 需要 command（stdio）或 url（http）")
+            self._transport = "stdio"
+            self._url = None
+            self._headers = {}
+            self.server_params = StdioServerParameters(
+                command=command,
+                args=list(args or []),
+                env=env,
+                cwd=cwd,
+            )
+
         self.timeout = timeout
         self._session: ClientSession | None = None
         self._exit_stack: AsyncExitStack | None = None
@@ -60,6 +83,32 @@ class MCPToolClient:
         self._bg_loop: asyncio.AbstractEventLoop | None = None
         self._bg_thread: threading.Thread | None = None
         self._bg_ready = threading.Event()
+
+    @classmethod
+    def stdio(
+        cls,
+        command: str,
+        args: list[str] | None = None,
+        *,
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
+        timeout: float = 120.0,
+    ) -> MCPToolClient:
+        return cls(command=command, args=args or [], env=env, cwd=cwd, timeout=timeout)
+
+    @classmethod
+    def http(
+        cls,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        timeout: float = 120.0,
+    ) -> MCPToolClient:
+        return cls(url=url, headers=headers, timeout=timeout)
+
+    @property
+    def transport(self) -> TransportKind:
+        return self._transport
 
     def _ensure_bg_loop(self) -> asyncio.AbstractEventLoop:
         if self._bg_loop is not None:
@@ -86,14 +135,11 @@ class MCPToolClient:
         loop = self._ensure_bg_loop()
         return await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(coro, loop))
 
-    async def _connect_impl(self) -> None:
-        if self._exit_stack is not None:
-            raise RuntimeError("MCPToolClient is already connected.")
-
+    async def _connect_stdio_impl(self) -> None:
+        assert self.server_params is not None
         stack = AsyncExitStack()
         await stack.__aenter__()
         try:
-            # MCP_WORKER_STDERR=1 时把子进程日志打到父终端，便于调试
             if (os.getenv("MCP_WORKER_STDERR") or "").strip().lower() in {
                 "1",
                 "true",
@@ -116,6 +162,36 @@ class MCPToolClient:
 
         self._exit_stack = stack
         self._session = session
+
+    async def _connect_http_impl(self) -> None:
+        assert self._url is not None
+        stack = AsyncExitStack()
+        await stack.__aenter__()
+        try:
+            http_client = httpx.AsyncClient(
+                headers=self._headers or None,
+                timeout=httpx.Timeout(self.timeout, read=max(self.timeout, 300.0)),
+            )
+            await stack.enter_async_context(http_client)
+            read, write, _get_sid = await stack.enter_async_context(
+                streamable_http_client(self._url, http_client=http_client)
+            )
+            session = await stack.enter_async_context(ClientSession(read, write))
+            await asyncio.wait_for(session.initialize(), timeout=self.timeout)
+        except BaseException:
+            await stack.__aexit__(None, None, None)
+            raise
+
+        self._exit_stack = stack
+        self._session = session
+
+    async def _connect_impl(self) -> None:
+        if self._exit_stack is not None:
+            raise RuntimeError("MCPToolClient is already connected.")
+        if self._transport == "http":
+            await self._connect_http_impl()
+        else:
+            await self._connect_stdio_impl()
 
     async def connect(self) -> None:
         await self._call_bg(self._connect_impl())
@@ -186,6 +262,7 @@ class MCPToolClient:
             tool=tool_name,
             has_meta=meta is not None,
             scheme=auth_scheme,
+            transport=self._transport,
         )
         try:
             result = await asyncio.wait_for(
