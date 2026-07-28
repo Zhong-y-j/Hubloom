@@ -1,5 +1,3 @@
-"""扫描 ``SKILL.md``，把技能名片注入 system prompt。"""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -72,7 +70,7 @@ def build_skills_prompt(skills: Sequence[dict[str, Any]]) -> str:
         return ""
     lines = [
         "【可用 Skills】",
-        "以下为技能名片（name + description）。需要细则时调用工具 read_skill(skill=目录id或name)，"
+        "以下为技能名片（name + description）。需要细则时调用工具 read_skill(skill=name)，"
         "再按返回的 SKILL.md 正文执行；同一 skill 每轮只读一次。",
     ]
     for s in skills:

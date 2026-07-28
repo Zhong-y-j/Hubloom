@@ -38,9 +38,7 @@ def _norm(s: str) -> str:
     return (s or "").strip().lower()
 
 
-def resolve_skill(
-    skills: Sequence[dict[str, Any]], key: str
-) -> dict[str, Any] | None:
+def resolve_skill(skills: Sequence[dict[str, Any]], key: str) -> dict[str, Any] | None:
     """按目录 id 或 frontmatter name 解析；id 优先。"""
     raw = (key or "").strip()
     if not raw:
@@ -106,9 +104,7 @@ class ReadSkillTool(BaseTool):
 
     def _catalog(self) -> list[dict[str, Any]]:
         if self._skills is None:
-            self._skills = load_skills(
-                self._skills_dir, exclude=self._skills_exclude
-            )
+            self._skills = load_skills(self._skills_dir, exclude=self._skills_exclude)
         return self._skills
 
     async def execute(self, skill: str = "", **_: Any) -> str:
@@ -131,8 +127,7 @@ class ReadSkillTool(BaseTool):
         loaded = _turn_loaded()
         if sid in loaded:
             return (
-                f"skill {sid} 已在本轮加载，请根据上文正文执行，"
-                f"勿重复 read_skill。"
+                f"skill {sid} 已在本轮加载，请根据上文正文执行，" f"勿重复 read_skill。"
             )
 
         body = str(hit.get("body") or "").strip()
