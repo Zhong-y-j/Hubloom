@@ -21,6 +21,7 @@ class ToolRegistry:
         self._tools: dict[str, BaseTool] = {}
 
     def register(self, tool: BaseTool) -> None:
+        """注册工具"""
         self._tools[tool.name] = tool
 
     def get(self, name: str) -> BaseTool | None:
@@ -49,6 +50,7 @@ class ToolRegistry:
 
     @classmethod
     def from_tools(cls, tools: list[BaseTool]) -> "ToolRegistry":
+        """从工具列表创建注册表"""
         reg = cls()
         for t in tools:
             reg.register(t)
