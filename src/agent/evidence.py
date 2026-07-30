@@ -12,6 +12,7 @@ EvidenceKind = Literal[
     "await_confirm",
     "finish",
     "parse_reject",
+    "policy_reject",
 ]
 
 

@@ -78,6 +78,16 @@ class StepEvent(AgentEvent):
 
 
 @dataclass
+class PolicyRejectEvent(AgentEvent):
+    """Gate 拒绝（通常回环再 Decide；fused 时随后终态失败）。"""
+
+    code: str
+    reason: str
+    action: str
+    fused: bool = False
+
+
+@dataclass
 class AwaitingUserEvent(AgentEvent):
     """interactive：Run 内等人（宿主自绘输入/确认，非 A2UI）。"""
 

@@ -23,12 +23,15 @@ __all__ = [
     "FinishAction",
     "InMemorySessionStore",
     "PendingState",
+    "Playbook",
+    "PolicyRejectEvent",
     "RunCompleteEvent",
     "RunResult",
     "StepEvent",
     "TypedAction",
     "build_agent_systems",
     "cancel_awaiting",
+    "compile_playbook_from_skills",
     "control_tool_definitions",
     "parse_decide_output",
     "resume_stream",
@@ -60,10 +63,15 @@ def __getattr__(name: str) -> Any:
         "StepEvent",
         "RunCompleteEvent",
         "AwaitingUserEvent",
+        "PolicyRejectEvent",
     }:
         import agent.events as events
 
         return getattr(events, name)
+    if name in {"Playbook", "compile_playbook_from_skills"}:
+        import agent.policy as policy
+
+        return getattr(policy, name)
     if name == "EvidenceJournal":
         from agent.evidence import EvidenceJournal
 

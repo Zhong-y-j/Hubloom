@@ -10,6 +10,7 @@ from typing import Any, Literal, Protocol
 from core.models import Message
 
 from agent.evidence import EvidenceJournal
+from agent.policy import PlaybookProgress
 
 WaitKind = Literal["ask", "await_confirm"]
 SessionStatus = Literal["idle", "running", "awaiting_user"]
@@ -64,6 +65,7 @@ class AwaitingSnapshot:
     system_after: str
     parse_retries: int
     max_rounds: int
+    progress: PlaybookProgress | None = None
     created_at: float = field(default_factory=time.time)
 
 

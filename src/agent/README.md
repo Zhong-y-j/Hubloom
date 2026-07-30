@@ -1,37 +1,42 @@
-# Agent（Step 3 · Wait Profile）
+# Agent（Step 4 · Gate + Playbook）
 
 目标架构见 `docs/modules/agent-architecture.md`。
 
-当前目录是 **新环**实现；旧 Think/Present/A2UI 备份在 `src/agent copy/`。  
 **不在本步改 Runtime / 示例站**（宿主切换见 Step 5）。
 
 ## 包结构
 
 | 路径 | 作用 |
 | --- | --- |
-| `actions.py` | Typed 动作互斥解析 + 控制 tools |
+| `actions.py` | Typed 动作互斥 |
 | `evidence.py` | Evidence Journal |
-| `wait.py` | `interactive` / `turn_based` / `no_wait` |
-| `session.py` | pending / awaiting + `InMemorySessionStore` |
-| `loop/decide.py` / `loop/exec_act.py` | Decide / Exec |
-| `run.py` | `run_stream` + `resume_stream` |
-| `assemble.py` | 历史 + Journal + Pending 摘要 |
-| `events.py` | step / tool / `awaiting_user` / `run_complete` |
+| `wait.py` / `session.py` | Wait Profile + pending/awaiting |
+| `policy.py` | Playbook 模型 + Skill frontmatter 编译 |
+| `gate.py` | Exec 前硬拦；reject 回环；同因熔断 |
+| `run.py` | Decide → Gate → Exec/Wait/Finish |
+| `assemble.py` | 历史 + Playbook/Journal/Pending 摘要 |
 
-未做（后续）：Playbook Gate、Runtime/示例拆 A2UI、Session 外置 Redis。
+## Skill `playbook` frontmatter（最小）
 
-## Wait Profile（Agent 层）
+```yaml
+playbook:
+  forbid_tools: [echo_bad]
+  require_steps:
+    - id: register_pet
+      tools: [echo_pet]
+  confirm_tools: [echo_pet]
+```
 
-| Profile | ask / await_confirm |
-| --- | --- |
-| `turn_based`（默认） | 结束 Run → `waiting_user` + `pending`；下轮新 Run 续办 |
-| `interactive` | 同一 Run 挂起 → `awaiting_user`；`resume_stream` 继续 |
-| `no_wait` | 降级 `failed`，不挂死 |
+无 Playbook = 纯能力环。
 
-## 验证（不经 Runtime）
+## 验证
+
+分步单测 + **整流程集成**（推荐先跑 flow）：
 
 ```bash
+PYTHONPATH=src .venv/bin/python tests/test_agent_v2_flow.py
 PYTHONPATH=src .venv/bin/python tests/test_agent_v2_step1.py
 PYTHONPATH=src .venv/bin/python tests/test_agent_v2_step2.py
 PYTHONPATH=src .venv/bin/python tests/test_agent_v2_step3.py
+PYTHONPATH=src .venv/bin/python tests/test_agent_v2_step4.py
 ```

@@ -32,14 +32,17 @@ from agent.events import (
     ErrorEvent,
     FinalAnswerEvent,
     PhaseEvent,
+    PolicyRejectEvent,
     RunCompleteEvent,
     RunStatsEvent,
     StepEvent,
     ToolCallEvent,
     ToolResultEvent,
 )
+from agent.gate import check_action
 from agent.loop.decide import DecideResult, decide
 from agent.loop.exec_act import ExecResult, exec_acts
+from agent.policy import Playbook, PlaybookProgress
 from agent.session import (
     AwaitingSnapshot,
     PendingState,
@@ -146,9 +149,12 @@ async def _agent_loop(
     pending: PendingState | None,
     session_id: str | None,
     store: SessionStore | None,
+    playbook: Playbook | None,
+    progress: PlaybookProgress,
 ) -> AsyncIterator[AgentEvent | RunResult]:
     llm_tools = _merge_tools(tools)
     active_pending = pending
+    book = playbook if playbook is not None else Playbook()
 
     def _elapsed() -> int:
         return max(0, int((time.monotonic() - started) * 1000))
@@ -282,6 +288,7 @@ async def _agent_loop(
             system_after=system_after,
             parse_retries=parse_retries,
             max_rounds=max_rounds,
+            progress=progress,
         )
         if store is None or not session_id:
             err = "interactive 挂起需要 session_id + SessionStore"
@@ -334,6 +341,7 @@ async def _agent_loop(
             turn_messages=turn_messages,
             journal=evidence,
             pending=active_pending,
+            playbook=book if not book.is_empty() else None,
         )
 
         decision: DecideResult | None = None
@@ -392,6 +400,38 @@ async def _agent_loop(
         action = decision.action
         assert action is not None
 
+        verdict = check_action(action, book, progress)
+        if not verdict.allow:
+            evidence.append(
+                step=rounds,
+                kind="policy_reject",
+                summary=_clip_obs(verdict.reason),
+            )
+            yield PolicyRejectEvent(
+                code=verdict.code,
+                reason=verdict.reason,
+                action=getattr(action, "kind", "?"),
+                fused=verdict.fused,
+            )
+            hint = Message(
+                role=Role.USER,
+                content=(
+                    f"Policy Gate 拒绝：{verdict.reason}。"
+                    "请改选合规动作（必要工具 / ask / await_confirm / finish）。"
+                ),
+            )
+            turn_messages.append(hint)
+            if verdict.fused:
+                err = verdict.reason
+                yield ErrorEvent(error=err, recoverable=False)
+                result = _finish_result(
+                    content="", status="failed", ok=False, error=err
+                )
+                for item in _emit_terminal(result):
+                    yield item
+                return
+            continue
+
         if isinstance(action, ActAction):
             exec_result: ExecResult | None = None
             step_ids: list[str] = []
@@ -407,6 +447,8 @@ async def _agent_loop(
                     if isinstance(item, ToolResultEvent):
                         if item.is_error:
                             tool_errors_n += 1
+                        else:
+                            progress.mark_tool_success(item.tool_name, book)
                         entry = evidence.append(
                             step=rounds,
                             kind="observation",
@@ -524,11 +566,14 @@ async def run_stream(
     pending: PendingState | None = None,
     session_id: str | None = None,
     store: SessionStore | None = None,
+    playbook: Playbook | None = None,
 ) -> AsyncIterator[AgentEvent | RunResult]:
     """新开一轮 Run。interactive 挂起中禁止再 begin（须 resume/cancel）。"""
     profile = normalize_wait_profile(str(wait_profile))
     evidence = journal or EvidenceJournal()
     started = time.monotonic()
+    progress = PlaybookProgress()
+    book = playbook
 
     if store and session_id:
         rec = store.get(session_id)
@@ -560,6 +605,10 @@ async def run_stream(
         rec.active_run_id = evidence.run_id
         rec.awaiting = None
         store.put(rec)
+
+    if pending is not None and pending.kind == "await_confirm":
+        # 本轮用户消息视为对上一轮确认的答复
+        progress.mark_confirmed()
 
     triggers = [trigger] if isinstance(trigger, Message) else list(trigger)
     if not triggers:
@@ -615,6 +664,8 @@ async def run_stream(
         pending=pending,
         session_id=session_id,
         store=store,
+        playbook=book,
+        progress=progress,
     ):
         yield item
 
@@ -631,6 +682,7 @@ async def resume_stream(
     run_id: str | None = None,
     await_token: str | None = None,
     trigger_source: str = "user",
+    playbook: Playbook | None = None,
 ) -> AsyncIterator[AgentEvent | RunResult]:
     """interactive：用用户回复恢复同一 Run。"""
     rec = store.get(session_id)
@@ -681,6 +733,11 @@ async def resume_stream(
         await_kind=snap.kind,
     )
 
+    progress = snap.progress or PlaybookProgress()
+    # 若挂起的是 await_confirm，resume 即视为用户已确认
+    if snap.kind == "await_confirm":
+        progress.mark_confirmed()
+
     async for item in _agent_loop(
         llm=llm,
         memory=memory,
@@ -700,6 +757,8 @@ async def resume_stream(
         pending=None,
         session_id=session_id,
         store=store,
+        playbook=playbook,
+        progress=progress,
     ):
         yield item
 
