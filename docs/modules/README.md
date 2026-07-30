@@ -51,8 +51,9 @@ flowchart TB
 
 | 模块            | 仓库位置                                            | 一句话                                           | 详解                          |
 | --------------- | --------------------------------------------------- | ------------------------------------------------ | ----------------------------- |
-| **Runtime**     | `src/runtime.py`、`src/config.py`、`src/context.py` | 进程级装配：LLM / MCP / prompt / 按 session 跑流 | [Runtime](runtime.md)         |
-| **Agent**       | `src/agent/`                                        | 回合编排、Think/Present/Respond、SSE / AG-UI     | [Agent](agent.md)             |
+| **Runtime**     | `src/runtime.py`、`src/config.py`、`src/context.py` | 进程级装配：LLM / MCP / Playbook / Wait Profile | [Runtime](runtime.md)         |
+| **Hubloom Serve** | `src/server/`                                   | 产品 HTTP API：`hubloom serve`（无 A2UI/AG-UI） | [Hubloom Serve](hubloom-serve.md) |
+| **Agent**       | `src/agent/`                                        | Typed ReAct 单环、Journal、Gate、SSE 事件        | [Agent](agent.md)             |
 | **Tools**       | `src/tools/`                                        | 工具基类、Runner、内置元工具注册                 | [Tools](tools.md)             |
 | **MCP Adapter** | `src/mcp_adapter/`                                  | OpenAPI → MCP → `list_api` / `call_api`          | [MCP Adapter](mcp-adapter.md) |
 | **Skill**       | `src/skill/`、`skills/`                             | 加载 `SKILL.md`、名片注入、`read_skill`          | [Skill](skill.md)             |
