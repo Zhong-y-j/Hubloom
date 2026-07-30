@@ -32,14 +32,12 @@ class EventDispatcher:
         idempotency: IdempotencyStore,
         session_gate: SessionGate,
         result_callback_url: str | None = None,
-        default_bearer_token: str | None = None,
         present_mode: str = "markdown",
     ) -> None:
         self.catalog = catalog
         self.idempotency = idempotency
         self.session_gate = session_gate
         self.result_callback_url = (result_callback_url or "").strip() or None
-        self.default_bearer_token = (default_bearer_token or "").strip() or None
         self.present_mode = present_mode
         self._agent: EventAgentRunner | None = None
         # 同 event_id 并发：进程内等待首个完成（跨实例靠 Redis 幂等键）
@@ -101,7 +99,9 @@ class EventDispatcher:
         assert self._agent is not None
         entry = self.catalog.get(event.type)
         trigger_text = render_event_trigger(event, entry)
-        bearer = event.bearer_token or self.default_bearer_token
+        bearer = event.bearer_token
+        if bearer:
+            bearer = bearer.strip() or None
         error: str | None = None
         ok = False
         summary = ""

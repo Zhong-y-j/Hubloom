@@ -33,7 +33,7 @@ from agent.events import (
 )
 from agent.policy import Playbook, compile_playbook_from_skills
 from agent.run import RunResult
-from agent.session import InMemorySessionStore
+from redis_test_utils import make_fake_session_backends
 from config import HubloomConfig
 from core.models import LLMOutput, Message, Role, StopReason, ToolCall
 from core.provider import LLMProvider, LLMStreamEvent, StreamEndEvent
@@ -151,6 +151,7 @@ def _build_runtime(
     )
     if playbook is None:
         playbook = compile_playbook_from_skills(load_skills(skills_dir))
+    store, lock = make_fake_session_backends()
     return HubloomRuntime(
         cfg=cfg,
         llm=llm,
@@ -159,7 +160,8 @@ def _build_runtime(
         mcp_setup=None,
         _mcp_tools=[EchoPetTool()],
         playbook=playbook,
-        session_store=InMemorySessionStore(),
+        session_store=store,
+        session_lock=lock,
         default_wait_profile=wait_profile,
         max_rounds=8,
     )

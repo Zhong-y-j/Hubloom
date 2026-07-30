@@ -16,7 +16,8 @@ from typing import Any
 from agent.actions import CONTROL_ASK, CONTROL_FINISH
 from agent.events import AwaitingUserEvent
 from agent.run import RunResult, resume_stream, run_stream
-from agent.session import InMemorySessionStore, PendingState
+from agent.session import PendingState
+from redis_test_utils import make_fake_session_backends
 from core.models import LLMOutput, Message, Role, StopReason, ToolCall
 from core.provider import LLMProvider, LLMStreamEvent, StreamEndEvent
 from memory import create_memory_manager
@@ -105,7 +106,7 @@ def _kit():
 
 async def test_turn_based_two_rounds() -> None:
     _, runner, tools = _kit()
-    store = InMemorySessionStore()
+    store, _lock = make_fake_session_backends()
     sid = "tb-1"
     system = "step3 turn_based"
     mem, path = _tmp_memory("tb")
@@ -196,7 +197,7 @@ async def test_turn_based_two_rounds() -> None:
 
 async def test_interactive_resume() -> None:
     _, runner, tools = _kit()
-    store = InMemorySessionStore()
+    store, _lock = make_fake_session_backends()
     sid = "ix-1"
     system = "step3 interactive"
     mem, path = _tmp_memory("ix")

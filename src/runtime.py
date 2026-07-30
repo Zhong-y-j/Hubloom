@@ -1,6 +1,6 @@
 """Hubloom 运行时：读配置装配一次，按 session 跑 Typed ReAct。
 
-装配：LLM / MCP / system / Playbook / SessionStore / 默认 Wait Profile。
+装配：LLM / MCP / system / Playbook / Redis SessionStore + 会话锁 / 默认 Wait Profile。
 不经示例站；宿主自行传 wait_profile 与 resume。
 
     agent = await HubloomRuntime.from_config(cfg)
@@ -22,11 +22,16 @@ from agent.agent_log import configure_agent_logging
 from agent.assemble import build_agent_systems
 from agent.events import AgentEvent
 from agent.policy import Playbook, compile_playbook_from_skills
+from agent.redis_session import (
+    RedisSessionLock,
+    RedisSessionStore,
+    create_redis_session_backends,
+)
 from agent.run import RunResult, resume_stream, run_stream
-from agent.session import InMemorySessionStore, PendingState, SessionStore
+from agent.session import PendingState, SessionStore
 from agent.wait import WaitProfile, normalize_wait_profile
 from config import HubloomConfig
-from context import set_request_context
+from context import clear_request_context, set_request_context
 from core.factory import create_llm
 from core.models import Message
 from core.provider import LLMProvider
@@ -74,7 +79,7 @@ def _compile_playbook(cfg: HubloomConfig) -> Playbook:
 
 @dataclass
 class HubloomRuntime:
-    """进程级 Agent 运行时（LLM / MCP / Playbook / Session）；session 在 run 时注入。"""
+    """进程级 Agent 运行时（LLM / MCP / Playbook / Redis Session）；session 在 run 时注入。"""
 
     cfg: HubloomConfig
     llm: LLMProvider
@@ -83,9 +88,12 @@ class HubloomRuntime:
     mcp_setup: AgentMcpSetup | None
     _mcp_tools: list[Any]
     playbook: Playbook = field(default_factory=Playbook)
-    session_store: SessionStore = field(default_factory=InMemorySessionStore)
+    session_store: SessionStore = field(default=None)  # type: ignore[assignment]
+    session_lock: RedisSessionLock = field(default=None)  # type: ignore[assignment]
     default_wait_profile: str = "turn_based"
     max_rounds: int = 8
+    _redis_sync: Any = field(default=None, repr=False)
+    _redis_async: Any = field(default=None, repr=False)
 
     @classmethod
     async def from_config(
@@ -94,6 +102,7 @@ class HubloomRuntime:
         *,
         max_rounds: int = 8,
         session_store: SessionStore | None = None,
+        session_lock: RedisSessionLock | None = None,
         # 兼容旧调用方关键字（已忽略）
         default_present_mode: str | None = None,
         max_think_rounds: int | None = None,
@@ -135,9 +144,6 @@ class HubloomRuntime:
             child_env: dict[str, str] = {}
             if cfg.mcp_auth_scheme:
                 child_env["MCP_AUTH_SCHEME"] = str(cfg.mcp_auth_scheme).strip()
-            if cfg.mcp_token:
-                child_env["MCP_TOKEN"] = str(cfg.mcp_token).strip()
-
             src_cwd = str(_project_root(cfg) / "src")
             mcp_setup = await load_agent_mcp_bindings(
                 swagger_url=swagger,
@@ -155,6 +161,25 @@ class HubloomRuntime:
         playbook = _compile_playbook(cfg)
         wait_profile = normalize_wait_profile(cfg.default_wait_profile)
 
+        redis_sync = None
+        redis_async = None
+        if session_store is None or session_lock is None:
+            url = (cfg.redis_url or "").strip()
+            if not url:
+                raise ValueError(
+                    "未配置 redis.url（Agent 挂起态与会话锁仅支持 Redis）"
+                )
+            store, lock, redis_sync, redis_async = create_redis_session_backends(
+                url,
+                session_ttl_seconds=cfg.redis_session_ttl_seconds,
+                lock_ttl_seconds=cfg.redis_lock_ttl_seconds,
+            )
+            if session_store is None:
+                session_store = store
+            if session_lock is None:
+                session_lock = lock
+        assert session_store is not None and session_lock is not None
+
         return cls(
             cfg=cfg,
             llm=llm,
@@ -163,9 +188,12 @@ class HubloomRuntime:
             mcp_setup=mcp_setup,
             _mcp_tools=mcp_tools,
             playbook=playbook,
-            session_store=session_store or InMemorySessionStore(),
+            session_store=session_store,
+            session_lock=session_lock,
             default_wait_profile=wait_profile,
             max_rounds=max_rounds,
+            _redis_sync=redis_sync,
+            _redis_async=redis_async,
         )
 
     @classmethod
@@ -175,6 +203,7 @@ class HubloomRuntime:
         *,
         max_rounds: int = 8,
         session_store: SessionStore | None = None,
+        session_lock: RedisSessionLock | None = None,
         default_present_mode: str | None = None,
         max_think_rounds: int | None = None,
     ) -> HubloomRuntime:
@@ -183,6 +212,7 @@ class HubloomRuntime:
             cfg,
             max_rounds=max_rounds,
             session_store=session_store,
+            session_lock=session_lock,
             default_present_mode=default_present_mode,
             max_think_rounds=max_think_rounds,
         )
@@ -255,24 +285,26 @@ class HubloomRuntime:
         self._bind_request_context(session_id=sid, bearer_token=bearer_token)
         memory = self._make_memory(sid)
         runner, tool_defs = self._make_runner(memory)
-
-        async for item in run_stream(
-            llm=self.llm,
-            memory=memory,
-            runner=runner,
-            tools=tool_defs,
-            trigger=trigger,
-            system_before=self.system_before,
-            system_after=self.system_after,
-            max_rounds=max_rounds or self.max_rounds,
-            trigger_source=trigger_source,
-            wait_profile=profile,
-            pending=pending,
-            session_id=sid,
-            store=self.session_store,
-            playbook=book,
-        ):
-            yield item
+        try:
+            async for item in run_stream(
+                llm=self.llm,
+                memory=memory,
+                runner=runner,
+                tools=tool_defs,
+                trigger=trigger,
+                system_before=self.system_before,
+                system_after=self.system_after,
+                max_rounds=max_rounds or self.max_rounds,
+                trigger_source=trigger_source,
+                wait_profile=profile,
+                pending=pending,
+                session_id=sid,
+                store=self.session_store,
+                playbook=book,
+            ):
+                yield item
+        finally:
+            clear_request_context()
 
     async def resume_stream(
         self,
@@ -294,21 +326,23 @@ class HubloomRuntime:
         self._bind_request_context(session_id=sid, bearer_token=bearer_token)
         memory = self._make_memory(sid)
         runner, tool_defs = self._make_runner(memory)
-
-        async for item in resume_stream(
-            llm=self.llm,
-            memory=memory,
-            runner=runner,
-            tools=tool_defs,
-            session_id=sid,
-            store=self.session_store,
-            user_reply=user_reply,
-            run_id=run_id,
-            await_token=await_token,
-            trigger_source=trigger_source,
-            playbook=book,
-        ):
-            yield item
+        try:
+            async for item in resume_stream(
+                llm=self.llm,
+                memory=memory,
+                runner=runner,
+                tools=tool_defs,
+                session_id=sid,
+                store=self.session_store,
+                user_reply=user_reply,
+                run_id=run_id,
+                await_token=await_token,
+                trigger_source=trigger_source,
+                playbook=book,
+            ):
+                yield item
+        finally:
+            clear_request_context()
 
     async def aclose(self) -> None:
         if self.mcp_setup is not None:
@@ -316,3 +350,15 @@ class HubloomRuntime:
                 await self.mcp_setup.bindings.client.close()
             finally:
                 self.mcp_setup = None
+        if self._redis_async is not None:
+            try:
+                await self._redis_async.aclose()
+            except Exception:
+                pass
+            self._redis_async = None
+        if self._redis_sync is not None:
+            try:
+                self._redis_sync.close()
+            except Exception:
+                pass
+            self._redis_sync = None

@@ -1,4 +1,4 @@
-"""Session 端口：pending / awaiting（Step 3；内存实现供单测与单进程）。"""
+"""Session 端口：pending / awaiting；存储实现见 RedisSessionStore。"""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ class PendingState:
 
 @dataclass
 class AwaitingSnapshot:
-    """interactive：同一 Run 挂起快照（进程内；外置见 Step 6）。"""
+    """interactive：同一 Run 挂起快照（Redis SessionStore 持久化）。"""
 
     run_id: str
     await_token: str
@@ -84,22 +84,6 @@ class SessionStore(Protocol):
     def put(self, record: SessionRecord) -> None: ...
 
     def delete(self, session_id: str) -> None: ...
-
-
-class InMemorySessionStore:
-    """单进程开发 / 单测用；多副本须换外置实现。"""
-
-    def __init__(self) -> None:
-        self._data: dict[str, SessionRecord] = {}
-
-    def get(self, session_id: str) -> SessionRecord | None:
-        return self._data.get(session_id)
-
-    def put(self, record: SessionRecord) -> None:
-        self._data[record.session_id] = record
-
-    def delete(self, session_id: str) -> None:
-        self._data.pop(session_id, None)
 
 
 def ensure_record(store: SessionStore, session_id: str) -> SessionRecord:

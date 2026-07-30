@@ -89,8 +89,6 @@ async def cmd_stdio(*, limit: int) -> None:
     child_env: dict[str, str] = {}
     if cfg.mcp_auth_scheme:
         child_env["MCP_AUTH_SCHEME"] = str(cfg.mcp_auth_scheme).strip()
-    if cfg.mcp_token:
-        child_env["MCP_TOKEN"] = str(cfg.mcp_token).strip()
     client = await connect_full_mcp(
         swagger_url=swagger,
         base_url=cfg.mcp_base_url,
@@ -115,8 +113,6 @@ async def cmd_multi(*, url: str, headers_json: str | None, limit: int) -> None:
     child_env: dict[str, str] = {}
     if cfg.mcp_auth_scheme:
         child_env["MCP_AUTH_SCHEME"] = str(cfg.mcp_auth_scheme).strip()
-    if cfg.mcp_token:
-        child_env["MCP_TOKEN"] = str(cfg.mcp_token).strip()
 
     endpoints = [
         McpEndpoint(

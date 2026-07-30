@@ -36,7 +36,7 @@ class EvidenceEntry:
 
 @dataclass
 class EvidenceJournal:
-    """单次 Run 的证据账（进程内；外置挂起态是后续 Step）。"""
+    """单次 Run 的证据账（interactive 挂起时随 SessionRecord 写入 Redis）。"""
 
     run_id: str = field(default_factory=_new_run_id)
     entries: list[EvidenceEntry] = field(default_factory=list)

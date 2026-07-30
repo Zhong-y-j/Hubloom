@@ -90,7 +90,6 @@ class HubloomConfig:
     mcp_base_url: str | None = None
     mcp_url: str | None = None  # transport=http 时主路 URL
     mcp_auth_scheme: str | None = None
-    mcp_token: str | None = None
     mcp_remotes: list[dict[str, Any]] = field(default_factory=list)
     mcp_serve_host: str | None = None
     mcp_serve_port: int | None = None
@@ -142,11 +141,15 @@ class HubloomConfig:
     # agent：默认 Wait Profile（入口可在 run_stream 覆盖）
     default_wait_profile: str = "turn_based"
 
+    # redis：SessionStore（挂起/pending）与按 session 分布式锁（必填）
+    redis_url: str | None = None
+    redis_session_ttl_seconds: int | None = None
+    redis_lock_ttl_seconds: int | None = None
+
     # events：业务推送入站（POST /v1/events）
     events_enable: bool = False
     events_shared_secret: str | None = None
     events_result_callback_url: str | None = None
-    events_default_bearer_token: str | None = None
     events_catalog: dict[str, Any] = field(default_factory=dict)
 
     # im.wecom：企业微信自建应用对话入口
@@ -158,8 +161,6 @@ class HubloomConfig:
     wecom_encoding_aes_key: str | None = None
     wecom_session_prefix: str = "wecom"
     wecom_token_resolve: dict[str, Any] = field(default_factory=dict)
-    # 仅本地联调：/v1/dev/wecom-token 返回的业务 Bearer（勿用于生产）
-    wecom_dev_bearer_token: str | None = None
 
     source_path: str | None = field(default=None, repr=False)
 
@@ -240,6 +241,10 @@ class HubloomConfig:
         agent_id = _as_int(wecom.get("agent_id"))
         session_prefix = _clean(wecom.get("session_prefix")) or "wecom"
 
+        redis_sec = data.get("redis") or {}
+        if not isinstance(redis_sec, dict):
+            redis_sec = {}
+
         skills_dir = _clean(data.get("skills_dir")) or "skills"
 
         agent_sec = _section(data, "agent")
@@ -260,7 +265,6 @@ class HubloomConfig:
             mcp_base_url=_clean(mcp.get("base_url")),
             mcp_url=_clean(mcp.get("url")),
             mcp_auth_scheme=_clean(mcp.get("auth_scheme")),
-            mcp_token=_clean(mcp.get("token")),
             mcp_remotes=mcp_remotes,
             mcp_serve_host=_clean(serve.get("host")),
             mcp_serve_port=_as_int(serve.get("port")),
@@ -295,10 +299,12 @@ class HubloomConfig:
             skills_dir=skills_dir,
             skills_exclude=_as_str_list(data.get("skills_exclude")),
             default_wait_profile=default_wait,
+            redis_url=_clean(redis_sec.get("url")),
+            redis_session_ttl_seconds=_as_int(redis_sec.get("session_ttl_seconds")),
+            redis_lock_ttl_seconds=_as_int(redis_sec.get("lock_ttl_seconds")),
             events_enable=events_enable,
             events_shared_secret=_clean(events.get("shared_secret")),
             events_result_callback_url=_clean(events.get("result_callback_url")),
-            events_default_bearer_token=_clean(events.get("default_bearer_token")),
             events_catalog=events_catalog,
             wecom_enable=wecom_enable,
             wecom_corp_id=_clean(wecom.get("corp_id")),
@@ -308,6 +314,5 @@ class HubloomConfig:
             wecom_encoding_aes_key=_clean(wecom.get("encoding_aes_key")),
             wecom_session_prefix=session_prefix,
             wecom_token_resolve=wecom_token_resolve,
-            wecom_dev_bearer_token=_clean(wecom.get("dev_bearer_token")),
             source_path=str(cfg_path.resolve()),
         )

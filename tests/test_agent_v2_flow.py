@@ -28,7 +28,7 @@ from agent.events import (
 )
 from agent.policy import Playbook, RequireStep
 from agent.run import RunResult, resume_stream, run_stream
-from agent.session import InMemorySessionStore
+from redis_test_utils import make_fake_session_backends
 from core.models import LLMOutput, Message, Role, StopReason, ToolCall
 from core.provider import LLMProvider, LLMStreamEvent, StreamEndEvent
 from memory import create_memory_manager
@@ -148,7 +148,7 @@ async def _collect(agen) -> tuple[RunResult, list[Any]]:
 async def test_full_turn_based_pet_flow() -> None:
     runner, tools = _kit()
     book = _playbook()
-    store = InMemorySessionStore()
+    store, _lock = make_fake_session_backends()
     sid = "flow-pet"
     system = "集成测试：按 Playbook 办事。"
     mem, path = _tmp_memory("flow-tb")
@@ -294,7 +294,7 @@ async def test_full_turn_based_pet_flow() -> None:
 
 async def test_full_interactive_resume_flow() -> None:
     runner, tools = _kit()
-    store = InMemorySessionStore()
+    store, _lock = make_fake_session_backends()
     sid = "flow-ix"
     system = "集成测试 interactive"
     mem, path = _tmp_memory("flow-ix")

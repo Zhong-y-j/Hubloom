@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from agent.actions import CONTROL_ASK, CONTROL_FINISH
 from agent.policy import Playbook
-from agent.session import InMemorySessionStore
+from redis_test_utils import make_fake_session_backends
 from config import HubloomConfig
 from core.models import LLMOutput, Message, Role, StopReason, ToolCall
 from core.provider import LLMProvider, LLMStreamEvent, StreamEndEvent
@@ -81,10 +81,11 @@ def _make_runtime(llm: ScriptedLLM, memory_db: Path) -> HubloomRuntime:
         openai_api_key="x",
         enable_mcp=False,
         memory_db_path=str(memory_db),
-        mcp_token="test-token",
         default_wait_profile="interactive",
         agent_log=False,
+        redis_url="redis://localhost:6379/0",
     )
+    store, lock = make_fake_session_backends()
     return HubloomRuntime(
         cfg=cfg,
         llm=llm,
@@ -93,7 +94,8 @@ def _make_runtime(llm: ScriptedLLM, memory_db: Path) -> HubloomRuntime:
         mcp_setup=None,
         _mcp_tools=[EchoPetTool()],
         playbook=Playbook(),
-        session_store=InMemorySessionStore(),
+        session_store=store,
+        session_lock=lock,
         default_wait_profile="interactive",
     )
 

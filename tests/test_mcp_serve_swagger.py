@@ -52,8 +52,6 @@ def _inject_swagger_env() -> tuple[str, str | None]:
         os.environ["MCP_BASE_URL"] = base
     if cfg.mcp_auth_scheme:
         os.environ.setdefault("MCP_AUTH_SCHEME", str(cfg.mcp_auth_scheme).strip())
-    if cfg.mcp_token:
-        os.environ.setdefault("MCP_TOKEN", str(cfg.mcp_token).strip())
     return swagger, base
 
 

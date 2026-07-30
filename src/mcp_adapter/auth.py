@@ -28,19 +28,10 @@ def auth_scheme() -> str:
     return (os.getenv("MCP_AUTH_SCHEME") or "Bearer").strip()
 
 
-def static_auth_token() -> str | None:
-    """环境变量中的服务级 Token（无用户透传时的回退）。"""
-    load_dotenv()
-    token = (os.getenv("MCP_TOKEN") or "").strip()
-    return token or None
-
-
 def resolve_auth_token(token: str | None) -> str | None:
-    """优先使用调用方传入的 token，否则回退 MCP_TOKEN。"""
+    """仅使用调用方传入的 token；不回退环境变量 / 配置中的服务账号。"""
     explicit = (token or "").strip()
-    if explicit:
-        return explicit
-    return static_auth_token()
+    return explicit or None
 
 
 def resolve_auth_scheme(scheme: str | None = None) -> str:

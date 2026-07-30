@@ -18,11 +18,9 @@ def endpoints_from_config(cfg: Any) -> list[McpEndpoint]:
 
     child_env: dict[str, str] = {}
     scheme = getattr(cfg, "mcp_auth_scheme", None)
-    token = getattr(cfg, "mcp_token", None)
     if scheme:
         child_env["MCP_AUTH_SCHEME"] = str(scheme).strip()
-    if token:
-        child_env["MCP_TOKEN"] = str(token).strip()
+    # 业务 Token 仅由请求透传，不从配置注入 MCP_TOKEN
 
     if transport == "http":
         url = (getattr(cfg, "mcp_url", None) or "").strip()

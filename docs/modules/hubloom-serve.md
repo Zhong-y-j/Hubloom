@@ -13,7 +13,7 @@ PYTHONPATH=src .venv/bin/python -m server serve --config config/env.yaml
 cd examples/chat/web && npm install && npm run dev
 ```
 
-默认端口见配置 `http.port`（常见 8765）。OpenAPI：`/docs`。
+默认端口见配置 `http.port`（常见 8765）。须配置并启动 **Redis**（`redis.url`）：挂起态与按 session 锁均走 Redis，无进程内存回退。OpenAPI：`/docs`。
 
 ## 接口（无 A2UI / AG-UI）
 

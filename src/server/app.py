@@ -30,7 +30,6 @@ from server.schemas import (
 from server.sse import event_to_sse, format_sse
 
 _runtime: HubloomRuntime | None = None
-_run_lock = asyncio.Lock()
 
 
 def _resolve_session_id(
@@ -158,23 +157,21 @@ def create_app(
     )
 
     @app.get("/health")
-    async def health() -> dict[str, str]:
+    async def health():
         return {"status": "ok"}
 
     @app.get("/v1/mcp/status", response_model=McpStatusResponse)
     async def mcp_status() -> McpStatusResponse:
         if _runtime is None:
             raise HTTPException(status_code=503, detail="运行时尚未初始化")
-        setup = _runtime.mcp_setup
-        if setup is None:
+        if _runtime.mcp_setup is None:
             return McpStatusResponse(
                 status="disabled",
                 mcp_ready=False,
-                detail="mcp.enable=false 或未加载",
+                detail="mcp.enable=false 或未装配",
             )
-        catalog = setup.catalog
-        groups = getattr(catalog, "groups", None) or []
-        tools = list(_runtime._mcp_tools)
+        tools = _runtime._mcp_tools
+        groups = getattr(_runtime.mcp_setup.catalog, "groups", []) or []
         return McpStatusResponse(
             status="ready",
             mcp_ready=True,
@@ -199,10 +196,7 @@ def create_app(
         if not session_id:
             raise HTTPException(status_code=400, detail="请填写 session_id")
 
-        # Token 可选：有则注入 request context；无则仍可对话（只读/无鉴权 MCP 场景）
         bearer = _bearer_from_headers(authorization, x_mcp_token)
-        if not bearer:
-            bearer = (_runtime.cfg.mcp_token or "").strip() or None
 
         message = body.message.strip()
         if body.stream:
@@ -244,8 +238,6 @@ def create_app(
             raise HTTPException(status_code=400, detail="请填写 session_id")
 
         bearer = _bearer_from_headers(authorization, x_mcp_token)
-        if not bearer:
-            bearer = (_runtime.cfg.mcp_token or "").strip() or None
 
         if body.stream:
             return StreamingResponse(
@@ -309,7 +301,7 @@ async def _stream_chat(
 ) -> AsyncIterator[str]:
     assert _runtime is not None
     run_id = uuid.uuid4().hex[:12]
-    async with _run_lock:
+    async with _runtime.session_lock.hold(session_id):
         yield format_sse(
             "run_started",
             {"session_id": session_id, "run_id": run_id, "mode": "chat"},
@@ -325,6 +317,16 @@ async def _stream_chat(
                 line = event_to_sse(item, session_id=session_id, run_id=run_id)
                 if line:
                     yield line
+        except TimeoutError as exc:
+            yield format_sse(
+                "error",
+                {
+                    "session_id": session_id,
+                    "run_id": run_id,
+                    "error": str(exc),
+                    "recoverable": True,
+                },
+            )
         except Exception as exc:
             yield format_sse(
                 "error",
@@ -351,7 +353,7 @@ async def _stream_resume(
 ) -> AsyncIterator[str]:
     assert _runtime is not None
     stream_run_id = (run_id or "").strip() or uuid.uuid4().hex[:12]
-    async with _run_lock:
+    async with _runtime.session_lock.hold(session_id):
         yield format_sse(
             "run_started",
             {
@@ -374,6 +376,16 @@ async def _stream_resume(
                 )
                 if line:
                     yield line
+        except TimeoutError as exc:
+            yield format_sse(
+                "error",
+                {
+                    "session_id": session_id,
+                    "run_id": stream_run_id,
+                    "error": str(exc),
+                    "recoverable": True,
+                },
+            )
         except Exception as exc:
             yield format_sse(
                 "error",
@@ -398,7 +410,7 @@ async def _run_chat_once(
     wait_profile: str | None,
 ) -> RunResult:
     assert _runtime is not None
-    async with _run_lock:
+    async with _runtime.session_lock.hold(session_id):
         final: RunResult | None = None
         async for item in _runtime.run_stream(
             Message(role=Role.USER, content=message),
@@ -423,7 +435,7 @@ async def _run_resume_once(
     await_token: str | None,
 ) -> RunResult:
     assert _runtime is not None
-    async with _run_lock:
+    async with _runtime.session_lock.hold(session_id):
         final: RunResult | None = None
         async for item in _runtime.resume_stream(
             session_id=session_id,

@@ -21,7 +21,7 @@ __all__ = [
     "ErrorEvent",
     "FinalAnswerEvent",
     "FinishAction",
-    "InMemorySessionStore",
+    "RedisSessionStore",
     "PendingState",
     "Playbook",
     "PolicyRejectEvent",
@@ -76,10 +76,18 @@ def __getattr__(name: str) -> Any:
         from agent.evidence import EvidenceJournal
 
         return EvidenceJournal
-    if name in {"InMemorySessionStore", "PendingState", "cancel_awaiting"}:
+    if name in {"RedisSessionStore", "PendingState", "cancel_awaiting"}:
+        if name == "RedisSessionStore":
+            from agent.redis_session import RedisSessionStore
+
+            return RedisSessionStore
         import agent.session as session
 
         return getattr(session, name)
+    if name == "InMemorySessionStore":
+        raise AttributeError(
+            "InMemorySessionStore 已移除；请使用 RedisSessionStore（redis.url）"
+        )
     if name in {"RunResult", "run_stream", "run_stream_v2", "resume_stream"}:
         import agent.run as run
 
