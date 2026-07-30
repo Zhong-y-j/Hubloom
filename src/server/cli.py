@@ -58,6 +58,12 @@ def _cmd_serve(args: argparse.Namespace) -> None:
     print(f"  config={cfg_path}")
     print(f"  docs=http://{host}:{port}/docs")
     print("  API: POST /v1/chat  POST /v1/chat/resume  GET /v1/chat/history")
+    print("       POST /v1/events  GET /v1/events/types")
+    print("       GET|POST /v1/im/wecom/callback")
+    if cfg.events_enable:
+        print("  events: enabled")
+    if cfg.wecom_enable:
+        print("  wecom: enabled")
     if reload:
         # reload 需要 import string；开发请用 uvicorn 命令行
         print("提示: --reload 在本入口下忽略，请用: uvicorn server.app:create_app --factory")

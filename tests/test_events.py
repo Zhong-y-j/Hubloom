@@ -42,8 +42,9 @@ class _FakeAgent:
         present_mode: str = "markdown",
         bearer_token: str | None = None,
         trigger_source: str = "event",
+        wait_profile: str | None = None,
     ) -> RunResult:
-        _ = present_mode, bearer_token, trigger_source, session_id
+        _ = present_mode, bearer_token, trigger_source, session_id, wait_profile
         mark = "unknown"
         for line in (trigger.content or "").splitlines():
             if line.startswith("event_id:"):

@@ -163,6 +163,7 @@ class HubloomConfig:
     wecom_encoding_aes_key: str | None = None
     wecom_session_prefix: str = "wecom"
     wecom_token_resolve: dict[str, Any] = field(default_factory=dict)
+    wecom_max_reply_chars: int | None = None
 
     source_path: str | None = field(default=None, repr=False)
 
@@ -242,6 +243,7 @@ class HubloomConfig:
 
         agent_id = _as_int(wecom.get("agent_id"))
         session_prefix = _clean(wecom.get("session_prefix")) or "wecom"
+        max_reply_chars = _as_int(wecom.get("max_reply_chars"))
 
         redis_sec = data.get("redis") or {}
         if not isinstance(redis_sec, dict):
@@ -318,5 +320,6 @@ class HubloomConfig:
             wecom_encoding_aes_key=_clean(wecom.get("encoding_aes_key")),
             wecom_session_prefix=session_prefix,
             wecom_token_resolve=wecom_token_resolve,
+            wecom_max_reply_chars=max_reply_chars,
             source_path=str(cfg_path.resolve()),
         )

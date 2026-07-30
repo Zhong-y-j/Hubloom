@@ -25,9 +25,9 @@ IM 层自己负责加解密、去重、换票、推送和会话键约定——�
 
 身份上不假设企微 UserId 能直接当业务 Token。正式路径通过可配置的 `token_resolve` HTTP 去换 Bearer；未绑定账号时给用户一句人话提示，而不是让 Agent 带着空权限去调 API。本地可以用示例站的 mock 换票地址加 `dev_bearer_token` 顶上。会话键用 `wecom:{UserId}`（前缀可配），与网页 `session_id` 同一套记忆隔离语义——产品上一人一会话，Web 与企微若共用同一键，就不能靠「只给企微加全局锁」了事。
 
-同用户连发、多实例重试，不能只靠进程内字典。IM 模块已落地 **按 session 的 Redis 队列**（`im/session_queue`）：入站先入队并尽快 ACK，再由持锁的 Worker FIFO **一条一条**消费；MsgId 走 Redis 幂等键。适配器可选注入该队列（注入后 `schedule_handle_message` 走入队）；未注入时仍保留进程内 `create_task`，方便示例站尚未改装配时继续跑。队列 Handler 与取任务接口使用 `list[SessionJob]`，并留有 `merged_from`、`request_cancel` / `active` 等扩展点——当前不做多条合并与打断，但以后加上时不必换存储模型。Web / 示例站接同一套队列是后续装配，本期先把 IM 侧能力与对外 API 备好。
+同用户连发、多实例重试，不能只靠进程内字典。IM 模块已落地 **按 session 的 Redis 队列**（`im/session_queue`）：入站先入队并尽快 ACK，再由持锁的 Worker FIFO **一条一条**消费；MsgId 走 Redis 幂等键。Hubloom Serve 装配时注入该队列；未注入时仍保留进程内 `create_task`（联调脚本可用）。
 
-HTTP 路由留在示例站（或联调脚本自己起的最小服务），`src/im/wecom` 与 `session_queue` 保持可嵌入：换主机、换端口、配 cloudflared 公网 HTTPS，都是部署问题，不是模块内核。企微要求接收消息 URL 必须是 HTTPS，本地开发用临时隧道是务实做法。当前只认真支持文字；图片等类型先回一句「请发文字」，表单与卡片推送留给后续 IM 增强。
+HTTP 路由在 **Hubloom Serve**（`GET|POST /v1/im/wecom/callback`），`src/im/wecom` 与 `session_queue` 保持可嵌入：换主机、换端口、配 cloudflared 公网 HTTPS，都是部署问题，不是模块内核。企微要求接收消息 URL 必须是 HTTPS，本地开发用临时隧道是务实做法。当前只认真支持文字；图片等类型先回一句「请发文字」，表单与卡片推送留给后续 IM 增强。
 
 ---
 
@@ -247,7 +247,7 @@ PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py queue
 | `im/wecom/adapter.py` | 适配器；可选 Redis 入队 |
 | `im/wecom/token_resolve.py` | 企微 UserId → 业务 Bearer |
 | `tests/test_im_wecom.py` | send / echo / queue |
-| `examples/chat/app.py` | 挂 Runtime 的完整回调（尚未接队列） |
+| `src/server/app.py` / `assembly.py` | 挂 Runtime + Redis 队列的正式回调 |
 
 ---
 

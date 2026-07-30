@@ -1,4 +1,4 @@
-"""Hubloom FastAPI 应用：Typed ReAct 产品 API。"""
+"""Hubloom FastAPI 应用：Typed ReAct 产品 API + Events + 企微。"""
 
 from __future__ import annotations
 
@@ -10,18 +10,28 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from agent.run import RunResult
 from core.models import Message, Role
+from events.dispatcher import EventDispatcher
+from events.models import normalize_event
+from im.wecom.adapter import WeComChatAdapter
+from im.wecom.crypto import WeComCryptoError
 from observability import setup_log
 from runtime import HubloomRuntime
+from server.assembly import (
+    build_event_dispatcher,
+    build_wecom_adapter,
+    check_event_secret,
+)
 from server.schemas import (
     ChatHistoryResponse,
     ChatRequest,
     ChatSyncResponse,
+    EventIngestResponse,
     HistoryMessage,
     McpStatusResponse,
     ResumeRequest,
@@ -29,6 +39,8 @@ from server.schemas import (
 from server.sse import event_to_sse, format_sse
 
 _runtime: HubloomRuntime | None = None
+_dispatcher: EventDispatcher | None = None
+_wecom: WeComChatAdapter | None = None
 
 
 def _resolve_session_id(
@@ -109,40 +121,66 @@ def create_app(
     *,
     config_path: str | Path | None = None,
     runtime: HubloomRuntime | None = None,
+    event_dispatcher: EventDispatcher | None = None,
+    wecom_adapter: WeComChatAdapter | None = None,
 ) -> FastAPI:
     """构造 Hubloom Serve 应用。
 
-    - 生产：传 ``config_path``，lifespan 内 ``from_config_file``
-    - 单测：直接传入已装配的 ``runtime``（不读配置、不碰真 LLM）
+    - 生产：传 ``config_path``，lifespan 内装配 Runtime / Events / 企微
+    - 单测：注入 ``runtime``；可再注入 ``event_dispatcher`` / ``wecom_adapter``
     """
     cfg_path = Path(config_path).resolve() if config_path else None
     injected = runtime
+    injected_dispatcher = event_dispatcher
+    injected_wecom = wecom_adapter
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        global _runtime
+        global _runtime, _dispatcher, _wecom
         del app
         setup_log()
         if injected is not None:
             _runtime = injected
         else:
             if cfg_path is None or not cfg_path.is_file():
-                raise FileNotFoundError(
-                    f"配置文件不存在: {cfg_path}"
-                )
+                raise FileNotFoundError(f"配置文件不存在: {cfg_path}")
             _runtime = await HubloomRuntime.from_config_file(cfg_path)
+
+        if injected_dispatcher is not None:
+            _dispatcher = injected_dispatcher
+        else:
+            try:
+                _dispatcher = build_event_dispatcher(_runtime)
+            except Exception as exc:
+                _dispatcher = None
+                raise RuntimeError(f"装配 Events 失败: {exc}") from exc
+
+        if injected_wecom is not None:
+            _wecom = injected_wecom
+        else:
+            try:
+                _wecom = build_wecom_adapter(_runtime)
+            except Exception as exc:
+                _wecom = None
+                raise RuntimeError(f"装配企微失败: {exc}") from exc
+
         try:
             yield
         finally:
+            if _wecom is not None and _wecom.session_worker is not None:
+                for task in list(_wecom.session_worker._tasks.values()):
+                    task.cancel()
             if _runtime is not None and injected is None:
                 await _runtime.aclose()
             _runtime = None
+            _dispatcher = None
+            _wecom = None
 
     app = FastAPI(
         title="Hubloom",
         description=(
             "Hubloom Agent HTTP API（Typed ReAct）。"
-            "无 A2UI / AG-UI；interactive 用 /v1/chat/resume。"
+            "含 /v1/chat、/v1/events、企微回调；无 A2UI / AG-UI。"
         ),
         version="0.3.0",
         lifespan=lifespan,
@@ -157,7 +195,15 @@ def create_app(
 
     @app.get("/health")
     async def health():
-        return {"status": "ok"}
+        return {
+            "status": "ok",
+            "events_enabled": bool(
+                _runtime is not None and _runtime.cfg.events_enable and _dispatcher
+            ),
+            "wecom_enabled": bool(
+                _runtime is not None and _runtime.cfg.wecom_enable and _wecom
+            ),
+        }
 
     @app.get("/v1/mcp/status", response_model=McpStatusResponse)
     async def mcp_status() -> McpStatusResponse:
@@ -196,7 +242,6 @@ def create_app(
             raise HTTPException(status_code=400, detail="请填写 session_id")
 
         bearer = _bearer_from_headers(authorization, x_mcp_token)
-
         message = body.message.strip()
         if body.stream:
             return StreamingResponse(
@@ -237,7 +282,6 @@ def create_app(
             raise HTTPException(status_code=400, detail="请填写 session_id")
 
         bearer = _bearer_from_headers(authorization, x_mcp_token)
-
         if body.stream:
             return StreamingResponse(
                 _stream_resume(
@@ -277,13 +321,113 @@ def create_app(
 
         store = _runtime.conversation_store
         rows = await asyncio.to_thread(store.get_chat_history, resolved)
-
         messages = _history_messages(rows)
         return ChatHistoryResponse(
             session_id=resolved,
             messages=messages,
             total=len(messages),
         )
+
+    # ----- Events -----
+
+    @app.get("/v1/events/types")
+    async def list_event_types(
+        x_event_secret: str | None = Header(default=None, alias="X-Event-Secret"),
+    ):
+        if _runtime is None:
+            raise HTTPException(status_code=503, detail="运行时尚未初始化")
+        if not _runtime.cfg.events_enable or _dispatcher is None:
+            raise HTTPException(status_code=503, detail="events.enable=false")
+        check_event_secret(_runtime.cfg, x_event_secret)
+        types = _dispatcher.catalog.list_types()
+        return {
+            "skill_id": "events",
+            "events_dir": _dispatcher.catalog.events_dir,
+            "types": types,
+            "total": len(types),
+        }
+
+    @app.post("/v1/events", response_model=EventIngestResponse)
+    async def ingest_event(
+        request: Request,
+        x_event_secret: str | None = Header(default=None, alias="X-Event-Secret"),
+    ):
+        if _runtime is None:
+            raise HTTPException(status_code=503, detail="运行时尚未初始化")
+        if not _runtime.cfg.events_enable or _dispatcher is None:
+            raise HTTPException(status_code=503, detail="events.enable=false")
+        check_event_secret(_runtime.cfg, x_event_secret)
+
+        try:
+            body = await request.json()
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="请求体须为 JSON") from exc
+        try:
+            event = normalize_event(body if isinstance(body, dict) else {})
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        try:
+            async with _runtime.session_lock.hold(event.session_id):
+                result = await _dispatcher.dispatch(event)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except KeyError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        return EventIngestResponse(**result.to_dict())
+
+    # ----- 企微回调 -----
+
+    @app.get("/v1/im/wecom/callback")
+    async def wecom_verify(
+        msg_signature: str = Query(...),
+        timestamp: str = Query(...),
+        nonce: str = Query(...),
+        echostr: str = Query(...),
+    ):
+        if _runtime is None:
+            raise HTTPException(status_code=503, detail="运行时尚未初始化")
+        if not _runtime.cfg.wecom_enable or _wecom is None:
+            raise HTTPException(status_code=503, detail="im.wecom.enable=false")
+        try:
+            plain = _wecom.verify_url(
+                msg_signature=msg_signature,
+                timestamp=timestamp,
+                nonce=nonce,
+                echostr=echostr,
+            )
+        except WeComCryptoError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return Response(content=plain, media_type="text/plain")
+
+    @app.post("/v1/im/wecom/callback")
+    async def wecom_on_message(
+        request: Request,
+        msg_signature: str = Query(...),
+        timestamp: str = Query(...),
+        nonce: str = Query(...),
+    ):
+        if _runtime is None:
+            raise HTTPException(status_code=503, detail="运行时尚未初始化")
+        if not _runtime.cfg.wecom_enable or _wecom is None:
+            raise HTTPException(status_code=503, detail="im.wecom.enable=false")
+
+        post_data = await request.body()
+        try:
+            _plain, msg = _wecom.handle_callback_sync_ack(
+                msg_signature=msg_signature,
+                timestamp=timestamp,
+                nonce=nonce,
+                post_data=post_data,
+            )
+        except WeComCryptoError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+        if msg is not None:
+            _wecom.schedule_handle_message(msg)
+        # 必须尽快空 200，Agent 异步处理
+        return Response(content=b"", media_type="text/plain")
 
     return app
 

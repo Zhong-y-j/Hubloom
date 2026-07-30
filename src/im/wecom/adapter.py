@@ -14,9 +14,6 @@ from typing import Any
 
 from loguru import logger
 
-from agent.run import RunResult
-from context import clear_request_context
-from core.models import Message, Role
 from im.session_queue import (
     EnqueueResult,
     RedisSessionQueue,
@@ -37,7 +34,8 @@ RunAgentFn = Callable[..., Awaitable[str]]
 @dataclass
 class WeComAdapterConfig:
     session_prefix: str = "wecom"
-    max_reply_chars: int = 3500
+    # 企微宜短：默认 650；客户端 markdown 硬上限 2048
+    max_reply_chars: int = 650
 
 
 class MsgIdDeduper:
@@ -283,13 +281,12 @@ class WeComChatAdapter:
     def _format_reply(self, reply: str, session_id: str) -> str:
         text = (reply or "").strip() or "（无回复内容）"
         max_chars = self.config.max_reply_chars
+        footer = f"\n\n——\n详情见网页会话 `{session_id}`"
         if len(text) > max_chars:
-            return (
-                text[: max_chars - 40]
-                + f"\n\n…(已截断)\n完整记录 session：`{session_id}`"
-            )
-        if len(text) < max_chars - 80:
-            return f"{text}\n\n——\n会话 `{session_id}`（网页历史可查）"
+            keep = max(40, max_chars - len(footer) - 12)
+            return text[:keep] + "\n…(已截断)" + footer
+        if len(text) + len(footer) <= max_chars:
+            return text + footer
         return text
 
     async def _push(self, userid: str, content: str) -> None:
@@ -304,40 +301,20 @@ async def run_agent_via_runtime(
     message: str,
     *,
     session_id: str,
-    bearer_token: str,
+    bearer_token: str | None,
     runtime: Any,
-    run_lock: asyncio.Lock,
+    wait_profile: str | None = "turn_based",
 ) -> str:
-    """供示例站注入：持锁跑一轮 Runtime，返回 Respond 正文。"""
-    async with run_lock:
-        try:
-            final: RunResult | None = None
-            async for item in runtime.run_stream(
-                Message(role=Role.USER, content=message),
-                session_id=session_id,
-                present_mode="markdown",
-                bearer_token=bearer_token,
-                trigger_source="user",
-            ):
-                if isinstance(item, RunResult):
-                    final = item
-            if final is None:
-                raise RuntimeError("未收到编排结果")
-            if not final.ok:
-                raise RuntimeError(final.error or "运行失败")
-            content = (final.content or "").strip()
-            if final.a2ui_messages or (
-                final.answer_parts
-                and any(
-                    isinstance(p, dict) and p.get("type") == "a2ui"
-                    for p in final.answer_parts
-                )
-            ):
-                tip = (
-                    f"\n\n（本轮含表单操作，请在 Web 对话页打开会话 "
-                    f"`{session_id}` 完成填写。）"
-                )
-                content = (content + tip).strip()
-            return content
-        finally:
-            clear_request_context()
+    """兼容旧调用：按 session 锁跑一轮 Typed ReAct，返回短推送正文。
+
+    新代码请用 ``server.assembly.run_wecom_agent_turn``。
+    """
+    from server.assembly import run_wecom_agent_turn
+
+    return await run_wecom_agent_turn(
+        runtime,
+        message,
+        session_id=session_id,
+        bearer_token=bearer_token,
+        wait_profile=wait_profile,
+    )

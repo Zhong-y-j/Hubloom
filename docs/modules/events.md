@@ -89,7 +89,7 @@ YAML `events.catalog` 只作覆盖/补洞，不取代分册作为主真相源—
 
 本章其余部分是 **`src/events/` 的代码地图**：Webhook 事件规范化 → Redis 幂等与会话串行 → 注入分册 → 跑一轮 Agent；可选回调业务方。
 
-HTTP 路由在示例站（`POST /v1/events`），本模块不依赖 FastAPI。调度层通过 `EventAgentRunner` 注入「跑一轮」能力；示例站用 `StreamHostAgentRunner` 包装 Runtime。
+HTTP 路由在 **Hubloom Serve**（`POST /v1/events`），本模块不依赖 FastAPI。调度层通过 `EventAgentRunner` 注入「跑一轮」能力；Serve 用 `StreamHostAgentRunner` 包装 Runtime（`wait_profile=no_wait`）。
 
 读完应能指出：改契约看哪、改幂等/串行看哪、加事件类型改哪、Dispatcher 怎么接到 Agent。
 
@@ -140,7 +140,7 @@ Events **不是**消息队列消费者，也**不是**前端推送通道；它�
 | `events/callback.py`     | 可选结果回调                                         |
 | `events/__init__.py`     | 对外导出                                             |
 | `skills/events/*.md`     | 事件类型真相源（frontmatter `event:` + 规程正文）    |
-| `examples/chat/app.py`   | 装配 Dispatcher、`POST /v1/events`                   |
+| `src/server/app.py` / `assembly.py` | 装配 Dispatcher、`POST /v1/events`                   |
 | `tests/test_events.py`   | Redis 幂等 + 同 session 串行演示                     |
 
 ---

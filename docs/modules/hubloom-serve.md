@@ -13,24 +13,52 @@ PYTHONPATH=src .venv/bin/python -m server serve --config config/env.yaml
 cd examples/chat/web && npm install && npm run dev
 ```
 
-默认端口见配置 `http.port`（常见 8765）。须配置并启动 **Redis**（`redis.url`）：挂起态与按 session 锁均走 Redis，无进程内存回退。OpenAPI：`/docs`。
+默认端口见配置 `http.port`（常见 8765）。须配置并启动 **Redis**（`redis.url`）：挂起态、session 锁、Events 幂等/串行、企微会话队列均走 Redis。OpenAPI：`/docs`。
 
 ## 接口（无 A2UI / AG-UI）
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/health` | 探活 |
-| POST | `/v1/chat` | 新一轮对话（SSE 或 JSON）**走 Runtime + 真 LLM** |
+| GET | `/health` | 探活（含 `events_enabled` / `wecom_enabled`） |
+| POST | `/v1/chat` | 新一轮对话（SSE 或 JSON） |
 | POST | `/v1/chat/resume` | interactive 挂起后续跑 |
 | GET | `/v1/chat/history` | 会话历史 |
 | GET | `/v1/mcp/status` | MCP 就绪 |
+| GET | `/v1/events/types` | 已登记事件类型（需 `events.enable`） |
+| POST | `/v1/events` | 业务 Webhook 入站（需 `events.enable`） |
+| GET/POST | `/v1/im/wecom/callback` | 企微 URL 验证与消息回调（需 `im.wecom.enable`） |
+
+## Events
+
+- 配置：`events.enable` / `shared_secret`（头 `X-Event-Secret`）/ `result_callback_url` / `catalog`
+- Redis：`event_id` 幂等 + `session_id` 串行；与 chat 共用 `redis.url`
+- Agent：`wait_profile=no_wait`；Bearer 仅来自事件体 `bearer_token`
+- 规程：`skills/events/*.md`
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8765/v1/events" \
+  -H "Content-Type: application/json" \
+  -H "X-Event-Secret: change-me" \
+  -d '{"event_id":"evt-1","type":"locker.created","session_id":"demo-1","payload":{"deviceId":"LK-A-001"}}'
+```
+
+## 企微 IM
+
+- 配置：`im.wecom.enable` + corp 凭证 + 回调 `token` / `encoding_aes_key`
+- 回调尽快空 200，消息入 Redis 会话队列异步跑 Agent
+- **短回复**：默认 `max_reply_chars=650`，并在提示中要求结论优先；完整内容仍写会话历史
+- 会话键：`{session_prefix}:{UserId}`（默认 `wecom:…`）
+- 换票：`im.wecom.token_resolve`（可选；未配则 Bearer 为空）
 
 ## 测试怎么分
 
 | 文件 | 是否真 LLM | 用途 |
 | --- | --- | --- |
-| `tests/test_hubloom_serve.py` | 否（ScriptedLLM） | CI 冒烟：路由 / SSE 形状 |
+| `tests/test_hubloom_serve.py` | 否（ScriptedLLM） | chat / resume SSE 冒烟 |
+| `tests/test_hubloom_serve_events_wecom.py` | 否 | Events 幂等 + 企微回调 ACK 冒烟 |
 | `tests/test_hubloom_serve_chat_task.py` | **是** | 联调：对**已启动**的 serve 打 `/v1/chat` |
+| `tests/test_events.py` | 否（FakeAgent） | Events 调度层（需 Redis） |
+| `tests/test_im_wecom.py` | 否 | 企微 send/echo/queue 联调 |
 
 真模型联调：
 

@@ -33,12 +33,15 @@ class EventDispatcher:
         session_gate: SessionGate,
         result_callback_url: str | None = None,
         present_mode: str = "markdown",
+        wait_profile: str = "no_wait",
     ) -> None:
         self.catalog = catalog
         self.idempotency = idempotency
         self.session_gate = session_gate
         self.result_callback_url = (result_callback_url or "").strip() or None
+        # present_mode 仅兼容旧调用；Typed ReAct 实际用 wait_profile
         self.present_mode = present_mode
+        self.wait_profile = (wait_profile or "no_wait").strip() or "no_wait"
         self._agent: EventAgentRunner | None = None
         # 同 event_id 并发：进程内等待首个完成（跨实例靠 Redis 幂等键）
         self._claim_lock = asyncio.Lock()
@@ -114,6 +117,7 @@ class EventDispatcher:
                 present_mode=self.present_mode,
                 bearer_token=bearer,
                 trigger_source="event",
+                wait_profile=self.wait_profile,
             )
             if not final.ok:
                 error = final.error or "运行失败"
