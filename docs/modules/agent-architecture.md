@@ -265,7 +265,7 @@ Gate 违规 → reject 观察 → 回 Decide；**连续同因 reject 熔断**，
 | 流断/内核异常 | `failed` |
 | 单次 Policy reject | **不是终态**；入 Journal 后回环（熔断后才 ask/finish） |
 
-同 session：宿主串行 + 内核防重入。interactive 挂起态需**可外置**（如 Redis），避免单进程内存绑死多实例。
+同 session：宿主/Runtime **串行** + 内核防重入（详见 **§20.1**）。interactive 挂起态须 **SessionStore 端口化**，多实例外置（**§20.2**）。
 
 ---
 
@@ -346,7 +346,8 @@ Gate 违规 → reject 观察 → 回 Decide；**连续同因 reject 熔断**，
 
 ## 18. 后续落地
 
-见下一节 **开发步骤拆解**（推荐顺序）。
+见下一节 **开发步骤拆解**（推荐顺序）。  
+**动手写代码前**须先读并遵守 **§20 开工不变量**（并发、挂起、鉴权、双轨等）。
 
 ---
 
@@ -393,9 +394,11 @@ Step 6  打磨：外置挂起态、熔断、no_wait、观测与单测补齐
 
 #### Step 0 — 契约冻结（0.5 步）
 
-- 终态枚举、`awaiting_user` 事件字段、`resume` 参数形状写死一页（可就在本文 §11–§12）。  
-- 明确：**旧 `run_stream(present_mode=…)` 兼容策略**（双轨多久 / 是否 feature flag）。  
-**验收**：前后端/入口同学看完知道怎么接，不再改字段名。
+- 终态枚举、`awaiting_user` 事件字段、`resume` 参数形状写死（§11–§12）。  
+- **落实 §20 开工不变量**（串行、挂起竞态、鉴权快照、Decide 协议、双轨）。  
+- 明确：旧 `run_stream(present_mode=…)` 双轨策略（§20.7）。  
+
+**验收**：前后端/入口同学看完 §12 + §20 知道怎么接；字段名与互斥规则不再改口。
 
 ---
 
@@ -442,9 +445,10 @@ Step 6  打磨：外置挂起态、熔断、no_wait、观测与单测补齐
 
 - Run 内挂起 + `resume`  
 - 事件 `awaiting_user`；示例站普通按钮（**非 A2UI**）  
-- 挂起态先进程内，接口按可外置设计  
+- **SessionStore 端口化**（内存实现可先用）；**多副本禁止只靠进程内存**（§20.2）  
+- 落实挂起竞态与断线策略（§20.3–§20.4）
 
-**验收：** 网页一点确认/填参，同一 run_id 继续 `act`→`finish`。
+**验收：** 网页一点确认/填参，同一 run_id 继续 `act`→`finish`；单测覆盖「挂起中新消息」互斥。
 
 **3c `no_wait`**
 
@@ -510,4 +514,103 @@ Step 6  打磨：外置挂起态、熔断、no_wait、观测与单测补齐
 
 ### 19.5 建议的下一步开工命令
 
-若立刻动手：从 **Step 1** 开——新建 `actions` + 新 loop 骨架，用 feature flag 或新入口 `run_stream_v2` 并行旧 `run_stream`，验通后再进 Step 2。
+1. 确认 §20 已写入文档且团队无异议。  
+2. 从 **Step 1** 开——新建 `actions` + 新 loop 骨架，**`run_stream_v2`（或 flag）双轨**旧 `run_stream`。  
+3. 验通后再进 Step 2。
+
+---
+
+## 20. 开工不变量（补强：并发 / 挂起 / 鉴权 / 双轨）
+
+> 本节是审查结论落地：**需求方向可开工，但下列规则必须遵守**，否则 Step 3+ 上多用户/多实例会翻车。  
+> 与正文冲突时，**以本节为准**（并回改对应小节）。
+
+### 20.1 同 session 串行：职责切分
+
+| 层 | 职责 |
+| --- | --- |
+| **入口 / Runtime** | 保证同一 `session_id` 上 **同时只有一个活跃 Agent 执行**（锁或队列；可与 `im/session_queue` 对齐或共用约定） |
+| **Agent 内核** | **防重入断言**：若该 session 已有 `running` / `awaiting_user` 的 Run，拒绝再 `begin`（或返回明确错误），不默默并行 |
+
+不变量：**串行是平台能力，不是「示例站碰巧有一把全局锁」。**  
+Web、企微、Events 接同一 Kernel 前，必须接上 session 串行；Step 1 可先内核断言 + 单测，多入口接线前补齐锁/队列。
+
+### 20.2 interactive 挂起与多实例
+
+- Step 3b 起：**SessionStore 必须是端口**（`get/set` pending、awaiting、run 状态）。  
+- **内存实现**仅允许：单进程开发 / 单副本演示。  
+- **多副本或生产**：必须外置（如 Redis）；禁止「内存挂起 + 负载均衡多实例」。  
+- Step 6 完成外置默认实现；上线 checklist 含此项。
+
+### 20.3 挂起期间的竞态（写死）
+
+当 Run 处于 `awaiting_user`：
+
+1. **只接受**匹配的 `resume(run_id, …)`（建议带一次性 `await_token`，防重放）。  
+2. **普通新用户消息**（新 `begin_run`）策略定为：  
+   > **拒绝**（返回「请先完成确认/回答，或先 cancel」）。  
+   > 若产品要「新消息作废挂起」，必须显式 `cancel` 再 `begin`，不静默双开。  
+3. 同一 `run_id` 并发两个 `resume`：第二个失败或幂等忽略（Store 用 CAS / 锁）。
+
+### 20.4 SSE 断开 ≠ 取消 Run
+
+- 浏览器刷新、SSE 断开：**默认不** `cancel` 挂起中的 Run。  
+- 客户端重连后可用 `run_id` + `resume` 继续（状态在 SessionStore）。  
+- 提供显式 `cancel(run_id)`。  
+- 挂起态 **TTL**（建议默认 30 分钟，可配）：超时 → `cancelled` 或 `failed`，释放 session 槽位。
+
+### 20.5 鉴权绑在 Run 上
+
+- `begin_run` 时把鉴权上下文（如 Bearer）**快照进 Run**（或强制后续 `resume`/续跑携带并校验同一主体）。  
+- Exec 调工具时**只用该 Run 的鉴权快照**，避免 resume 丢 token 或串用户。  
+- turn_based 跨 Run：新 Run 用**当次请求**的 token；pending 只存意图/槽位，不存明文长期密钥到可泄漏日志。
+
+### 20.6 MCP / 工具并发（旁路依赖）
+
+- Agent 单环**不解决** MCP stdio 单管道争用。  
+- **生产多用户**：应使用独立 HTTP MCP（或等价可并发运输），见 MCP Adapter 双传输设计。  
+- 上线 checklist：Agent 新环 + MCP HTTP；勿在仍用全局 `_run_lock` 护 stdio 时宣称「已支持多用户并发」。
+
+### 20.7 Decide 如何产出 Typed 动作（Step 1 锁定）
+
+**选定协议（实现按此做，中途不改口）：**
+
+- **业务 `act`**：走现有工具面（`list_api` / `call_api` / A2A / 其它 `BaseTool`），即模型的 tool_calls。  
+- **控制动作**：专用控制 tool（推荐名）：`agent_ask`、`agent_await_confirm`、`agent_finish`（名称可微调，但语义固定）。  
+- **互斥**：同一步若同时出现业务 tool_calls 与控制 tool → 非法，重试或报错观察。  
+- **无任何 tool_call 的纯文本**：视为非法或强制收成 `agent_finish`（实现选一种并写进 `actions` 单测；推荐 **收成 finish**，避免干跑）。
+
+发现类只读（如 `list_api`）：Playbook **默认不禁**；禁止/须确认针对写操作与点名 tool。
+
+### 20.8 Playbook 默认姿态
+
+- 无 Playbook = 纯能力环。  
+- 有 Playbook：禁止列表 + 必经 id + 须 confirm 的 tool 名。  
+- **默认放行** `list_api` 及标明 read-only 的工具，除非 Playbook 显式禁止。
+
+### 20.9 双轨与文档债
+
+- Step 1–4：**新入口** `run_stream_v2` 或 `HUBLOOM_AGENT_V2=1`；旧 `run_stream`（含 A2UI）保留可演示。  
+- Step 5：切换默认；删除/归档 A2UI 主路径。  
+- 同步改产品文案（如 `what-is-hubloom` 双通道 A2UI）——**最迟 Step 5**，避免对外叙事与实现长期打架。
+
+### 20.10 并发场景速查
+
+| 场景 | 不变量 |
+| --- | --- |
+| 同 session 连发 | 入口串行 + 内核防重入 |
+| 多实例 + 挂起 | SessionStore 外置 |
+| 挂起中又发新消息 | 拒绝；须先 resume 或 cancel |
+| SSE 断开 | 不自动 cancel；TTL 回收 |
+| resume 鉴权 | Run 快照 / 同主体 |
+| Events 误 ask | `no_wait` 降级 |
+| 多用户调 MCP | 依赖 HTTP MCP，非 Agent 环内解决 |
+
+### 20.11 Step 0 完成标准（可勾选）
+
+- [ ] §20.1–§20.10 已评审无异议  
+- [ ] Decide 控制 tool 名称写入 `actions` 草案（可与 Step 1 同一 PR）  
+- [ ] 双轨开关名称确定（`run_stream_v2` 或 env flag）  
+- [ ] 挂起 TTL 默认值写入配置草案（可先常量）  
+
+全部勾选后 → **开始 Step 1 代码**。

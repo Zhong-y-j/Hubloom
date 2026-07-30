@@ -1,6 +1,4 @@
-"""Hubloom 运行时：读配置装配一次，按 session 跑 run_stream。
-
-后端 / 测试只关心：
+"""Hubloom 运行时：读配置装配一次，按 session 跑 Typed ReAct（Step 1）。
 
     agent = await HubloomRuntime.from_config(cfg)
     async for item in agent.run_stream(trigger, session_id=...):
@@ -16,13 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from agent.agent_log import configure_agent_logging
-from agent.assemble import (
-    build_respond_a2ui_system,
-    build_respond_markdown_system,
-    build_think_systems,
-)
+from agent.assemble import build_agent_systems
 from agent.events import AgentEvent
-from agent.loop.respond import PresentMode
 from agent.run import RunResult, run_stream
 from config import HubloomConfig
 from context import set_request_context
@@ -39,7 +32,6 @@ from tools.runner import ToolRunner
 
 
 def _project_root(cfg: HubloomConfig) -> Path:
-    """配置文件所在仓库根：config/env.yaml → parents[1]。"""
     if cfg.source_path:
         return Path(cfg.source_path).resolve().parents[1]
     return Path.cwd()
@@ -65,27 +57,30 @@ def _memory_db_path(cfg: HubloomConfig) -> str:
 
 @dataclass
 class HubloomRuntime:
-    """进程级 Agent 运行时（LLM / MCP / system 文案）；session 在 run 时注入。"""
+    """进程级 Agent 运行时（LLM / MCP / system）；session 在 run 时注入。"""
 
     cfg: HubloomConfig
     llm: LLMProvider
-    think_system: str  # 工具前（含 skills / catalog）
-    think_system_after: str  # 工具后（短提示）
-    respond_markdown_system: str
-    respond_a2ui_system: str
-    default_present_mode: PresentMode
+    system_before: str
+    system_after: str
     mcp_setup: AgentMcpSetup | None
     _mcp_tools: list[Any]
-    max_think_rounds: int = 5
+    max_rounds: int = 8
 
     @classmethod
     async def from_config(
         cls,
         cfg: HubloomConfig,
         *,
-        default_present_mode: PresentMode = "a2ui",
-        max_think_rounds: int = 5,
+        max_rounds: int = 8,
+        # 兼容旧调用方关键字（已忽略）
+        default_present_mode: str | None = None,
+        max_think_rounds: int | None = None,
     ) -> HubloomRuntime:
+        del default_present_mode  # Step1 已取消 A2UI / present_mode
+        if max_think_rounds is not None:
+            max_rounds = max_think_rounds
+
         if not (cfg.openai_api_key or "").strip():
             raise ValueError("HubloomConfig 未配置 llm.api_key")
 
@@ -131,7 +126,7 @@ class HubloomRuntime:
             )
             mcp_tools = list(mcp_setup.bindings.tools)
 
-        think_system, think_system_after = build_think_systems(
+        system_before, system_after = build_agent_systems(
             skills_dir=_skills_dir(cfg),
             skills_exclude=cfg.skills_exclude,
             catalog=None if mcp_setup is None else mcp_setup.catalog,
@@ -140,14 +135,11 @@ class HubloomRuntime:
         return cls(
             cfg=cfg,
             llm=llm,
-            think_system=think_system,
-            think_system_after=think_system_after,
-            respond_markdown_system=build_respond_markdown_system(),
-            respond_a2ui_system=build_respond_a2ui_system(),
-            default_present_mode=default_present_mode,
+            system_before=system_before,
+            system_after=system_after,
             mcp_setup=mcp_setup,
             _mcp_tools=mcp_tools,
-            max_think_rounds=max_think_rounds,
+            max_rounds=max_rounds,
         )
 
     @classmethod
@@ -155,12 +147,14 @@ class HubloomRuntime:
         cls,
         path: str | Path,
         *,
-        default_present_mode: PresentMode = "a2ui",
-        max_think_rounds: int = 5,
+        max_rounds: int = 8,
+        default_present_mode: str | None = None,
+        max_think_rounds: int | None = None,
     ) -> HubloomRuntime:
         cfg = HubloomConfig.from_file(path)
         return await cls.from_config(
             cfg,
+            max_rounds=max_rounds,
             default_present_mode=default_present_mode,
             max_think_rounds=max_think_rounds,
         )
@@ -191,27 +185,22 @@ class HubloomRuntime:
         trigger: Message | list[Message],
         *,
         session_id: str,
-        present_mode: PresentMode | None = None,
         bearer_token: str | None = None,
         trigger_source: str = "user",
+        max_rounds: int | None = None,
+        # 兼容旧关键字
+        present_mode: str | None = None,
         max_think_rounds: int | None = None,
     ) -> AsyncIterator[AgentEvent | RunResult]:
-        """按 session 装配 memory/tools，委托 ``agent.run.run_stream``。
+        del present_mode
+        if max_think_rounds is not None:
+            max_rounds = max_think_rounds
 
-        ``trigger``：单条 ``Message``，或表单回传的 ``assistant+tool`` 消息列表。
-
-        ``bearer_token``：当前用户鉴权，写入 request context，供 MCP
-        ``call_api`` 经 ``get_bearer_token()`` 透传；为空则回退 MCP_TOKEN。
-
-        ``present_mode=auto``：Think 交班后跑 Present，再决定 Markdown / A2UI Respond。
-        """
-        mode: PresentMode = present_mode or self.default_present_mode
         sid = (session_id or "").strip()
         if not sid:
             raise ValueError("session_id 不能为空")
 
         token = (bearer_token or "").strip() or None
-
         set_request_context(
             bearer_token=token,
             session_id=sid,
@@ -230,12 +219,9 @@ class HubloomRuntime:
             runner=runner,
             tools=tool_defs,
             trigger=trigger,
-            think_system=self.think_system,
-            think_system_after=self.think_system_after,
-            respond_markdown_system=self.respond_markdown_system,
-            respond_a2ui_system=self.respond_a2ui_system,
-            present_mode=mode,
-            max_think_rounds=max_think_rounds or self.max_think_rounds,
+            system_before=self.system_before,
+            system_after=self.system_after,
+            max_rounds=max_rounds or self.max_rounds,
             trigger_source=trigger_source,
         ):
             yield item

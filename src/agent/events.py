@@ -1,3 +1,5 @@
+"""Agent 对外事件（无 A2UI）。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -7,114 +9,88 @@ from core.models import TokenUsage
 
 
 class AgentEvent:
-    """Agent 层对外事件基类（给 CLI / WebSocket / 前端消费）。"""
-
-    pass
+    """Agent 层对外事件基类。"""
 
 
 @dataclass
 class TextDeltaEvent(AgentEvent):
-    """回复文本增量（流式输出用，简单路径直答等场景）。"""
-
     delta: str
 
 
 @dataclass
 class ThoughtDeltaEvent(AgentEvent):
-    """思考过程区流式文本（deliberate / execute / replan 阶段）。"""
-
     phase: str
     delta: str
 
 
 @dataclass
 class FinalAnswerEvent(AgentEvent):
-    """本轮最终回复（结果区结束信号）。
-
-    约定：
-    - `content`：完整回复内容
-    - `usage`：Token 使用情况
-    """
-
     content: str
     usage: Optional[TokenUsage] = None
 
 
 @dataclass
-class FinalAnswerDeltaEvent(AgentEvent):
-    """最终结果区流式文本增量（仅 respond 阶段）。
-
-    ``source``：
-    - ``markdown``：对话气泡正文
-    - ``a2ui``：交互面板侧文案（与 ``a2ui`` 事件同属 A2UI 链路）
-    """
-
-    delta: str
-    source: str = "markdown"
-
-
-@dataclass
-class A2uiMessagesEvent(AgentEvent):
-    """从最终回复中切出的 A2UI 消息（结果区）。
-
-    - ``replace=False``：流式追加已闭合的消息（如单个 ``</a2ui-json>``）
-    - ``replace=True``：权威全量（turn 结束，含工具数据绑定）
-    """
-
-    messages: list[dict[str, Any]]
-    replace: bool = False
-
-
-@dataclass
 class ErrorEvent(AgentEvent):
-    """本轮出错（对外以事件表达，而不是直接 raise）。"""
-
     error: str
     recoverable: bool = False
 
 
 @dataclass
 class ToolCallEvent(AgentEvent):
-    """即将调用工具（思考过程区）。"""
-
     call_id: str
     tool_name: str
-    args: dict
+    args: dict[str, Any]
 
 
 @dataclass
 class ToolResultEvent(AgentEvent):
-    """工具执行结果（思考过程区）。"""
-
     call_id: str
     tool_name: str
     result: str
     is_error: bool = False
+    journal_id: str = ""
 
 
 @dataclass
 class RemoteProcessEvent(AgentEvent):
-    """出站委托时远程 Agent 的过程增量（仅 UI / SSE，不进 LLM tool_result）。"""
+    """出站委托过程增量（A2A / UI）。"""
 
     call_id: str
     agent_id: str
-    channel: str  # status | trace | answer
+    channel: str
     delta: str = ""
-    status: str = ""  # working | completed | failed | started
+    status: str = ""
 
 
 @dataclass
 class PhaseEvent(AgentEvent):
-    """编排阶段切换（供前端展示 Agent 状态）。"""
-
-    phase: str  # thinking | presenting | replying
+    phase: str
     route: str = ""
 
 
 @dataclass
-class RunStatsEvent(AgentEvent):
-    """本轮运行统计信息（通常在结束前发出）。"""
+class StepEvent(AgentEvent):
+    """一轮 Decide 已选定 Typed 动作。"""
 
+    step: int
+    action: str
+    journal_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RunCompleteEvent(AgentEvent):
+    """Run 终态（与 RunResult 对齐；宿主可只订阅事件）。"""
+
+    status: str
+    content: str = ""
+    ok: bool = True
+    journal_run_id: str = ""
+    evidence_ids: list[str] = field(default_factory=list)
+    error: str = ""
+
+
+@dataclass
+class RunStatsEvent(AgentEvent):
     steps: int
     tool_calls: int
     tool_errors: int
