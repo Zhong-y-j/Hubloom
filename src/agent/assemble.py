@@ -14,6 +14,7 @@ from skill import build_skills_prompt, load_skills
 from agent.agent_log import agent_trace
 from agent.evidence import EvidenceJournal
 from agent.prompts import AGENT_SYSTEM, AGENT_SYSTEM_AFTER_TOOLS
+from agent.session import PendingState
 
 
 async def load_conversation(
@@ -80,6 +81,7 @@ async def assemble_messages(
     system_prompt: str,
     turn_messages: list[Message] | None = None,
     journal: EvidenceJournal | None = None,
+    pending: PendingState | None = None,
     history_limit: int = 40,
     history_max_tokens: int = 32_000,
 ) -> list[Message]:
@@ -88,28 +90,30 @@ async def assemble_messages(
     prior = _strip_turn_suffix(all_rows, turn)
 
     system_msg = Message(role=Role.SYSTEM, content=system_prompt)
-    journal_msg: Message | None = None
+    extra_system: list[Message] = []
     if journal is not None:
         block = journal.summary_for_prompt()
         if block:
-            journal_msg = Message(role=Role.SYSTEM, content=block)
+            extra_system.append(Message(role=Role.SYSTEM, content=block))
+    if pending is not None:
+        extra_system.append(
+            Message(role=Role.SYSTEM, content=pending.summary_for_prompt())
+        )
 
     overhead = estimate_message_tokens(system_msg)
-    if journal_msg is not None:
-        overhead += estimate_message_tokens(journal_msg)
+    for m in extra_system:
+        overhead += estimate_message_tokens(m)
     history_budget = max(0, history_max_tokens - overhead)
     trimmed = trim_conversation_history(prior, max_tokens=history_budget)
 
-    out = [system_msg, *trimmed]
-    if journal_msg is not None:
-        out.append(journal_msg)
-    out.extend(turn)
+    out = [system_msg, *trimmed, *extra_system, *turn]
     agent_trace(
         "assemble",
         prior=len(prior),
         history_out=len(trimmed),
         turn=len(turn),
         journal_entries=len(journal.entries) if journal else 0,
+        pending=bool(pending),
         total=len(out),
     )
     return out

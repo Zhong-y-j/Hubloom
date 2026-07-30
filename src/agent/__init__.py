@@ -1,4 +1,4 @@
-"""Hubloom Agent（Policy-Bounded Typed ReAct · Step 2）。
+"""Hubloom Agent（Policy-Bounded Typed ReAct · Step 3）。
 
 注意：本包 ``__init__`` 保持轻量，避免 ``agent.agent_log`` ↔ ``memory`` 循环导入。
 常用符号请从子模块导入，或通过 ``__getattr__`` 懒加载。
@@ -13,6 +13,7 @@ __all__ = [
     "AgentEvent",
     "AskAction",
     "AwaitConfirmAction",
+    "AwaitingUserEvent",
     "CONTROL_ASK",
     "CONTROL_CONFIRM",
     "CONTROL_FINISH",
@@ -20,13 +21,17 @@ __all__ = [
     "ErrorEvent",
     "FinalAnswerEvent",
     "FinishAction",
+    "InMemorySessionStore",
+    "PendingState",
     "RunCompleteEvent",
     "RunResult",
     "StepEvent",
     "TypedAction",
     "build_agent_systems",
+    "cancel_awaiting",
     "control_tool_definitions",
     "parse_decide_output",
+    "resume_stream",
     "run_stream",
     "run_stream_v2",
 ]
@@ -54,6 +59,7 @@ def __getattr__(name: str) -> Any:
         "FinalAnswerEvent",
         "StepEvent",
         "RunCompleteEvent",
+        "AwaitingUserEvent",
     }:
         import agent.events as events
 
@@ -62,7 +68,11 @@ def __getattr__(name: str) -> Any:
         from agent.evidence import EvidenceJournal
 
         return EvidenceJournal
-    if name in {"RunResult", "run_stream", "run_stream_v2"}:
+    if name in {"InMemorySessionStore", "PendingState", "cancel_awaiting"}:
+        import agent.session as session
+
+        return getattr(session, name)
+    if name in {"RunResult", "run_stream", "run_stream_v2", "resume_stream"}:
         import agent.run as run
 
         return getattr(run, name)

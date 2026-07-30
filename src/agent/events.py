@@ -78,6 +78,18 @@ class StepEvent(AgentEvent):
 
 
 @dataclass
+class AwaitingUserEvent(AgentEvent):
+    """interactive：Run 内等人（宿主自绘输入/确认，非 A2UI）。"""
+
+    run_id: str
+    await_token: str
+    kind: str
+    prompt: str
+    slots: list[str] = field(default_factory=list)
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class RunCompleteEvent(AgentEvent):
     """Run 终态（与 RunResult 对齐；宿主可只订阅事件）。"""
 
