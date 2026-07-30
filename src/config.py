@@ -139,6 +139,9 @@ class HubloomConfig:
     skills_dir: str | None = "skills"
     skills_exclude: list[str] = field(default_factory=list)
 
+    # agent：默认 Wait Profile（入口可在 run_stream 覆盖）
+    default_wait_profile: str = "turn_based"
+
     # events：业务推送入站（POST /v1/events）
     events_enable: bool = False
     events_shared_secret: str | None = None
@@ -239,6 +242,13 @@ class HubloomConfig:
 
         skills_dir = _clean(data.get("skills_dir")) or "skills"
 
+        agent_sec = _section(data, "agent")
+        default_wait = (
+            _clean(agent_sec.get("default_wait_profile"))
+            or _clean(data.get("default_wait_profile"))
+            or "turn_based"
+        )
+
         return cls(
             openai_api_key=_clean(llm.get("api_key")),
             openai_model=_clean(llm.get("model")),
@@ -284,6 +294,7 @@ class HubloomConfig:
             neo4j_skip_dns_check=_as_bool(neo4j.get("skip_dns_check")),
             skills_dir=skills_dir,
             skills_exclude=_as_str_list(data.get("skills_exclude")),
+            default_wait_profile=default_wait,
             events_enable=events_enable,
             events_shared_secret=_clean(events.get("shared_secret")),
             events_result_callback_url=_clean(events.get("result_callback_url")),

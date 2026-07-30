@@ -1,28 +1,24 @@
 # Runtime
 
-本章讲 **`HubloomRuntime`（进程级运行时）**：把配置装配成可复用的 Agent 能力，并按会话跑每一轮对话。
+本章讲 **`HubloomRuntime`（进程级运行时）**：把配置装配成可复用的 Agent 能力，并按会话跑每一轮。
 
-服务启动时调用 `from_config`：加载 `HubloomConfig`（通常来自 `env.yaml`），创建 LLM；若开启 MCP，则拉起工具面，把 Swagger 里的接口变成可调用的业务工具，并把 Skill 名片、API 分组写进 Think/Respond 用的 system。这一步整个进程只做一次。
+服务启动时调用 `from_config`：加载 `HubloomConfig`，创建 LLM；可选拉起 MCP；编译 Skill → Playbook；挂 `SessionStore` 与默认 Wait Profile；拼 Typed ReAct 用的 system。这一步整个进程只做一次。
 
-之后每次用户开口，走 `run_stream`：写入 request context（例如用 `session_id` 区分聊天会话，用 `bearer_token` 带上侧栏里的业务登录凭证），按 session 装配本轮 memory 与 `ToolRunner`，再委托 `agent.run.run_stream`——由 Agent 去推理、调 API、返回 Markdown 或表单。用户说「查一下柜子状态」，就是这样一轮。
+之后每次用户开口，走 `run_stream`（可覆盖 `wait_profile`）：写入 request context，按 session 装配 memory / tools，再委托 `agent.run.run_stream`（Decide → Gate → Act/Ask/Confirm/Finish）。interactive 挂起后用 `resume_stream` 续同一 Run。
 
-进程退出时调用 `aclose`，关闭 MCP 的 stdio 客户端及子进程，避免后台调业务 API 的进程残留。
+进程退出时调用 `aclose`，关闭 MCP 客户端。
 
-Runtime **不**负责渲染前端、**不**实现你们的业务落库，也**不**展开 Think / Present / Respond 的逐步编排（见 [Agent](agent.md)）。它是装配与会话入口；HTTP 怎么挂它，见 [示例站](examples-chat.md) 与 [嵌入 Runtime](../usage/embed-runtime.md)。
-
-读完本章，你应能区分**进程级装配**（启动一次）与**请求级注入**（每轮一次），并指出 `config` / `context` / `runtime.py` 各管哪一层。
+Runtime **不**负责渲染前端，也**不**替代 Agent 内核编排。示例站改接新事件见后续 Step；装配单测：`tests/test_runtime_agent_assembly.py`。
 
 ---
 
 ## 一句话职责
 
-> **进程级装配一次 → 按 `session_id` 执行 `run_stream` → `aclose` 释放 MCP 资源。**
-
-源码入口：`src/runtime.py`。对外最小用法：
+> **进程级装配一次 → 按 `session_id` 执行 `run_stream` / `resume_stream` → `aclose` 释放 MCP。**
 
 ```python
 agent = await HubloomRuntime.from_config(cfg)
-async for item in agent.run_stream(trigger, session_id=...):
+async for item in agent.run_stream(trigger, session_id=..., wait_profile="turn_based"):
     ...
 await agent.aclose()
 ```
