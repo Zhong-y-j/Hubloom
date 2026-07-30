@@ -1,19 +1,19 @@
-# 示例站（examples/chat）
+# 示例站（examples/chat/web）
 
-> 状态：大纲（待编写正文）
+> 纯前端演示：对接 Hubloom Serve。
 
 ## 本章要讲清
 
-- 后端如何挂 `HubloomRuntime`、暴露 `/v1/chat` 等
-- 前端对话页、A2UI 面板、代理与 Token / session 传递
-- 作为「嵌入参考实现」时该抄哪些、可换成什么
+- 如何启动 Serve + Vite 前端
+- SSE 事件与 `interactive` 挂起续跑（`/v1/chat/resume`）
+- 作为嵌入参考时该抄哪些（`useChat`、消息气泡）
 
 ## 代码锚点
 
-- `examples/chat/`（后端路由 + `web/`）
-- `main.py` 与示例装配关系
+- `examples/chat/web/`（Vue）
+- 产品 API：`src/server/`（`hubloom serve` / `main.py`）
 
 ## 相关章节
 
-- 使用：[定制前端](../usage/customize-ui.md) · [嵌入 Runtime](../usage/embed-runtime.md)
+- 模块：[Hubloom Serve](hubloom-serve.md) · [Agent](agent.md)
 - 入门：[快速上手](../guide/quick-start.md)

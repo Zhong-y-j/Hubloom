@@ -1,29 +1,17 @@
 import { computed, ref } from "vue";
 import type {
   AgentPhase,
-  AnswerPart,
   ChatMessage,
   HistoryMessage,
+  PendingAwait,
   ToolBlock,
 } from "@/types/chat";
-import type { A2uiMessage } from "@/types/a2ui";
-import type {
-  A2uiClientAction,
-  ChatActionPayload,
-} from "@/utils/a2uiAction";
-import { formatActionUserBubble, toChatAction } from "@/utils/a2uiAction";
 
-const STORAGE_SESSION = "cortex_session_key";
-const STORAGE_TOKEN = "cortex_mcp_token";
-const STORAGE_PRESENT = "cortex_present_mode";
+const STORAGE_SESSION = "hubloom_session_key";
+const STORAGE_TOKEN = "hubloom_mcp_token";
 
-export type PresentMode = "auto" | "a2ui" | "markdown";
-
-function loadPresentMode(): PresentMode {
-  const raw = (localStorage.getItem(STORAGE_PRESENT) || "").trim().toLowerCase();
-  if (raw === "a2ui" || raw === "markdown" || raw === "auto") return raw;
-  return "auto";
-}
+/** 网页对话默认可挂起等人 */
+const WAIT_PROFILE = "interactive";
 
 function uuid(): string {
   if (crypto.randomUUID) return crypto.randomUUID();
@@ -37,82 +25,6 @@ function normalizeSessionKey(value: string): string {
     return trimmed.slice(4, -":default".length);
   }
   return trimmed;
-}
-
-function coerceAnswerParts(raw: unknown): AnswerPart[] | undefined {
-  if (!Array.isArray(raw) || !raw.length) return undefined;
-  const out: AnswerPart[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") continue;
-    const obj = item as Record<string, unknown>;
-    const kind = String(obj.type || "").trim();
-    if (kind === "text") {
-      const text = String(obj.text || "").trim();
-      if (!text) continue;
-      const channelRaw = String(obj.channel || "").trim();
-      const channel =
-        channelRaw === "a2ui" || channelRaw === "markdown"
-          ? channelRaw
-          : undefined;
-      out.push(channel ? { type: "text", text, channel } : { type: "text", text });
-    } else if (kind === "a2ui") {
-      out.push({ type: "a2ui" });
-    }
-  }
-  return out.length ? out : undefined;
-}
-
-function a2uiProseFromParts(parts: AnswerPart[] | undefined): string | undefined {
-  if (!parts?.length) return undefined;
-  const prose = parts
-    .filter(
-      (p): p is { type: "text"; text: string; channel?: "markdown" | "a2ui" } =>
-        p.type === "text" && p.channel === "a2ui",
-    )
-    .map((p) => p.text)
-    .join("\n\n")
-    .trim();
-  return prose || undefined;
-}
-
-function appendTextDelta(
-  msg: ChatMessage,
-  delta: string,
-  channel: "markdown" | "a2ui" = "markdown",
-) {
-  if (channel === "markdown") {
-    msg.content += delta;
-  } else {
-    msg.a2uiProse = (msg.a2uiProse || "") + delta;
-  }
-  const parts = msg.answerParts ? [...msg.answerParts] : [];
-  const last = parts[parts.length - 1];
-  const lastChannel =
-    last?.type === "text" ? last.channel || "markdown" : undefined;
-  if (last?.type === "text" && lastChannel === channel) {
-    parts[parts.length - 1] = {
-      type: "text",
-      text: last.text + delta,
-      channel,
-    };
-  } else {
-    parts.push({ type: "text", text: delta, channel });
-  }
-  msg.answerParts = parts;
-}
-
-function ensureA2uiPart(msg: ChatMessage) {
-  const parts = msg.answerParts ? [...msg.answerParts] : [];
-  if (parts[parts.length - 1]?.type !== "a2ui") {
-    parts.push({ type: "a2ui" });
-    msg.answerParts = parts;
-  }
-}
-
-function rawEvent(data: Record<string, unknown>): Record<string, unknown> {
-  const raw = data.rawEvent ?? data.raw_event;
-  if (raw && typeof raw === "object") return raw as Record<string, unknown>;
-  return {};
 }
 
 function parseSseChunk(buffer: string): {
@@ -130,16 +42,14 @@ function parseSseChunk(buffer: string): {
       if (line.startsWith("event:")) eventName = line.slice(6).trim();
       if (line.startsWith("data:")) dataLine += line.slice(5).trim();
     }
-    if (dataLine) {
-      try {
-        const data = JSON.parse(dataLine) as Record<string, unknown>;
-        // AG-UI：以 data.type 为准（常无 event: 行）
-        const typeFromData = String(data.type || "").trim();
-        if (typeFromData) eventName = typeFromData;
-        events.push({ event: eventName, data });
-      } catch {
-        events.push({ event: eventName, data: { raw: dataLine } });
-      }
+    if (!dataLine) continue;
+    try {
+      events.push({
+        event: eventName,
+        data: JSON.parse(dataLine) as Record<string, unknown>,
+      });
+    } catch {
+      events.push({ event: eventName, data: { raw: dataLine } });
     }
   }
   return { events, rest };
@@ -149,37 +59,27 @@ export function useChat() {
   const token = ref(localStorage.getItem(STORAGE_TOKEN) || "");
   const sessionId = ref(
     normalizeSessionKey(localStorage.getItem(STORAGE_SESSION) || "") ||
-      `web-${uuid()}`
+      `web-${uuid()}`,
   );
   const messages = ref<ChatMessage[]>([]);
   const busy = ref(false);
   const status = ref("就绪");
-  const route = ref("");
   const agentPhase = ref<AgentPhase>(null);
   const showTools = ref(true);
-  /** 呈现模式：随请求 body.present_mode 传给后端 */
-  const presentMode = ref<PresentMode>(loadPresentMode());
   const mcpReady = ref<boolean | null>(null);
   const mcpDetail = ref("");
-  /** 最近一轮 RUN_STARTED 的 runId */
   const currentRunId = ref<string | null>(null);
-  /** 服务端 waiting 中的表单 run_id（提交 action 须带此值） */
-  const waitingRunId = ref<string | null>(null);
-  /** waiting 时下发的 toolCallId */
-  const waitingToolCallId = ref<string | null>(null);
-  /** 递增：interaction_superseded 时通知面板关闭 */
-  const interactionEpoch = ref(0);
+  const pendingAwait = ref<PendingAwait | null>(null);
 
-  /** 会话 ID 即可发消息；业务 Token 可选（部分 OpenAPI 无需鉴权） */
   const ready = computed(() => Boolean(normalizeSessionKey(sessionId.value)));
+  const awaitingUser = computed(() => Boolean(pendingAwait.value));
 
   function persist() {
     localStorage.setItem(STORAGE_TOKEN, token.value.trim());
     localStorage.setItem(
       STORAGE_SESSION,
-      normalizeSessionKey(sessionId.value)
+      normalizeSessionKey(sessionId.value),
     );
-    localStorage.setItem(STORAGE_PRESENT, presentMode.value);
   }
 
   function buildHeaders(): HeadersInit {
@@ -199,11 +99,9 @@ export function useChat() {
   function newSession() {
     sessionId.value = `web-${uuid()}`;
     messages.value = [];
-    route.value = "";
     agentPhase.value = null;
     currentRunId.value = null;
-    waitingRunId.value = null;
-    waitingToolCallId.value = null;
+    pendingAwait.value = null;
     persist();
     status.value = ready.value ? "就绪" : "请填写用户 ID";
   }
@@ -220,17 +118,18 @@ export function useChat() {
         mcp_ready?: boolean;
         detail?: string;
         tool_count?: number;
+        status?: string;
       };
       mcpReady.value = Boolean(data.mcp_ready);
       mcpDetail.value =
         data.detail ||
         (data.mcp_ready
           ? `已连接 · ${data.tool_count ?? 0} 工具`
-          : "MCP 未就绪");
+          : data.status || "MCP 未就绪");
     } catch (err) {
       mcpReady.value = false;
       mcpDetail.value =
-        err instanceof Error ? err.message : "无法连接后端 /v1/mcp/status";
+        err instanceof Error ? err.message : "无法连接 Hubloom Serve /v1/mcp/status";
     }
   }
 
@@ -241,7 +140,7 @@ export function useChat() {
     try {
       const res = await fetch(
         `/v1/chat/history?session_id=${encodeURIComponent(key)}`,
-        { headers: buildHeaders() }
+        { headers: buildHeaders() },
       );
       if (!res.ok) return;
       const data = (await res.json()) as { messages?: HistoryMessage[] };
@@ -250,16 +149,9 @@ export function useChat() {
         id: uuid(),
         role: m.role,
         content: m.content || "",
-        thought: m.thought || undefined,
-        tools: (m.tools as ToolBlock[] | null) || undefined,
-        a2uiMessages:
-          Array.isArray(m.a2ui) && m.a2ui.length
-            ? (m.a2ui as A2uiMessage[])
-            : undefined,
-        answerParts: coerceAnswerParts(m.answer_parts),
-        a2uiProse: a2uiProseFromParts(coerceAnswerParts(m.answer_parts)),
         source: m.source || undefined,
       }));
+      pendingAwait.value = null;
       status.value = rows.length ? `已加载 ${rows.length} 条历史` : "就绪";
     } catch {
       /* ignore */
@@ -271,403 +163,255 @@ export function useChat() {
     data: Record<string, unknown>,
     current: ChatMessage,
   ) {
-    // —— AG-UI type ——
-    if (event === "RUN_STARTED") {
-      const rid = String(data.runId || data.run_id || "").trim();
+    if (event === "run_started") {
+      const rid = String(data.run_id || "").trim();
       if (rid) currentRunId.value = rid;
+      agentPhase.value = "deciding";
+      status.value = "处理中…";
       return;
     }
 
-    if (event === "CUSTOM") {
-      const name = String(data.name || "").trim();
-      const value =
-        data.value && typeof data.value === "object"
-          ? (data.value as Record<string, unknown>)
-          : {};
-
-      if (name === "hubloom.phase") {
-        const phase = String(value.phase || "").trim();
-        if (phase === "thinking") {
-          agentPhase.value = "thinking";
-          status.value = "思考中…";
-        } else if (phase === "presenting") {
-          agentPhase.value = "presenting";
-          status.value = "呈现决策中…";
-        } else if (phase === "replying") {
-          agentPhase.value = "replying";
-          status.value = "回复中…";
-        }
-        if (value.route) route.value = String(value.route);
-        return;
-      }
-
-      if (name === "hubloom.a2ui_text") {
-        const delta = String(value.delta || "");
-        if (delta) {
-          agentPhase.value = "replying";
-          appendTextDelta(current, delta, "a2ui");
-        }
-        return;
-      }
-
-      if (name === "hubloom.a2ui") {
-        const raw = value.messages;
-        if (Array.isArray(raw) && raw.length) {
-          const batch = raw as A2uiMessage[];
-          if (value.replace) {
-            current.a2uiMessages = batch;
-            current.a2uiReloadKey = (current.a2uiReloadKey || 0) + 1;
-          } else {
-            current.a2uiMessages = [
-              ...(current.a2uiMessages || []),
-              ...batch,
-            ];
-          }
-          ensureA2uiPart(current);
-        }
-        agentPhase.value = "replying";
-        return;
-      }
-
-      if (name === "hubloom.interaction_waiting") {
-        const rid = String(value.run_id || value.runId || "").trim();
-        if (rid) waitingRunId.value = rid;
-        const tcid = String(
-          value.tool_call_id || value.toolCallId || "",
-        ).trim();
-        waitingToolCallId.value = tcid || null;
-        return;
-      }
-
-      if (name === "hubloom.interaction_superseded") {
-        waitingRunId.value = null;
-        waitingToolCallId.value = null;
-        interactionEpoch.value += 1;
-        return;
-      }
-
-      return;
-    }
-
-    if (event === "TEXT_MESSAGE_START") {
-      agentPhase.value = "replying";
-      return;
-    }
-
-    if (event === "TEXT_MESSAGE_CONTENT") {
-      const delta = String(data.delta || "");
-      if (!delta) return;
-      agentPhase.value = "replying";
-      const sourceRaw = String(rawEvent(data).source || "").trim().toLowerCase();
-      const channel: "markdown" | "a2ui" =
-        sourceRaw === "a2ui" ? "a2ui" : "markdown";
-      appendTextDelta(current, delta, channel);
-      return;
-    }
-
-    if (event === "TEXT_MESSAGE_END") {
-      return;
-    }
-
-    if (event === "THINKING_TEXT_MESSAGE_START") {
-      agentPhase.value = "thinking";
-      status.value = "思考中…";
-      return;
-    }
-
-    if (event === "THINKING_TEXT_MESSAGE_CONTENT") {
-      current.thought = (current.thought || "") + String(data.delta || "");
-      return;
-    }
-
-    if (event === "THINKING_TEXT_MESSAGE_END") {
-      return;
-    }
-
-    if (event === "TOOL_CALL_START") {
-      const toolName = String(
-        data.toolCallName || data.tool_call_name || "tool",
-      );
-      // 客户端人机表单：记下 toolCallId，不上屏为普通 MCP 调用块
-      if (toolName === "hubloom.a2ui_action") {
-        const tcid = String(
-          data.toolCallId || data.tool_call_id || "",
-        ).trim();
-        if (tcid) waitingToolCallId.value = tcid;
-        return;
-      }
-      const block: ToolBlock = {
-        title: `调用 · ${toolName}`,
-        body: "",
-      };
-      current.tools = [...(current.tools || []), block];
-      agentPhase.value = "thinking";
-      return;
-    }
-
-    if (event === "TOOL_CALL_ARGS") {
-      // 人机表单 args 不上屏
-      const tools = current.tools || [];
-      const last = tools[tools.length - 1];
-      if (last && last.title.startsWith("调用")) {
-        last.body += String(data.delta || "");
-        current.tools = [...tools];
-      }
-      return;
-    }
-
-    if (event === "TOOL_CALL_END") {
-      return;
-    }
-
-    if (event === "TOOL_CALL_RESULT") {
-      const raw = rawEvent(data);
-      const toolName = String(
-        raw.toolCallName || raw.tool_call_name || "tool",
-      );
-      if (toolName === "hubloom.a2ui_action" || raw.clientTool) {
-        // 表单已回传，等待态由后续 RUN_STARTED / waiting 事件接管
-        return;
-      }
-      const isError = Boolean(raw.isError ?? raw.is_error);
-      const block: ToolBlock = {
-        title: `${isError ? "失败" : "返回"} · ${toolName}`,
-        body: String(data.content || ""),
-      };
-      current.tools = [...(current.tools || []), block];
-      return;
-    }
-
-    if (event === "RUN_FINISHED") {
-      const result =
-        data.result && typeof data.result === "object"
-          ? (data.result as Record<string, unknown>)
-          : data;
-      if (result.final_message != null) {
-        current.content = String(result.final_message);
-      }
-      const parts = coerceAnswerParts(result.answer_parts);
-      if (parts) {
-        current.answerParts = parts;
-        current.a2uiProse = a2uiProseFromParts(parts);
-      }
-      if (result.route) route.value = String(result.route);
-      const rid = String(
-        data.runId || data.run_id || result.run_id || "",
-      ).trim();
-      if (rid) currentRunId.value = rid;
-      current.streaming = false;
-      return;
-    }
-
-    if (event === "RUN_ERROR") {
-      const code = String(data.code || "").trim();
-      if (code !== "recoverable") {
-        current.error = true;
-        current.content =
-          current.content || String(data.message || data.error || "未知错误");
-        current.streaming = false;
-      }
-      return;
-    }
-
-    // —— 旧 event: 名（过渡期兼容）——
     if (event === "phase") {
       const phase = String(data.phase || "").trim();
-      if (phase === "thinking") {
-        agentPhase.value = "thinking";
-        status.value = "思考中…";
-      } else if (phase === "presenting") {
-        agentPhase.value = "presenting";
-        status.value = "呈现决策中…";
+      if (phase === "thinking" || phase === "decide") {
+        agentPhase.value = "deciding";
+        status.value = "决策中…";
+      } else if (phase === "acting" || phase === "execute") {
+        agentPhase.value = "acting";
+        status.value = "执行中…";
       } else if (phase === "replying") {
         agentPhase.value = "replying";
         status.value = "回复中…";
       }
-      if (data.route) route.value = String(data.route);
-    } else if (event === "thought_delta") {
+      return;
+    }
+
+    if (event === "thought_delta") {
       current.thought = (current.thought || "") + String(data.delta || "");
-    } else if (event === "text_delta" && data.delta) {
+      agentPhase.value = "deciding";
+      return;
+    }
+
+    if (event === "text_delta") {
+      const delta = String(data.delta || "");
+      if (!delta) return;
       agentPhase.value = "replying";
-      const sourceRaw = String(data.source || "").trim().toLowerCase();
-      const channel: "markdown" | "a2ui" =
-        sourceRaw === "a2ui" ? "a2ui" : "markdown";
-      appendTextDelta(current, String(data.delta), channel);
-    } else if (event === "a2ui") {
-      const raw = data.messages;
-      if (Array.isArray(raw) && raw.length) {
-        const batch = raw as A2uiMessage[];
-        if (data.replace) {
-          current.a2uiMessages = batch;
-          current.a2uiReloadKey = (current.a2uiReloadKey || 0) + 1;
-        } else {
-          current.a2uiMessages = [
-            ...(current.a2uiMessages || []),
-            ...batch,
-          ];
-        }
-        ensureA2uiPart(current);
-      }
+      current.content += delta;
+      return;
+    }
+
+    if (event === "final_answer") {
+      const content = String(data.content || "");
+      if (content) current.content = content;
       agentPhase.value = "replying";
-    } else if (event === "tool_call") {
+      return;
+    }
+
+    if (event === "tool_call") {
       const toolName = String(data.tool_name || "tool");
       const block: ToolBlock = {
         title: `调用 · ${toolName}`,
         body: JSON.stringify(data.args || {}, null, 2),
       };
       current.tools = [...(current.tools || []), block];
-      agentPhase.value = "thinking";
-    } else if (event === "tool_result") {
+      agentPhase.value = "acting";
+      status.value = `调用 ${toolName}…`;
+      return;
+    }
+
+    if (event === "tool_result") {
       const toolName = String(data.tool_name || "tool");
       const block: ToolBlock = {
         title: `${data.is_error ? "失败" : "返回"} · ${toolName}`,
         body: String(data.result || ""),
       };
       current.tools = [...(current.tools || []), block];
-    } else if (event === "turn_complete") {
-      if (data.final_message != null) {
-        current.content = String(data.final_message);
+      return;
+    }
+
+    if (event === "step") {
+      const action = String(data.action || "");
+      if (action) status.value = `步骤 · ${action}`;
+      return;
+    }
+
+    if (event === "policy_reject") {
+      const reason = String(data.reason || data.code || "规程拒绝");
+      status.value = `规程拦截：${reason}`;
+      return;
+    }
+
+    if (event === "awaiting_user") {
+      const runId = String(data.await_run_id || data.run_id || "").trim();
+      const awaitToken = String(data.await_token || "").trim();
+      const prompt = String(data.prompt || "").trim();
+      const kind = String(data.kind || "ask").trim() || "ask";
+      pendingAwait.value = {
+        runId,
+        awaitToken,
+        kind,
+        prompt,
+      };
+      if (prompt) {
+        if (!current.content.trim()) {
+          current.content = prompt;
+          current.awaitPrompt = true;
+        } else if (!current.content.includes(prompt)) {
+          current.content = `${current.content.trim()}\n\n${prompt}`;
+        }
       }
-      const parts = coerceAnswerParts(data.answer_parts);
-      if (parts) {
-        current.answerParts = parts;
-        current.a2uiProse = a2uiProseFromParts(parts);
-      }
-      if (data.route) route.value = String(data.route);
+      status.value =
+        kind === "confirm" ? "等待确认…" : "等待你的回复…";
       current.streaming = false;
-    } else if (event === "error") {
+      return;
+    }
+
+    if (event === "run_complete" || event === "run_result") {
+      const content = String(data.content || "");
+      if (content) current.content = content;
+      const ok = data.ok !== false;
+      const err = String(data.error || "");
+      if (!ok && err) {
+        current.error = true;
+        if (!current.content) current.content = err;
+      }
+      const statusRaw = String(data.status || "").trim();
+      // interactive 挂起时 status 常为 awaiting_*；pending 已由 awaiting_user 设置
+      if (
+        statusRaw &&
+        !statusRaw.startsWith("awaiting") &&
+        statusRaw !== "paused"
+      ) {
+        // 正常收工则清挂起
+        if (ok) pendingAwait.value = null;
+      }
+      current.streaming = false;
+      return;
+    }
+
+    if (event === "error") {
       if (!data.recoverable) {
         current.error = true;
         current.content =
           current.content || String(data.error || "未知错误");
         current.streaming = false;
+        pendingAwait.value = null;
+      }
+      return;
+    }
+
+    if (event === "run_finished") {
+      current.streaming = false;
+      agentPhase.value = null;
+      if (!pendingAwait.value) {
+        status.value = current.error ? "出错" : "就绪";
       }
     }
   }
 
-  async function runChatRequest(
-    body: Record<string, unknown>,
-    userBubble: string,
-  ) {
-    if (busy.value || !ready.value) return;
+  async function consumeStream(
+    res: Response,
+    current: ChatMessage,
+  ): Promise<void> {
+    if (!res.ok || !res.body) {
+      const text = await res.text().catch(() => "");
+      current.error = true;
+      current.content = text || `HTTP ${res.status}`;
+      current.streaming = false;
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parsed = parseSseChunk(buffer);
+      buffer = parsed.rest;
+      for (const ev of parsed.events) {
+        applySseEvent(ev.event, ev.data, current);
+        messages.value = [...messages.value];
+      }
+    }
+    if (buffer.trim()) {
+      const parsed = parseSseChunk(buffer + "\n\n");
+      for (const ev of parsed.events) {
+        applySseEvent(ev.event, ev.data, current);
+      }
+    }
+    current.streaming = false;
+    messages.value = [...messages.value];
+  }
+
+  async function send(text: string) {
+    const content = text.trim();
+    if (!content || !ready.value || busy.value) return;
 
     persist();
     busy.value = true;
-    agentPhase.value = "understanding";
-    status.value = "理解中…";
-    route.value = "";
+    agentPhase.value = "deciding";
+
+    const pending = pendingAwait.value;
+    const isResume = Boolean(pending);
 
     messages.value.push({
       id: uuid(),
       role: "user",
-      content: userBubble,
+      content,
     });
 
     const assistant: ChatMessage = {
       id: uuid(),
       role: "assistant",
       content: "",
-      thought: "",
-      tools: [],
       streaming: true,
     };
     messages.value.push(assistant);
-    const idx = messages.value.length - 1;
+
+    // resume 前清掉挂起，避免重复；若失败再靠事件恢复
+    if (isResume) pendingAwait.value = null;
 
     try {
-      const res = await fetch("/v1/chat", {
+      const key = normalizeSessionKey(sessionId.value);
+      const url = isResume ? "/v1/chat/resume" : "/v1/chat";
+      const body = isResume
+        ? {
+            session_id: key,
+            user_reply: content,
+            run_id: pending?.runId || undefined,
+            await_token: pending?.awaitToken || undefined,
+            stream: true,
+          }
+        : {
+            session_id: key,
+            message: content,
+            stream: true,
+            wait_profile: WAIT_PROFILE,
+          };
+
+      status.value = isResume ? "继续处理…" : "处理中…";
+      const res = await fetch(url, {
         method: "POST",
         headers: buildHeaders(),
         body: JSON.stringify(body),
       });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        throw new Error(errText || `HTTP ${res.status}`);
-      }
-      if (!res.body) throw new Error("无响应流");
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const parsed = parseSseChunk(buffer);
-        buffer = parsed.rest;
-
-        for (const { event, data } of parsed.events) {
-          const current = messages.value[idx];
-          if (!current) continue;
-          applySseEvent(event, data, current);
-        }
-      }
-
-      const last = messages.value[idx];
-      if (last) last.streaming = false;
-      agentPhase.value = null;
-      status.value = "就绪";
+      await consumeStream(res, assistant);
     } catch (err) {
-      const last = messages.value[idx];
-      if (last) {
-        last.error = true;
-        last.streaming = false;
-        last.content =
-          last.content ||
-          (err instanceof Error ? err.message : "请求失败");
-      }
-      agentPhase.value = null;
+      assistant.error = true;
+      assistant.content =
+        err instanceof Error ? err.message : "请求失败";
+      assistant.streaming = false;
       status.value = "出错";
     } finally {
       busy.value = false;
-      if (ready.value && status.value !== "出错") {
+      agentPhase.value = null;
+      if (!pendingAwait.value && !assistant.error) {
         status.value = "就绪";
       }
+      messages.value = [...messages.value];
     }
-  }
-
-  async function send(text: string) {
-    const message = text.trim();
-    if (!message) return;
-    const key = normalizeSessionKey(sessionId.value);
-    await runChatRequest(
-      {
-        message,
-        session_id: key || null,
-        stream: true,
-        present_mode: presentMode.value,
-      },
-      message,
-    );
-  }
-
-  async function sendAction(
-    clientAction: A2uiClientAction,
-    runId: string,
-    toolCallId?: string | null,
-  ) {
-    const rid = runId.trim();
-    if (!rid) return;
-    const action: ChatActionPayload = toChatAction(
-      clientAction,
-      toolCallId ?? waitingToolCallId.value,
-    );
-    const key = normalizeSessionKey(sessionId.value);
-    // 乐观清除 waiting，避免双击；失败时由错误气泡体现
-    waitingRunId.value = null;
-    waitingToolCallId.value = null;
-    await runChatRequest(
-      {
-        action,
-        run_id: rid,
-        session_id: key || null,
-        stream: true,
-        present_mode: presentMode.value,
-      },
-      formatActionUserBubble(clientAction),
-    );
   }
 
   return {
@@ -676,22 +420,17 @@ export function useChat() {
     messages,
     busy,
     status,
-    route,
     agentPhase,
     showTools,
-    presentMode,
     mcpReady,
     mcpDetail,
-    currentRunId,
-    waitingRunId,
-    waitingToolCallId,
-    interactionEpoch,
+    pendingAwait,
+    awaitingUser,
     ready,
     persist,
     newSession,
     refreshMcpStatus,
     loadHistory,
     send,
-    sendAction,
   };
 }

@@ -1,31 +1,29 @@
-# Vue 前端（Agent 对话）
+# Hubloom 示例对话前端
+
+纯前端，对接仓库内 **Hubloom Serve**（无 A2UI / AG-UI）。
 
 ## 启动
 
-仓库根目录开两个终端：
-
 ```bash
-# 1) 后端（默认 http://127.0.0.1:8010）
-PYTHONPATH=src:. uv run python main.py
+# 终端 1：产品 API（默认 http://127.0.0.1:8765，见 config http.port）
+PYTHONPATH=src .venv/bin/python -m server serve --config config/env.yaml
+# 或：PYTHONPATH=src .venv/bin/python main.py
 
-# 2) 前端
+# 终端 2：本前端
 cd examples/chat/web
 npm install
 npm run dev
 ```
 
 浏览器打开 Vite 提示的地址（默认 `http://127.0.0.1:5173`）。  
-Vite 将 `/v1`、`/health` 代理到 `http://127.0.0.1:8010`。
+`/v1`、`/health` 代理到 Serve；可用环境变量覆盖：
 
-## 后端接口
+```bash
+HUBLOOM_SERVE_URL=http://127.0.0.1:8765 npm run dev
+```
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| `POST` | `/v1/chat` | 对话（默认 SSE） |
-| `GET` | `/v1/chat/history?session_id=` | 会话历史（含 thought / tools / a2ui） |
-| `GET` | `/v1/mcp/status` | MCP 就绪状态 |
-| `GET` | `/health` | 健康检查 |
+## 行为说明
 
-请求头：`X-Session-Id`、`X-MCP-Token` 或 `Authorization: Bearer …`。
-
-样式：`src/styles.css`（含 `--a2ui-*` 与 chat 布局）。
+- `POST /v1/chat`：新一轮（`wait_profile=interactive`）
+- 收到 `awaiting_user` 后，下一条输入走 `POST /v1/chat/resume`
+- Markdown 渲染回复；工具调用可在侧栏开关显示

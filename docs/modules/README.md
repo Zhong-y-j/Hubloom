@@ -17,7 +17,8 @@
 ```mermaid
 flowchart TB
   subgraph entry["入口"]
-    EX["examples/chat"]
+    EX["examples/chat/web"]
+    SV["hubloom serve"]
     IM["im / events"]
   end
   subgraph core["Runtime 主路径"]
@@ -32,7 +33,8 @@ flowchart TB
     RAG["retrieval"]
     A2A["a2a_adapter"]
   end
-  EX --> RT
+  EX --> SV
+  SV --> RT
   IM --> RT
   RT --> AG
   AG --> TL
@@ -43,7 +45,7 @@ flowchart TB
   TL -.-> A2A
 ```
 
-一次对话的粗链路：`examples/chat` 或其它入口 → `HubloomRuntime` → `agent`（Think / 工具 / Present / Respond）→ `tools`（含 MCP 元工具、`read_skill` 等）→ 结果经 SSE / A2UI 回前端；会话写入 `memory`。
+一次对话的粗链路：演示前端或其它入口 → Hubloom Serve / Runtime → `agent`（Typed ReAct）→ `tools`（含 MCP 元工具、`read_skill` 等）→ SSE 回前端；会话写入 `memory`。
 
 ---
 
@@ -62,9 +64,9 @@ flowchart TB
 | **Events**      | `src/events/`                                       | 业务 Webhook 入站、分册注入、幂等                | [Events](events.md)           |
 | **企业微信**    | `src/im/wecom/`                                     | 企微回调、换票、推送 Markdown                    | [企业微信](im-wecom.md)       |
 | **A2A**         | `src/a2a_adapter/`                                  | 跨 Agent 委托（可选）                            | [A2A Adapter](a2a-adapter.md) |
-| **示例站**      | `examples/chat/`                                    | 对话页 + A2UI + 挂 Runtime 的参考实现            | [示例站](examples-chat.md)    |
+| **示例前端**    | `examples/chat/web/`                                | Vue 对话页，代理到 Hubloom Serve                 | [示例站](examples-chat.md)    |
 
-协议直觉仍读概念章：[MCP](../core-concepts/mcp-protocol.md) · [A2UI](../core-concepts/a2ui-protocol.md) · [AG-UI](../core-concepts/ag-ui-protocol.md)。本部分不重复「协议科普」，只挖代码设计。
+协议直觉仍读概念章：[MCP](../core-concepts/mcp-protocol.md)。本部分不重复「协议科普」，只挖代码设计。
 
 ---
 

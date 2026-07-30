@@ -1,12 +1,16 @@
 # Hubloom Serve（产品 HTTP API）
 
-> 示例站（`examples/chat`）暂不改动。演示前端可后续改为调用本服务。
+> 演示前端：`examples/chat/web`（仅前端，代理到本服务；无 A2UI / AG-UI）。
 
 ## 启动
 
 ```bash
 # 仓库根；需已配置 config/env.yaml（含真 LLM）
 PYTHONPATH=src .venv/bin/python -m server serve --config config/env.yaml
+# 或：PYTHONPATH=src .venv/bin/python main.py
+
+# 可选：演示前端
+cd examples/chat/web && npm install && npm run dev
 ```
 
 默认端口见配置 `http.port`（常见 8765）。OpenAPI：`/docs`。

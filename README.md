@@ -2,33 +2,32 @@
 
 如果说 Spring Boot 是后端接口的「地基」，Vue Admin 是后台页面的「脚手架」，那 **Hubloom 就是 AI Agent 时代的基座脚手架**。
 
-它不是一个独立的聊天机器人，而是一层让**现有业务系统**长出 AI 手脚的胶水：接上你现有的 Swagger/OpenAPI 文档，Agent 就能在真实 API 上完成「理解 → 调工具 → 出结果」。说明用 Markdown，办事用 A2UI（表单 / 表格 / 确认）。**业务逻辑依然留在你的系统里，Hubloom 只做「翻译」和「路由」。**
+它不是一个独立的聊天机器人，而是一层让**现有业务系统**长出 AI 手脚的胶水：接上你现有的 Swagger/OpenAPI 文档，Agent 就能在真实 API 上完成「决策 → 调工具 / 追问 / 确认 → 收工」。回复用 Markdown；网页可挂起等人（interactive），企微等入口用跨轮交班。**业务逻辑依然留在你的系统里，Hubloom 只做「翻译」和「路由」。**
 
-**你主要做：** 配 LLM 与 Swagger、写 Skill、按需定制前端界面或嵌入门户。  
-**底座替你搞定：** 工具调用（MCP）、SSE 流式回合（AG-UI）、会话记忆、鉴权透传与过程可观测。
+**你主要做：** 配 LLM 与 Swagger、写 Skill（含可选 Playbook）、按需定制前端或嵌入门户。  
+**底座替你搞定：** 工具调用（MCP）、Typed ReAct 编排、SSE 流式回合、会话记忆、鉴权透传与过程可观测。
 
-交付分两层：**示例站**（`examples/chat`）开箱演示；**Runtime**（`HubloomRuntime` / `/v1/chat` 等）嵌入自有应用。记忆、RAG、A2A、事件 Webhook、企微入口等为可选能力，默认不挡主路径。
+交付分两层：**Hubloom Serve**（`src/server/` / `main.py`）产品 API；**演示前端**（`examples/chat/web`）开箱对话。记忆、RAG、A2A、事件 Webhook、企微入口等为可选能力，默认不挡主路径。
 
-协议要点：**MCP** 把 HTTP 变成工具；**A2UI** 负责生成式界面；**AG-UI** 负责前端交互事件。完整手册见 [docs/](./docs/)（Docsify）。
+协议要点：**MCP** 把 HTTP 变成工具；产品出站为**简洁 JSON SSE**（非 A2UI / AG-UI）。完整手册见 [docs/](./docs/)（Docsify）。
 
 ## 特性
 
 - **嵌入式智能，而非旁路助手**：智能体站在流程与数据平面上办事，直接触达企业 API，结果可核对、过程可复盘
 - **契约即能力**：OpenAPI/Swagger 动态映射工具面，换业务域主要换配置，快速复用存量数字化资产
-- **认知—决策—呈现一体**：Think → Present → Respond 编排环，复杂目标可拆解、可调工具、可自适应选交互形态
-- **双通道体验**：Markdown 承载洞见与结论，A2UI 即时生成表单 / 列表 / 确认等操作界面（`auto | markdown | a2ui`）
-- **AG-UI 回合交互**：`/v1/chat` 出站对齐 AG-UI 事件；表单等待用 `run_id` / `toolCallId`，提交走结构化 `action`（非假闲聊）
+- **Policy-Bounded Typed ReAct**：单环 Decide → Gate → `act` / `ask` / `await_confirm` / `finish`；Skill Playbook 可硬拦
+- **Wait Profile**：网页 `interactive` 挂起续跑；企微等 `turn_based` 跨轮；事件入口可 `no_wait`
+- **Markdown 体验**：结论与过程用 Markdown；工具调用可展开复盘（演示前端无 A2UI 面板）
 - **从建议到闭环**：经 MCP 元工具调用真实 REST，把「能说会道」变成「能做完事」
-- **可演进的运营智能**：配置 + Skill 固化领域 Know-how；记忆与 RAG 沉淀上下文；A2A 支撑多智能体协同与自动化闭环
-- **事件驱动入站**：业务 Webhook（`POST /v1/events`）注入 `skills/events` 分册规程后主动跑 Agent，结果写入会话历史
-- **企微对话入口**：自建应用单聊回调；企微账号经业务接口换 Token 后跑同一 Runtime，Markdown 主动推回
-- **过程可审计**：轨迹、工具链与 SSE 契约可上屏、可复盘，满足落地对透明与可控的要求
+- **可演进的运营智能**：配置 + Skill 固化领域 Know-how；记忆与 RAG 沉淀上下文；A2A 支撑多智能体协同
+- **事件 / 企微入口**：模块已具备；按部署接到 Serve 或独立进程
+- **过程可审计**：轨迹、工具链与 SSE 事件可上屏、可复盘
 
 ---
 
 ## 界面预览
 
-一句多任务：先创建小区，再补全钥匙柜——对话说明 + 右侧 A2UI 交互面板。
+对话办事：自然语言驱动 MCP 工具，Markdown 呈现结论（工具调用过程可展开查看）。
 
 ![对话与交互面板](./docs/assets/hubloom-chat-a2ui-panel.png)
 
@@ -38,7 +37,7 @@
 
 ## 架构文档
 
-示例站（`examples/chat`）负责开箱演示；Runtime（`HubloomRuntime` / `/v1/chat`）负责嵌入门户与自有应用。
+Hubloom Serve 负责产品 HTTP API；`examples/chat/web` 负责开箱演示前端；Runtime（`HubloomRuntime`）可嵌入门户与自有应用。
 
 **本地预览文档站（Docsify，与 Hello-Agents 同类）：**
 
@@ -88,60 +87,43 @@ cp config/env.example.yaml config/env.yaml
 
 在 `config/env.yaml` 中填写 LLM 与 MCP（OpenAPI 规格、业务 API 地址等）。业务 Token 由前端会话传入，不要写进配置文件。
 
-### 3. 启动示例站
+### 3. 启动 Hubloom Serve + 演示前端
 
 ```bash
-# 后端 API（默认 :8010）
-PYTHONPATH=src:. uv run python main.py
+# 产品 API（默认 :8765，见 config http.port）
+PYTHONPATH=src uv run python main.py
+# 或：PYTHONPATH=src uv run python -m server serve --config config/env.yaml
 
 # 前端（另开终端）
 cd examples/chat/web && npm install && npm run dev
 ```
 
-- **Web 对话页**：http://127.0.0.1:5173/（Vite 代理 `/v1` → `:8010`）
-- **API 文档**：http://127.0.0.1:8010/docs
-
-可通过 `CORTEX_API_HOST`、`CORTEX_API_PORT`、`HUBLOOM_CONFIG` 调整。
+- **Web 对话页**：http://127.0.0.1:5173/（Vite 代理 `/v1` → Serve）
+- **API 文档**：http://127.0.0.1:8765/docs
 
 **健康检查**
 
 ```bash
-curl http://127.0.0.1:8010/health
+curl http://127.0.0.1:8765/health
 ```
 
 **调用对话接口**
 
 ```bash
-curl -s http://127.0.0.1:8010/v1/chat \
+curl -s http://127.0.0.1:8765/v1/chat \
   -H "Content-Type: application/json" \
   -H "X-Session-Id: demo-session" \
   -H "X-MCP-Token: your-business-token" \
-  -d '{"message":"你好，你能做什么？","stream":false}'
+  -d '{"message":"你好，你能做什么？","stream":false,"wait_profile":"interactive"}'
 ```
 
 默认 SSE（`"stream": true`）。历史：`GET /v1/chat/history?session_id=demo-session`。  
-呈现模式可在请求或侧栏选择 `auto` / `markdown` / `a2ui`。
+网页对话缺参时走 `POST /v1/chat/resume`（interactive 挂起续跑）。
 
-**事件入站（需 `events.enable: true`）**
+**事件入站 / 企业微信**
 
-契约与 Skill 分册约定见 **[事件 Webhook](./docs/advanced/webhook.md)**。支持的 `type` 由 [`skills/events/`](./skills/events/) 扫描；`GET /v1/events/types` 可查。幂等键是 `event_id`（不是 `session_id`）。
-
-```bash
-# 查看支持的事件类型
-curl -s http://127.0.0.1:8010/v1/events/types \
-  -H "X-Event-Secret: change-me"
-
-# 推送事件（请换真实 deviceId / Token；或用 scripts）
-export HUBLOOM_BEARER_TOKEN='your-business-token'
-export HUBLOOM_SESSION_ID='demo-session'
-./examples/chat/scripts/post_locker_created.sh
-```
-
-结果写入该 `session_id` 历史（刷新对话页可见「事件」标记）。新增事件类型：在 `skills/events/` 增加带 `event:` 的分册 md 后重启即可。
-
-**企业微信对话（需 `im.wecom.enable: true` + `token_resolve`）**
-
-契约见 **[企业微信入口](./docs/advanced/wecom-integration.md)**。回调：`https://<公网>/v1/im/wecom/callback`（须 HTTPS）。会话 ID 为 `wecom:{UserId}`，业务 Token 由配置的换票接口按企微账号解析。
+契约见 **[事件 Webhook](./docs/advanced/webhook.md)**、**[企业微信入口](./docs/advanced/wecom-integration.md)**。  
+当前产品 Serve 以对话 API 为主；Events / 企微回调可后续迁入 `src/server/`（联调脚本见 `tests/test_im_wecom.py`）。
 
 ---
 
@@ -150,16 +132,15 @@ export HUBLOOM_SESSION_ID='demo-session'
 ### 当前版本（重构后）
 
 - [x] OpenAPI → MCP 工具面（catalog + 元工具 `list_api` / `call_api`）
-- [x] **Think → Present → Respond** 统一编排环
-- [x] **双呈现**：Markdown + A2UI（含 `present_mode=auto`）
-- [x] **[AG-UI](https://docs.ag-ui.com/)** 出站 SSE（`RUN_*` / `TEXT_MESSAGE_*` / `TOOL_CALL_*` / `CUSTOM` 等）与官方 `ag-ui-protocol` 编码
-- [x] **表单回合**：`run_id` 等待态、客户端 `hubloom.a2ui_action`、结构化 `action` 回传（见 [AG-UI](./docs/core-concepts/ag-ui-protocol.md)）
-- [x] Web 对话页：交互面板、本轮 A2UI 生命周期、AG-UI 事件消费
+- [x] **Policy-Bounded Typed ReAct** 单环（Decide → Gate → Act / Ask / AwaitConfirm / Finish）
+- [x] Evidence Journal + Wait Profile（`interactive` / `turn_based` / `no_wait`）
+- [x] **Hubloom Serve** 产品 HTTP API（简洁 SSE，无 A2UI / AG-UI）
+- [x] 演示前端：Markdown 对话 + interactive 挂起续跑
 - [x] 多轮会话与工具链感知的历史裁剪
 - [x] 可选长期记忆与 RAG 知识库
-- [x] **A2A 双向 MVP**：入站 Server、出站 `list_agents` / `delegate_task`、远程过程上屏
-- [x] **事件驱动 Webhook MVP**：`POST /v1/events`、`skills/events` 分册注入、幂等与类型发现（见 [事件 Webhook](./docs/advanced/webhook.md)）
-- [x] **企微对话入口 MVP**：自建应用回调、业务换 Token、异步 Markdown 推送（见 [企业微信入口](./docs/advanced/wecom-integration.md)）
+- [x] **A2A 双向 MVP**：入站 Server、出站 `list_agents` / `delegate_task`
+- [x] **事件驱动 Webhook MVP**（模块在 `src/events/`；入口接线按部署演进）
+- [x] **企微对话入口 MVP**（模块在 `src/im/wecom/`；入口接线按部署演进）
 
 ### 下一步
 

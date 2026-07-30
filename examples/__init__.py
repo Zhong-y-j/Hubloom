@@ -1,1 +1,1 @@
-"""examples.chat — Hubloom 对话示例站（FastAPI + Vue）。"""
+"""examples — 演示前端等参考实现（后端请用 Hubloom Serve）。"""

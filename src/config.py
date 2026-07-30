@@ -112,7 +112,7 @@ class HubloomConfig:
     a2a_remote_agents: str | None = None
     a2a_static_token: str | None = None
 
-    # http demo
+    # hubloom serve（http.host / http.port）
     api_host: str | None = None
     api_port: int | None = None
     api_reload: bool | None = None

@@ -1,4 +1,4 @@
-/* 与 examples/chat/static/styles.css 对齐的设计 token */
+/* Hubloom chat demo tokens */
 :root {
   --bg: #f0f4f8;
   --bg-chat: #f8fafc;
@@ -31,7 +31,6 @@
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   /* 对话主栏宽度：消息 + 输入框对齐 */
   --chat-content-max: 680px;
-
   /* 页面外壳别名（沿用旧变量名，便于模板复用） */
   --ink: var(--text);
   --panel: var(--surface);
@@ -41,137 +40,7 @@
   --agent: var(--accent);
   --code-bg: #0f172a;
   --code-fg: #e2e8f0;
-
-  /* ── A2UI Basic Catalog：映射到 chat 色板 ── */
-  --a2ui-color-background: var(--bg-chat);
-  --a2ui-color-on-background: var(--text);
-
-  --a2ui-color-primary: var(--accent);
-  --a2ui-color-primary-hover: var(--accent-hover);
-  --a2ui-color-on-primary: #ffffff;
-  --a2ui-color-secondary: var(--surface-2);
-  --a2ui-color-secondary-hover: #e2e8f0;
-  --a2ui-color-on-secondary: var(--text);
-
-  --a2ui-color-surface: var(--surface);
-  --a2ui-color-on-surface: var(--text);
-  --a2ui-color-border: rgba(15, 23, 42, 0.08);
-  --a2ui-color-input: rgba(255, 255, 255, 0.78);
-  --a2ui-color-on-input: var(--text);
-
-  --a2ui-border-width: 1px;
-  --a2ui-border: 1px solid #e2e8f0;
-  --a2ui-border-radius: 10px;
-
-  --a2ui-spacing-xs: 0.35rem;
-  --a2ui-spacing-s: 0.5rem;
-  --a2ui-spacing-m: 0.85rem;
-  --a2ui-spacing-l: 1.15rem;
-
-  --a2ui-font-family-title: var(--font-display);
-  --a2ui-font-size-2xl: 1.5rem;
-  --a2ui-font-size-xl: 1.3rem;
-  --a2ui-font-size-l: 1.12rem;
-  --a2ui-font-size-m: 1.02rem;
-  --a2ui-font-size-s: 0.95rem;
-  --a2ui-font-size-xs: 0.86rem;
-  --a2ui-line-height-headings: 1.35;
-  --a2ui-line-height-body: 1.55;
-
-  --a2ui-label-font-size: 0.92rem;
-  --a2ui-label-font-weight: 600;
-  --a2ui-label-color: #334155;
-
-  --a2ui-column-gap: 0.85rem;
-  --a2ui-row-gap: 0.65rem;
-
-  /* Card：多块并列时靠间距拉开层次 */
-  --a2ui-card-background: #ffffff;
-  --a2ui-card-border: 1px solid rgba(15, 23, 42, 0.08);
-  --a2ui-card-border-radius: 14px;
-  --a2ui-card-padding: 1rem 1.05rem 0.95rem;
-  --a2ui-card-box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --a2ui-card-margin: 0;
-
-  /* List */
-  --a2ui-list-gap: 0.75rem;
-  --a2ui-list-padding: 0.15rem 0;
-
-  /* Button */
-  --a2ui-button-border-radius: 11px;
-  --a2ui-button-padding: 0.72rem 1.35rem;
-  --a2ui-button-margin: 0.35rem 0 0;
-  --a2ui-button-border: 1px solid transparent;
-  --a2ui-button-background: var(--surface);
-  --a2ui-button-box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.25) inset,
-    0 6px 14px rgba(13, 148, 136, 0.22);
-  --a2ui-button-font-weight: 600;
-
-  /* Text */
-  --a2ui-text-color-text: #0f172a;
-  --a2ui-text-caption-color: var(--muted);
-
-  /* TextField / 输入框：半透明白底，压在渐变 Card 上更有层次 */
-  --a2ui-color-input: rgba(255, 255, 255, 0.78);
-  --a2ui-textfield-border: 1px solid rgba(15, 23, 42, 0.08);
-  --a2ui-textfield-border-radius: 11px;
-  --a2ui-textfield-padding: 0.8rem 0.95rem;
-  --a2ui-textfield-color-border-focus: var(--accent);
-  --a2ui-textfield-color-error: #c2415a;
-  --a2ui-textfield-label-font-size: 0.95rem;
-  --a2ui-textfield-label-font-weight: 600;
-
-  /* DateTimeInput */
-  --a2ui-datetimeinput-background: #ffffff;
-  --a2ui-datetimeinput-color: var(--text);
-  --a2ui-datetimeinput-border: 1px solid #e2e8f0;
-  --a2ui-datetimeinput-border-radius: 10px;
-  --a2ui-datetimeinput-padding: 0.7rem 0.85rem;
-  --a2ui-datetimeinput-label-font-size: 0.92rem;
-  --a2ui-datetimeinput-label-font-weight: 600;
-
-  /* CheckBox */
-  --a2ui-checkbox-size: 1.1rem;
-  --a2ui-checkbox-border-radius: 5px;
-  --a2ui-checkbox-gap: 0.55rem;
-  --a2ui-checkbox-label-font-size: 0.98rem;
-  --a2ui-checkbox-label-font-weight: 500;
-
-  /* ChoicePicker */
-  --a2ui-choicepicker-label-color: #334155;
-  --a2ui-choicepicker-label-font-size: 0.92rem;
-  --a2ui-choicepicker-label-font-weight: 600;
-  --a2ui-choicepicker-gap: 0.55rem;
-  --a2ui-choicepicker-chip-padding: 0.45rem 0.9rem;
-  --a2ui-choicepicker-chip-border-radius: 999px;
-
-  /* Slider */
-  --a2ui-slider-track-color: var(--surface-3);
-  --a2ui-slider-thumb-color: var(--accent);
-  --a2ui-slider-label-font-size: 0.75rem;
-  --a2ui-slider-label-font-weight: 500;
-
-  /* Tabs */
-  --a2ui-tabs-header-background: transparent;
-  --a2ui-tabs-header-background-active: var(--accent-light);
-  --a2ui-tabs-header-color: var(--text-secondary);
-  --a2ui-tabs-header-color-active: var(--accent-hover);
-  --a2ui-tabs-border: 1px solid var(--border);
-  --a2ui-tabs-content-padding: 0.65rem 0;
-
-  /* Divider / Icon / Image / Video / Modal */
-  --a2ui-divider-border: 1px solid var(--border);
-  --a2ui-divider-spacing: var(--a2ui-spacing-m);
-  --a2ui-icon-size: 1.35rem;
-  --a2ui-icon-color: var(--accent);
-  --a2ui-image-border-radius: var(--radius-sm);
-  --a2ui-video-border-radius: var(--radius-sm);
-  --a2ui-modal-backdrop-bg: rgba(15, 23, 42, 0.45);
-  --a2ui-modal-padding: 1.25rem;
-  --a2ui-modal-border-radius: var(--radius);
 }
-
 * {
   box-sizing: border-box;
 }
@@ -185,36 +54,10 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ── A2UI surface host（对话内嵌） ── */
-
-.render-host {
-  padding: 1rem 1.1rem 1.25rem;
-  flex: 1;
-  overflow: auto;
-  background: var(--bg-chat);
-  min-height: 280px;
-  max-height: min(78vh, 900px);
-}
-
 .render-host .placeholder {
   margin: 0;
   color: var(--muted);
   font-size: 0.9rem;
-}
-
-/* A2UI 输入聚焦环：对齐 chat input focus */
-.render-host :is(input, textarea, select):focus-visible {
-  outline: none;
-  border-color: var(--accent) !important;
-  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.12);
-}
-
-/* Text 内嵌 Markdown（纯 Markdown 场景） */
-.render-host .markdown-body,
-.render-host a2ui-basic-text .markdown-body {
-  font-size: 0.92rem;
-  line-height: 1.6;
-  color: var(--text);
 }
 
 .render-host table {
@@ -319,10 +162,6 @@ body {
   grid-template-rows: 3.25rem minmax(0, 1fr);
   overflow: hidden;
   align-items: stretch;
-}
-
-.chat-layout-panel-open .chat-workspace {
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 400px);
 }
 
 .chat-sidebar {
@@ -612,18 +451,6 @@ body {
   min-height: 0;
 }
 
-.chat-top,
-.a2ui-drawer-top {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  padding: 0 1.25rem;
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-}
-
 .chat-top {
   justify-content: flex-start;
 }
@@ -779,308 +606,6 @@ body {
   box-shadow: var(--shadow-sm);
   white-space: normal;
   padding: 0.95rem 1.1rem 1.1rem;
-}
-
-/* 含 A2UI 的回复与正文同宽，避免表单拉满侧栏 */
-.msg.assistant.turn:has(.chat-a2ui) {
-  max-width: min(var(--chat-content-max), 100%);
-  width: 100%;
-}
-
-.msg.assistant.turn.turn-panel-active {
-  border-color: #99f6e4;
-  box-shadow:
-    var(--shadow-sm),
-    0 0 0 1px rgba(13, 148, 136, 0.12);
-}
-
-.a2ui-panel-chip {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-top: 0.15rem;
-  padding: 0.4rem 0.85rem;
-  border-radius: 999px;
-  border: 1px solid #99f6e4;
-  background: linear-gradient(120deg, #ecfdf5 0%, #f0fdfa 55%, #ecfeff 100%);
-  color: var(--accent-hover);
-  font-size: 0.8rem;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition:
-    background 0.15s ease,
-    border-color 0.15s ease;
-}
-
-.a2ui-panel-chip:hover {
-  border-color: var(--accent);
-  background: #ccfbf1;
-}
-
-.a2ui-panel-chip.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-
-.a2ui-panel-chip-dot {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.85;
-  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.18);
-}
-
-.a2ui-panel-chip.active .a2ui-panel-chip-dot {
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
-}
-
-.a2ui-drawer {
-  display: grid;
-  grid-template-rows: subgrid;
-  grid-row: 1 / -1;
-  min-width: 0;
-  min-height: 0;
-  border-left: 1px solid var(--border);
-  background:
-    radial-gradient(120% 70% at 0% 0%, rgba(45, 212, 191, 0.1), transparent 50%),
-    radial-gradient(90% 60% at 100% 100%, rgba(56, 189, 248, 0.08), transparent 48%),
-    var(--surface);
-  box-shadow: -8px 0 24px rgba(15, 23, 42, 0.04);
-  animation: a2ui-drawer-in 0.28s ease-out;
-}
-
-.a2ui-drawer-top {
-  justify-content: space-between;
-}
-
-.a2ui-drawer-top h2 {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text);
-  line-height: 1.5;
-}
-
-.a2ui-drawer-close {
-  flex-shrink: 0;
-  font-size: 0.8rem;
-  padding: 0.3rem 0.7rem;
-  line-height: 1.25;
-}
-
-.a2ui-drawer-body {
-  flex: 1;
-  min-height: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 0.85rem 0.9rem 1.25rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  align-items: stretch;
-  /* 留给 .chat-a2ui 的可用高度由本容器约束 */
-  background:
-    radial-gradient(100% 60% at 0% 0%, rgba(45, 212, 191, 0.08), transparent 55%),
-    radial-gradient(90% 50% at 100% 100%, rgba(56, 189, 248, 0.07), transparent 50%),
-    linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-}
-
-.a2ui-drawer-prose {
-  margin: 0;
-  padding: 0.15rem 0.15rem 0.25rem;
-  flex-shrink: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  font-size: 0.92rem;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-
-.a2ui-drawer-prose :first-child {
-  margin-top: 0;
-}
-
-.a2ui-drawer-prose :last-child {
-  margin-bottom: 0;
-}
-
-/* 抽屉内表单：渐变底 + 流动描边；高度随内容，达上限后由 render-host 内滚 */
-.a2ui-drawer .chat-a2ui {
-  --chat-a2ui-body-max: min(70dvh, calc(100dvh - 8rem));
-  margin-top: 0;
-  padding: 0.85rem 0.8rem 0.95rem;
-  border-radius: 18px;
-  border: none;
-  position: relative;
-  isolation: isolate;
-  /* 不按剩余空间撑满/压矮，只随内容增高，上限见 max-height */
-  flex: 0 0 auto;
-  height: fit-content;
-  max-height: calc(var(--chat-a2ui-body-max) + 1.8rem);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background:
-    radial-gradient(120% 90% at 0% 0%, rgba(45, 212, 191, 0.28), transparent 52%),
-    radial-gradient(110% 85% at 100% 100%, rgba(56, 189, 248, 0.2), transparent 50%),
-    radial-gradient(80% 60% at 80% 20%, rgba(165, 180, 252, 0.14), transparent 55%),
-    linear-gradient(160deg, #f7fffc 0%, #f3f9ff 42%, #eef6fb 100%);
-  background-size: 140% 140%, 140% 140%, 120% 120%, 100% 100%;
-  animation:
-    chat-a2ui-in 0.32s ease-out,
-    a2ui-drawer-bg-drift 10s ease-in-out infinite alternate;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.75),
-    0 10px 28px rgba(13, 148, 136, 0.08);
-  --a2ui-column-gap: 0.8rem;
-  --a2ui-row-gap: 0.65rem;
-  --a2ui-color-background: transparent;
-  --a2ui-color-surface: transparent;
-  --a2ui-color-input: rgba(255, 255, 255, 0.92);
-  --a2ui-card-border: none;
-  --a2ui-card-border-radius: 16px;
-  --a2ui-card-box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.85),
-    0 8px 22px rgba(13, 148, 136, 0.1);
-  --a2ui-card-padding: 1rem 1.05rem 1.05rem;
-  --a2ui-card-margin: 0;
-  --a2ui-card-background:
-    radial-gradient(120% 90% at 0% 0%, rgba(45, 212, 191, 0.22), transparent 55%),
-    radial-gradient(110% 80% at 100% 100%, rgba(56, 189, 248, 0.16), transparent 52%),
-    linear-gradient(155deg, #f8fffc 0%, #f4f9ff 48%, #eef6fb 100%);
-  --a2ui-textfield-border: 1px solid rgba(15, 23, 42, 0.08);
-  --a2ui-textfield-border-radius: 11px;
-  --a2ui-button-box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.28) inset,
-    0 8px 18px rgba(13, 148, 136, 0.22);
-}
-
-.a2ui-drawer .chat-a2ui::before {
-  display: block;
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1.75px;
-  background: conic-gradient(
-    from var(--chat-a2ui-angle),
-    #99f6e4 0%,
-    #14b8a6 16%,
-    #38bdf8 34%,
-    #a5b4fc 52%,
-    #2dd4bf 70%,
-    #0d9488 86%,
-    #99f6e4 100%
-  );
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-  z-index: 1;
-  animation: chat-a2ui-border-flow 3.2s linear infinite;
-}
-
-.a2ui-drawer .chat-a2ui > * {
-  position: relative;
-  z-index: 2;
-}
-
-.a2ui-drawer .chat-a2ui .render-host {
-  flex: 0 1 auto;
-  min-height: 0;
-  height: fit-content;
-  max-height: var(--chat-a2ui-body-max);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
-/* Card：同样的渐变底 + 流动描边 */
-.a2ui-drawer a2ui-card,
-.chat-a2ui a2ui-card {
-  position: relative;
-  isolation: isolate;
-  overflow: visible;
-  box-sizing: border-box;
-}
-
-.a2ui-drawer a2ui-card::before,
-.chat-a2ui a2ui-card::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1.6px;
-  background: conic-gradient(
-    from var(--chat-a2ui-angle),
-    #99f6e4 0%,
-    #14b8a6 16%,
-    #38bdf8 34%,
-    #a5b4fc 52%,
-    #2dd4bf 70%,
-    #0d9488 86%,
-    #99f6e4 100%
-  );
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-  z-index: 1;
-  animation: chat-a2ui-border-flow 3.4s linear infinite;
-  animation-delay: -1.1s;
-}
-
-@keyframes a2ui-drawer-bg-drift {
-  from {
-    background-position: 0% 0%, 100% 100%, 80% 20%, 0 0;
-  }
-  to {
-    background-position: 30% 20%, 70% 80%, 40% 60%, 0 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .a2ui-drawer .chat-a2ui {
-    animation: chat-a2ui-in 0.32s ease-out;
-  }
-
-  .a2ui-drawer .chat-a2ui::before,
-  .a2ui-drawer a2ui-card::before,
-  .chat-a2ui a2ui-card::before {
-    animation: none;
-    background: linear-gradient(
-      135deg,
-      rgba(45, 212, 191, 0.65),
-      rgba(56, 189, 248, 0.5),
-      rgba(13, 148, 136, 0.55)
-    );
-  }
-}
-
-@keyframes a2ui-drawer-in {
-  from {
-    opacity: 0;
-    transform: translateX(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
 }
 
 .msg.assistant.turn.error {
@@ -1430,231 +955,6 @@ body {
   background: none;
 }
 
-/* —— Chat 内嵌 A2UI：氛围底 + 流动边框 —— */
-@property --chat-a2ui-angle {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 0deg;
-}
-
-.chat-a2ui {
-  /* 内容少 → 随 render-host 增高；触顶 → render-host 内滚，不撑出页面滚动条 */
-  --chat-a2ui-body-max: min(72dvh, 820px);
-  margin-top: 0.55rem;
-  width: 100%;
-  min-width: 0;
-  position: relative;
-  isolation: isolate;
-  display: flex;
-  flex-direction: column;
-  height: fit-content;
-  max-height: calc(var(--chat-a2ui-body-max) + 1.2rem);
-  overflow: hidden;
-  padding: 0.55rem;
-  border-radius: 20px;
-  border: none;
-  background:
-    radial-gradient(120% 90% at 0% 0%, rgba(45, 212, 191, 0.22), transparent 55%),
-    radial-gradient(100% 80% at 100% 100%, rgba(56, 189, 248, 0.16), transparent 52%),
-    linear-gradient(165deg, #f8fffc 0%, #f4f8fb 55%, #eef6ff 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-
-  --a2ui-color-background: transparent;
-  --a2ui-color-surface: transparent;
-  --a2ui-color-input: rgba(255, 255, 255, 0.82);
-  --a2ui-color-border: rgba(15, 23, 42, 0.08);
-  --a2ui-color-primary-hover: var(--accent-hover);
-  --a2ui-column-gap: 0.95rem;
-  --a2ui-row-gap: 0.7rem;
-  --a2ui-list-gap: 0.7rem;
-  /* 整体略收一档 */
-  font-family: var(--font-ui);
-  font-size: 0.94rem;
-  letter-spacing: 0.01em;
-  --a2ui-font-family-title: var(--font-display);
-  --a2ui-font-size-m: 0.94rem;
-  --a2ui-font-size-s: 0.88rem;
-  --a2ui-font-size-xs: 0.8rem;
-  --a2ui-font-size-l: 1.05rem;
-  --a2ui-font-size-xl: 1.22rem;
-  --a2ui-font-size-2xl: 1.38rem;
-  --a2ui-label-font-size: 0.86rem;
-  --a2ui-label-color: #334155;
-  --a2ui-card-border: none;
-  --a2ui-card-background:
-    radial-gradient(120% 90% at 0% 0%, rgba(45, 212, 191, 0.2), transparent 55%),
-    radial-gradient(110% 80% at 100% 100%, rgba(56, 189, 248, 0.14), transparent 52%),
-    linear-gradient(155deg, #f8fffc 0%, #f4f9ff 48%, #eef6fb 100%);
-  --a2ui-card-border-radius: 16px;
-  --a2ui-card-box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    0 8px 24px rgba(13, 148, 136, 0.07);
-  --a2ui-card-padding: 1.2rem 1.25rem 1.1rem;
-  --a2ui-card-margin: 0;
-  --a2ui-textfield-border: 1px solid rgba(15, 23, 42, 0.09);
-  --a2ui-textfield-border-radius: 11px;
-  --a2ui-textfield-padding: 0.68rem 0.85rem;
-  --a2ui-textfield-color-error: #b91c45;
-  --a2ui-textfield-label-font-size: 0.86rem;
-  --a2ui-textfield-label-font-weight: 600;
-  --a2ui-choicepicker-label-font-size: 0.86rem;
-  --a2ui-checkbox-label-font-size: 0.92rem;
-  --a2ui-button-padding: 0.68rem 1.3rem;
-  --a2ui-button-border-radius: 11px;
-  --a2ui-button-margin: 0.55rem 0 0;
-  --a2ui-button-font-weight: 600;
-  --a2ui-button-box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.28) inset,
-    0 8px 18px rgba(13, 148, 136, 0.24);
-  --a2ui-choicepicker-chip-padding: 0.45rem 0.9rem;
-  --a2ui-choicepicker-gap: 0.5rem;
-  animation: chat-a2ui-in 0.32s ease-out;
-}
-
-/* 流动渐变描边（conic 旋转） */
-.chat-a2ui::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 1.5px;
-  background: conic-gradient(
-    from var(--chat-a2ui-angle),
-    #99f6e4 0%,
-    #14b8a6 18%,
-    #38bdf8 38%,
-    #a5b4fc 55%,
-    #2dd4bf 72%,
-    #0d9488 88%,
-    #99f6e4 100%
-  );
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  pointer-events: none;
-  z-index: 1;
-  animation: chat-a2ui-border-flow 3.6s linear infinite;
-}
-
-.chat-a2ui > * {
-  position: relative;
-  z-index: 2;
-}
-
-@keyframes chat-a2ui-border-flow {
-  to {
-    --chat-a2ui-angle: 360deg;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .chat-a2ui::before {
-    animation: none;
-    background: linear-gradient(
-      135deg,
-      rgba(45, 212, 191, 0.55),
-      rgba(56, 189, 248, 0.45),
-      rgba(13, 148, 136, 0.5)
-    );
-  }
-}
-
-.answer-a2ui-pending {
-  margin: 0.35rem 0 0;
-  padding: 0.65rem 0.85rem;
-  font-size: 0.84rem;
-  color: var(--text-secondary);
-  border-radius: var(--radius-sm);
-  border: 1px dashed #99f6e4;
-  background: #f0fdfa;
-}
-
-.chat-a2ui a2ui-basic-image,
-.chat-a2ui img {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  border-radius: 10px;
-  margin-top: 0.35rem;
-}
-
-@keyframes chat-a2ui-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* 对话内 A2UI：render-host 随内容增高，超过 --chat-a2ui-body-max 后内滚 */
-.chat-a2ui .render-host {
-  margin: 0;
-  padding: 0.1rem 0 0;
-  flex: 0 1 auto;
-  min-height: 0;
-  height: fit-content;
-  max-height: var(--chat-a2ui-body-max);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.chat-a2ui .placeholder {
-  margin: 0;
-  padding: 0.75rem 0.9rem;
-  border-radius: var(--radius-sm);
-  border: 1px dashed var(--border-strong);
-  background: var(--surface-2);
-  color: var(--muted);
-  font-size: 0.85rem;
-}
-
-.chat-a2ui-error {
-  margin: 0;
-  padding: 0.75rem 0.9rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
-  font-size: 0.85rem;
-}
-
-.chat-a2ui-sent {
-  flex-shrink: 0;
-  margin: 0.5rem 0 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.28rem 0.65rem;
-  border-radius: 999px;
-  background: var(--accent-light);
-  border: 1px solid #99f6e4;
-  font-size: 0.75rem;
-  font-weight: 500;
-  color: var(--accent-hover);
-}
-
-.chat-a2ui-disabled {
-  opacity: 0.78;
-  pointer-events: none;
-}
-
-.chat-a2ui-disabled .render-host {
-  filter: grayscale(0.08);
-}
-
 .composer {
   display: flex;
   justify-content: center;
@@ -1702,50 +1002,36 @@ body {
   min-width: 80px;
 }
 
-@media (max-width: 800px) {
-  .chat-layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-  }
-
-  .chat-layout-panel-open .chat-workspace {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .a2ui-drawer {
-    position: fixed;
-    inset: 0 0 0 auto;
-    width: min(100vw, 400px);
-    z-index: 40;
-    display: flex;
-    flex-direction: column;
-    grid-row: auto;
-    border-left: 1px solid var(--border);
-    box-shadow: -12px 0 40px rgba(15, 23, 42, 0.18);
-  }
-
-  .a2ui-drawer-top {
-    flex-shrink: 0;
-  }
-
-  .chat-sidebar {
-    max-height: 36vh;
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .msg {
-    max-width: 92%;
-  }
-
-  .msg.assistant.turn,
-  .msg.assistant.turn:has(.chat-a2ui) {
-    max-width: 100%;
-  }
-}
-
 @media (max-width: 1100px) and (min-width: 801px) {
   .chat-layout-panel-open .chat-workspace {
     grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
   }
+}
+
+.badge-await {
+  background: #fff7ed;
+  color: #c2410c;
+  border: 1px solid #fed7aa;
+}
+
+.await-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0 auto 0.65rem;
+  max-width: var(--chat-content-max);
+  width: 100%;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--radius-sm);
+  background: #fff7ed;
+  border: 1px solid #fed7aa;
+  color: #9a3412;
+  font-size: 0.9rem;
+}
+
+.await-banner strong { font-weight: 650; }
+
+.answer-body.await-prompt {
+  border-left: 3px solid #fb923c;
+  padding-left: 0.75rem;
 }

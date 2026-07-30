@@ -41,7 +41,7 @@ Runtime **不是** HTTP 框架本身，也**不是**业务 Service 层；它是�
 
 | 调用方                          | 关系                                                               |
 | ------------------------------- | ------------------------------------------------------------------ |
-| `main.py` → `examples.chat.app` | 演示站进程内创建 Runtime，再挂 `/v1/chat` 等                       |
+| `main.py` / `python -m server serve` | 产品 API 进程内创建 Runtime，暴露 `/v1/chat` 等              |
 | 自有后端 / 门户                 | 直接 `from_config` / `from_config_file`，自己喂 `trigger` 与 Token |
 | 事件 Webhook、企微入口          | **同一套** Runtime；换的是入口适配，不是另起一套编排               |
 
