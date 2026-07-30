@@ -373,7 +373,7 @@ Memory **不是**一套库两种用法，而是 **统一 Manager + 多种 Handle
 
 | 类型                    | 存什么                    | 怎么读                | 后端          |
 | ----------------------- | ------------------------- | --------------------- | ------------- |
-| `conversation`          | 完整 `Message`（含 tool） | **按时间**最近 N 条   | SQLite        |
+| `conversation`          | 完整 `Message`（含 tool） | **按时间**最近 N 条   | SQLite / Postgres（`memory.conversation_store`） |
 | `episodic` / `semantic` | 笔记 `content` + 向量     | **按 query 向量检索** | Qdrant        |
 | `associative`           | 实体 / 关系               | **图邻域**            | Neo4j（可选） |
 
@@ -546,7 +546,9 @@ Handler：`embed(query)` → Qdrant search → 带 `metadata["score"]` 的条目
 
 | 配置                           | 作用                                                        |
 | ------------------------------ | ----------------------------------------------------------- |
-| `memory.db_path`               | 会话 SQLite 路径（几乎总开）                                |
+| `memory.conversation_store`    | 会话历史后端：`sqlite`（默认）或 `postgres`                 |
+| `memory.db_path`               | SQLite 路径（`conversation_store=sqlite`）                  |
+| `memory.postgres_dsn`          | Postgres DSN（`conversation_store=postgres` 时必填；库不存在时会尝试自动创建，需 CREATEDB） |
 | `memory.enable_long_term`      | **Worker** 是否按长期后端提炼 / 淘汰                        |
 | `memory.consolidate_min_turns` | 未处理 USER 轮数 ≥ N 才巩固                                 |
 | `qdrant.*` / `neo4j.*`         | 向量 / 图连接                                               |
@@ -560,7 +562,7 @@ Handler：`embed(query)` → Qdrant search → 带 `metadata["score"]` 的条目
 
 **现状（重要）**：`HubloomRuntime._make_memory` **写死** `vector/graph=none`。
 
-- 对话主路径默认 **只有会话 SQLite**；
+- 对话主路径默认 **只有会话历史**（SQLite 或 Postgres，见 `memory.conversation_store`）；
 - 仍可能注册 `SearchMemoryTool`，但没有长期 Handler 时搜不到；
 - `enable_long_term` **主要驱动 Worker**，≠「Runtime 已连上 Qdrant」；
 - 要联调长期：演示脚本显式开 qdrant，或跑 Worker，或以后把 Runtime 接到配置。

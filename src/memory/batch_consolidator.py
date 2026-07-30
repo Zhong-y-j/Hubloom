@@ -16,7 +16,7 @@ from memory.experience_case import (
     SemanticRule,
     parse_batch_extraction,
 )
-from memory.store.conversation_sqlite_store import ConversationMessageRecord
+from memory.store.conversation_protocol import ConversationMessageRecord
 
 if TYPE_CHECKING:
     from core.provider import LLMProvider

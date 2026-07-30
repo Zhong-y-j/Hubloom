@@ -1,4 +1,14 @@
 from .base import BaseStore
+from .conversation_factory import (
+    ConversationBackend,
+    create_conversation_store,
+    normalize_conversation_backend,
+)
+from .conversation_postgres_store import (
+    ConversationPostgresStore,
+    ensure_postgres_database,
+)
+from .conversation_protocol import ConversationMessageRecord, ConversationStore
 from .conversation_sqlite_store import ConversationSQLitesStore
 from .consolidation_checkpoint_store import (
     ConsolidationCheckpoint,
@@ -12,8 +22,15 @@ __all__ = [
     "BaseStore",
     "ConsolidationCheckpoint",
     "ConsolidationCheckpointStore",
+    "ConversationBackend",
+    "ConversationMessageRecord",
+    "ConversationPostgresStore",
     "ConversationSQLitesStore",
+    "ConversationStore",
     "QdrantMemoryStore",
     "Neo4jStore",
     "QdrantMemoryStoreScope",
+    "create_conversation_store",
+    "ensure_postgres_database",
+    "normalize_conversation_backend",
 ]

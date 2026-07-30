@@ -97,6 +97,8 @@ class HubloomConfig:
 
     # memory / session
     memory_db_path: str | None = None
+    conversation_store: str | None = None  # sqlite | postgres
+    conversation_postgres_dsn: str | None = None
     enable_long_term_memory: bool | None = None
     consolidate_min_turns: int | None = None
     default_session_id: str | None = None
@@ -270,6 +272,8 @@ class HubloomConfig:
             mcp_serve_port=_as_int(serve.get("port")),
             mcp_serve_path=_clean(serve.get("path")),
             memory_db_path=_clean(memory.get("db_path")),
+            conversation_store=_clean(memory.get("conversation_store")),
+            conversation_postgres_dsn=_clean(memory.get("postgres_dsn")),
             enable_long_term_memory=_as_bool(memory.get("enable_long_term")),
             consolidate_min_turns=_as_int(memory.get("consolidate_min_turns")),
             default_session_id=_clean(session.get("default_session_id")),

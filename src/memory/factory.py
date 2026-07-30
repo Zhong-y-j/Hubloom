@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Literal
 
 from embedders import OpenAIEmbedder
@@ -15,7 +14,12 @@ from memory.handlers import (
     SemanticQdrantHandler,
 )
 from memory.manager import MemoryManager
-from memory.store import ConversationSQLitesStore, Neo4jStore, QdrantMemoryStore
+from memory.store import (
+    ConversationStore,
+    Neo4jStore,
+    QdrantMemoryStore,
+    create_conversation_store,
+)
 
 VectorBackend = Literal["sqlite", "qdrant", "none"]
 GraphBackend = Literal["neo4j", "none"]
@@ -25,6 +29,9 @@ def create_memory_manager(
     *,
     namespace: str,
     db_path: str = "data/memory.db",
+    conversation_store: ConversationStore | None = None,
+    conversation_backend: str | None = "sqlite",
+    conversation_postgres_dsn: str | None = None,
     vector_backend: VectorBackend = "qdrant",
     qdrant_url: str | None = None,
     qdrant_collection: str | None = None,
@@ -43,10 +50,14 @@ def create_memory_manager(
     """创建 MemoryManager（conversation 必选；长期记忆按 backend 可选）。
 
     长期后端参数由调用方（HubloomConfig）显式传入，不读环境变量。
+    会话历史：``conversation_store`` 优先；否则按 ``conversation_backend`` 创建。
     """
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-
-    conversation_store = ConversationSQLitesStore(db_path)
+    if conversation_store is None:
+        conversation_store = create_conversation_store(
+            backend=conversation_backend,
+            db_path=db_path,
+            postgres_dsn=conversation_postgres_dsn,
+        )
     handlers: dict[str, MemoryHandler] = {
         "conversation": ConversationHandler(
             store=conversation_store,

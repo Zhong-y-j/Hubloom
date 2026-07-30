@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from agent.actions import CONTROL_ASK, CONTROL_FINISH
 from agent.policy import Playbook
+from memory.store import create_conversation_store
 from redis_test_utils import make_fake_session_backends
 from config import HubloomConfig
 from core.models import LLMOutput, Message, Role, StopReason, ToolCall
@@ -86,6 +87,10 @@ def _make_runtime(llm: ScriptedLLM, memory_db: Path) -> HubloomRuntime:
         redis_url="redis://localhost:6379/0",
     )
     store, lock = make_fake_session_backends()
+    conv = create_conversation_store(
+        backend="sqlite",
+        db_path=str(memory_db),
+    )
     return HubloomRuntime(
         cfg=cfg,
         llm=llm,
@@ -96,6 +101,7 @@ def _make_runtime(llm: ScriptedLLM, memory_db: Path) -> HubloomRuntime:
         playbook=Playbook(),
         session_store=store,
         session_lock=lock,
+        conversation_store=conv,
         default_wait_profile="interactive",
     )
 

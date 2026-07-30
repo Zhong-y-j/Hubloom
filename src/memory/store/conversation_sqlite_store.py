@@ -4,41 +4,25 @@
 
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import uuid
-from dataclasses import dataclass
 from typing import Any, Optional
 
-from core.models import Message, Role, ToolCall
+from core.models import Message
+from memory.store.conversation_codec import (
+    encode_message_fields,
+    row_to_message,
+)
+from memory.store.conversation_protocol import ConversationMessageRecord
 from memory.store.schema_migrate import ensure_columns
 
-
-@dataclass(frozen=True)
-class ConversationMessageRecord:
-    """带数据库 id 的会话消息（供批量提炼定位 turn 范围）。"""
-
-    id: str
-    message: Message
+# 兼容旧导入路径
+__all__ = ["ConversationMessageRecord", "ConversationSQLitesStore"]
 
 
 class ConversationSQLitesStore:
-    """对话历史持久化存储。
-
-    每条消息按 session_id 归档，支持多用户多会话。
-    与 ContextAssembler 配合：store 负责完整持久化，assembler 负责裁剪组装。
-    Args:
-        db_path: 数据库文件路径
-    Actions:
-        add_message: 添加一条消息
-        get_recent: 获取最近 N 条消息
-        get_all: 获取会话的完整历史
-        clear_session: 清空指定会话的全部消息
-        list_sessions: 列出所有会话概览
-        count: 获取会话消息总数
-        close: 关闭数据库连接
-    """
+    """对话历史持久化存储（SQLite）。"""
 
     _EXTRA_COLUMNS = {
         "metadata_json": "TEXT DEFAULT '{}'",
@@ -89,26 +73,9 @@ class ConversationSQLitesStore:
     ) -> str:
         """持久化一条消息，返回生成的消息 ID。"""
         msg_id = uuid.uuid4().hex
-
-        tool_calls_json = None
-        if message.tool_calls:
-            tool_calls_json = json.dumps(
-                [
-                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                    for tc in message.tool_calls
-                ],
-                ensure_ascii=False,
-            )
-
-        content = (
-            message.content
-            if isinstance(message.content, str)
-            else json.dumps(message.content, ensure_ascii=False)
+        content, tool_calls_json, tool_call_id, name, metadata_json = (
+            encode_message_fields(message, metadata=metadata)
         )
-
-        meta = dict(metadata or {})
-        if message.reasoning_content is not None:
-            meta.setdefault("reasoning_content", message.reasoning_content)
 
         self.conn.execute(
             """
@@ -123,9 +90,9 @@ class ConversationSQLitesStore:
                 message.role.value,
                 content,
                 tool_calls_json,
-                message.tool_call_id,
-                message.name,
-                json.dumps(meta, ensure_ascii=False),
+                tool_call_id,
+                name,
+                metadata_json,
                 source,
                 token_count,
                 turn_index,
@@ -135,13 +102,11 @@ class ConversationSQLitesStore:
         return msg_id
 
     def get_recent(self, session_id: str, limit: int = 20) -> list[Message]:
-        """获取最近 N 条消息（按时间正序返回）。"""
         return [r.message for r in self.get_recent_records(session_id, limit)]
 
     def get_recent_records(
         self, session_id: str, limit: int = 20
     ) -> list[ConversationMessageRecord]:
-        """获取最近 N 条消息（含 id，按时间正序）。"""
         rows = self.conn.execute(
             """
             SELECT id, role, content, tool_calls, tool_call_id, name, metadata_json
@@ -155,11 +120,9 @@ class ConversationSQLitesStore:
         return [self._row_to_record(row) for row in reversed(rows)]
 
     def get_all(self, session_id: str) -> list[Message]:
-        """获取会话的完整历史。"""
         return [r.message for r in self.get_all_records(session_id)]
 
     def get_all_records(self, session_id: str) -> list[ConversationMessageRecord]:
-        """获取会话完整历史（含 id，按时间正序）。"""
         rows = self.conn.execute(
             """
             SELECT id, role, content, tool_calls, tool_call_id, name, metadata_json
@@ -176,7 +139,6 @@ class ConversationSQLitesStore:
         session_id: str,
         after_message_id: str | None,
     ) -> list[ConversationMessageRecord]:
-        """获取某条消息之后的新消息（不含 checkpoint 本身，按时间正序）。"""
         if not after_message_id:
             return self.get_all_records(session_id)
 
@@ -216,7 +178,6 @@ class ConversationSQLitesStore:
         session_id: str,
         after_message_id: str | None = None,
     ) -> int:
-        """统计待处理 USER 消息数（用于定量触发）。"""
         if not after_message_id:
             row = self.conn.execute(
                 """
@@ -268,10 +229,6 @@ class ConversationSQLitesStore:
         return int(row["cnt"]) if row else 0
 
     def get_chat_history(self, session_id: str) -> list[dict[str, str]]:
-        """获取会话展示用消息（含时间戳与 metadata，按时间正序）。
-
-        含 user/assistant，以及表单回传用的 tool（由上层决定是否展示）。
-        """
         rows = self.conn.execute(
             """
             SELECT role, content, created_at, metadata_json, name, source
@@ -296,7 +253,6 @@ class ConversationSQLitesStore:
         ]
 
     def clear_session(self, session_id: str) -> int:
-        """清空指定会话的全部消息，返回删除条数。"""
         cursor = self.conn.execute(
             "DELETE FROM conversation_memory WHERE session_id = ?", (session_id,)
         )
@@ -304,7 +260,6 @@ class ConversationSQLitesStore:
         return cursor.rowcount
 
     def list_sessions(self) -> list[dict]:
-        """列出所有会话概览。"""
         rows = self.conn.execute(
             """
             SELECT
@@ -327,7 +282,6 @@ class ConversationSQLitesStore:
         ]
 
     def count(self, session_id: str) -> int:
-        """获取会话消息总数。"""
         row = self.conn.execute(
             "SELECT COUNT(*) as cnt FROM conversation_memory WHERE session_id = ?",
             (session_id,),
@@ -338,57 +292,16 @@ class ConversationSQLitesStore:
     def _row_to_record(row: sqlite3.Row) -> ConversationMessageRecord:
         return ConversationMessageRecord(
             id=str(row["id"]),
-            message=ConversationSQLitesStore._row_to_message(row),
-        )
-
-    @staticmethod
-    def _row_to_message(row: sqlite3.Row) -> Message:
-        """将数据库行转换为 Message；消息 id 写入 metadata['_id'] 供上层使用。"""
-        role_map = {
-            "system": Role.SYSTEM,
-            "user": Role.USER,
-            "assistant": Role.ASSISTANT,
-            "tool": Role.TOOL,
-        }
-        role = role_map.get(row["role"], Role.USER)
-
-        tool_calls = None
-        if row["tool_calls"]:
-            raw = json.loads(row["tool_calls"])
-            tool_calls = [
-                ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"])
-                for tc in raw
-            ]
-
-        return Message(
-            role=role,
-            content=row["content"],
-            tool_calls=tool_calls,
-            tool_call_id=row["tool_call_id"],
-            name=row["name"],
-            reasoning_content=_reasoning_from_metadata(row["metadata_json"]),
+            message=row_to_message(row),
         )
 
     def close(self) -> None:
         self.conn.close()
 
 
-def _reasoning_from_metadata(raw: str | None) -> str | None:
-    if not raw:
-        return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(data, dict):
-        return None
-    text = data.get("reasoning_content")
-    if text is None:
-        return None
-    return str(text)
-
-
 if __name__ == "__main__":
+    from core.models import Role
+
     store = ConversationSQLitesStore()
     store.add_message("test", Message(role=Role.USER, content="Hello, world!"))
     print(store.get_recent("test"))

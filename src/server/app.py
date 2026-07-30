@@ -16,7 +16,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from agent.run import RunResult
 from core.models import Message, Role
-from memory.store.conversation_sqlite_store import ConversationSQLitesStore
 from observability import setup_log
 from runtime import HubloomRuntime
 from server.schemas import (
@@ -276,11 +275,8 @@ def create_app(
         if not resolved:
             raise HTTPException(status_code=400, detail="请填写 session_id")
 
-        store = ConversationSQLitesStore(_runtime.memory_db_path)
-        try:
-            rows = await asyncio.to_thread(store.get_chat_history, resolved)
-        finally:
-            store.close()
+        store = _runtime.conversation_store
+        rows = await asyncio.to_thread(store.get_chat_history, resolved)
 
         messages = _history_messages(rows)
         return ChatHistoryResponse(

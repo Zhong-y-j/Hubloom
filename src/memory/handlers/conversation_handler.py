@@ -6,7 +6,7 @@ from typing import Optional
 from core.models import Message, Role
 from observability import log, logger
 from memory.handlers.base import MemoryHandler
-from memory.store import ConversationSQLitesStore
+from memory.store import ConversationStore
 
 
 class ConversationHandler(MemoryHandler):
@@ -18,7 +18,7 @@ class ConversationHandler(MemoryHandler):
     - 推荐用 ``append(message=...)``；``remember`` 仅作统一接口的简化入口（默认 user 角色）。
 
     Args:
-        store: ConversationSQLitesStore 实例
+        store: ConversationStore 实例（SQLite / Postgres）
         session_id: 会话 ID
 
     Actions:
@@ -35,7 +35,7 @@ class ConversationHandler(MemoryHandler):
     def __init__(
         self,
         *,
-        store: ConversationSQLitesStore,
+        store: ConversationStore,
         session_id: str,
     ):
         self.store = store

@@ -38,6 +38,7 @@ from core.provider import LLMProvider
 from mcp_adapter.discovery import AgentMcpSetup, load_agent_mcp_bindings
 from memory import create_memory_manager
 from memory.manager import MemoryManager
+from memory.store import ConversationStore, create_conversation_store
 from skill import load_skills
 from tools.builtin.memory_tool import SearchMemoryTool
 from tools.builtin.skill_tools import build_skill_tools, clear_read_skill_turn_state
@@ -69,6 +70,15 @@ def _memory_db_path(cfg: HubloomConfig) -> str:
     return str(path)
 
 
+def _create_conversation_store(cfg: HubloomConfig) -> ConversationStore:
+    backend = (cfg.conversation_store or "sqlite").strip() or "sqlite"
+    return create_conversation_store(
+        backend=backend,
+        db_path=_memory_db_path(cfg) if backend.lower() == "sqlite" else None,
+        postgres_dsn=cfg.conversation_postgres_dsn,
+    )
+
+
 def _compile_playbook(cfg: HubloomConfig) -> Playbook:
     skills = load_skills(
         _skills_dir(cfg),
@@ -90,6 +100,7 @@ class HubloomRuntime:
     playbook: Playbook = field(default_factory=Playbook)
     session_store: SessionStore = field(default=None)  # type: ignore[assignment]
     session_lock: RedisSessionLock = field(default=None)  # type: ignore[assignment]
+    conversation_store: ConversationStore = field(default=None)  # type: ignore[assignment]
     default_wait_profile: str = "turn_based"
     max_rounds: int = 8
     _redis_sync: Any = field(default=None, repr=False)
@@ -180,6 +191,8 @@ class HubloomRuntime:
                 session_lock = lock
         assert session_store is not None and session_lock is not None
 
+        conversation_store = _create_conversation_store(cfg)
+
         return cls(
             cfg=cfg,
             llm=llm,
@@ -190,6 +203,7 @@ class HubloomRuntime:
             playbook=playbook,
             session_store=session_store,
             session_lock=session_lock,
+            conversation_store=conversation_store,
             default_wait_profile=wait_profile,
             max_rounds=max_rounds,
             _redis_sync=redis_sync,
@@ -225,6 +239,7 @@ class HubloomRuntime:
         return create_memory_manager(
             namespace=session_id,
             db_path=self.memory_db_path,
+            conversation_store=self.conversation_store,
             vector_backend="none",
             graph_backend="none",
         )
@@ -350,6 +365,11 @@ class HubloomRuntime:
                 await self.mcp_setup.bindings.client.close()
             finally:
                 self.mcp_setup = None
+        if self.conversation_store is not None:
+            try:
+                self.conversation_store.close()
+            except Exception:
+                pass
         if self._redis_async is not None:
             try:
                 await self._redis_async.aclose()

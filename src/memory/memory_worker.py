@@ -13,7 +13,7 @@ from memory.batch_consolidator import (
     split_conversation_turns,
 )
 from memory.factory import GraphBackend, VectorBackend, create_memory_manager
-from memory.store import ConversationSQLitesStore
+from memory.store import create_conversation_store
 from memory.store.consolidation_checkpoint_store import ConsolidationCheckpointStore
 
 if TYPE_CHECKING:
@@ -27,6 +27,8 @@ class WorkerConfig:
 
     min_turns: int = 3
     db_path: str = "data/memory.db"
+    conversation_backend: str = "sqlite"
+    conversation_postgres_dsn: str | None = None
     vector_backend: VectorBackend = "qdrant"
     graph_backend: GraphBackend = "none"
     qdrant_url: str | None = None
@@ -54,6 +56,9 @@ class WorkerConfig:
             min_turns=max(1, int(min_turns)),
             db_path=(cfg.memory_db_path or "data/memory.db").strip()
             or "data/memory.db",
+            conversation_backend=(cfg.conversation_store or "sqlite").strip()
+            or "sqlite",
+            conversation_postgres_dsn=cfg.conversation_postgres_dsn,
             vector_backend="qdrant" if enable_ltm else "none",
             graph_backend="neo4j" if enable_ltm else "none",
             qdrant_url=cfg.qdrant_url,
@@ -74,6 +79,8 @@ class WorkerConfig:
     def memory_manager_kwargs(self) -> dict:
         return {
             "db_path": self.db_path,
+            "conversation_backend": self.conversation_backend,
+            "conversation_postgres_dsn": self.conversation_postgres_dsn,
             "vector_backend": self.vector_backend,
             "graph_backend": self.graph_backend,
             "qdrant_url": self.qdrant_url,
@@ -121,7 +128,12 @@ class MemoryMaintenanceWorker:
     ) -> None:
         self._llm = llm
         self._config = config
-        self._conversation_store = ConversationSQLitesStore(self._config.db_path)
+        self._conversation_store = create_conversation_store(
+            backend=self._config.conversation_backend,
+            db_path=self._config.db_path,
+            postgres_dsn=self._config.conversation_postgres_dsn,
+        )
+        # checkpoint 仍用本地 SQLite（与会话库解耦）
         self._checkpoint_store = ConsolidationCheckpointStore(self._config.db_path)
 
     async def close(self) -> None:
@@ -226,6 +238,7 @@ class MemoryMaintenanceWorker:
         try:
             mem = create_memory_manager(
                 namespace=session_id,
+                conversation_store=self._conversation_store,
                 **self._config.memory_manager_kwargs(),
             )
             consolidator = MemoryBatchConsolidator(mem, self._llm)
@@ -269,6 +282,7 @@ class MemoryMaintenanceWorker:
     async def _run_maintenance(self, namespace: str) -> int:
         mem = create_memory_manager(
             namespace=namespace,
+            conversation_store=self._conversation_store,
             **self._config.memory_manager_kwargs(),
         )
         evicted = await mem.run_maintenance()
