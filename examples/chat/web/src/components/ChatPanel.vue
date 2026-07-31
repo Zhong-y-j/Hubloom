@@ -35,6 +35,18 @@ const phaseLabel = computed(() => {
   return "";
 });
 
+/** 仅最新一条助手消息默认展开思考；历史回复折叠 */
+const latestAssistantId = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    if (messages.value[i].role === "assistant") return messages.value[i].id;
+  }
+  return null;
+});
+
+function isThoughtOpen(m: ChatMessage): boolean {
+  return m.id === latestAssistantId.value;
+}
+
 function onCredChange() {
   persist();
   status.value = ready.value ? "就绪" : "请填写用户 ID";
@@ -57,17 +69,17 @@ async function scrollBottom() {
 async function scrollThoughtToLatest() {
   await nextTick();
   const root = listRef.value;
-  if (!root) return;
-  for (const m of messages.value) {
-    if (m.role !== "assistant" || !m.thought) continue;
-    const el = root.querySelector(
-      `[data-thought-scroll="${CSS.escape(m.id)}"]`,
-    );
-    if (!(el instanceof HTMLElement)) continue;
-    if (m.streaming || !el.dataset.scrolledOnce) {
-      el.scrollTop = el.scrollHeight;
-      if (!m.streaming) el.dataset.scrolledOnce = "1";
-    }
+  const id = latestAssistantId.value;
+  if (!root || !id) return;
+  const m = messages.value.find((x) => x.id === id);
+  if (!m?.thought) return;
+  const el = root.querySelector(
+    `[data-thought-scroll="${CSS.escape(id)}"]`,
+  );
+  if (!(el instanceof HTMLElement)) return;
+  if (m.streaming || !el.dataset.scrolledOnce) {
+    el.scrollTop = el.scrollHeight;
+    if (!m.streaming) el.dataset.scrolledOnce = "1";
   }
 }
 
@@ -328,7 +340,7 @@ onMounted(async () => {
                 <details
                   v-if="m.thought || (showTools && m.tools?.length)"
                   class="thought-panel"
-                  open
+                  :open="isThoughtOpen(m)"
                 >
                   <summary class="thought-summary">
                     {{

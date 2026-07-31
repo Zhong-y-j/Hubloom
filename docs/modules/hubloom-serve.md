@@ -110,6 +110,8 @@ SSE 事件（节选）：`run_started` / `step` / `tool_call` / `tool_result` / 
 - `session_id`（或头 `X-Session-Id`）
 - `include_thought`（默认 `false`）：为 `true` 时在**最终助手消息**上填回 `thought`（含中间工具轮折叠进来的思考）
 
+响应还可带 `awaiting`（`run_id` / `await_token` / `kind` / `prompt`）：session 正挂起等人时返回，前端加载历史后应据此走 `/v1/chat/resume`，避免误调 `/v1/chat` 触发「禁止并行 begin_run」。
+
 面向聊天 UI：带 `tool_calls` 的中间 assistant / tool 行会折叠进最终助手气泡的 `tools`（及可选 `thought`），与实时 SSE 一条气泡一致。
 
 ```bash

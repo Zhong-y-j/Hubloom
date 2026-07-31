@@ -40,3 +40,10 @@ export type HistoryMessage = {
   /** 本轮折叠的工具调用/返回，对齐实时 SSE */
   tools?: ToolBlock[] | null;
 };
+
+export type HistoryAwaiting = {
+  run_id: string;
+  await_token: string;
+  kind?: string;
+  prompt?: string;
+};

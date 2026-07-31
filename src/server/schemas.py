@@ -73,10 +73,23 @@ class HistoryMessage(BaseModel):
     )
 
 
+class SessionAwaitingInfo(BaseModel):
+    """interactive 挂起态；前端加载历史后据此走 /v1/chat/resume。"""
+
+    run_id: str
+    await_token: str
+    kind: str = "ask"
+    prompt: str = ""
+
+
 class ChatHistoryResponse(BaseModel):
     session_id: str
     messages: list[HistoryMessage]
     total: int
+    awaiting: SessionAwaitingInfo | None = Field(
+        default=None,
+        description="若 session 正在 awaiting_user，返回挂起信息以便 resume",
+    )
 
 
 class McpStatusResponse(BaseModel):

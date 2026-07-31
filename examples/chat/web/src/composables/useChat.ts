@@ -2,6 +2,7 @@ import { computed, ref } from "vue";
 import type {
   AgentPhase,
   ChatMessage,
+  HistoryAwaiting,
   HistoryMessage,
   PendingAwait,
   ToolBlock,
@@ -152,7 +153,10 @@ export function useChat() {
         headers: buildHeaders(),
       });
       if (!res.ok) return;
-      const data = (await res.json()) as { messages?: HistoryMessage[] };
+      const data = (await res.json()) as {
+        messages?: HistoryMessage[];
+        awaiting?: HistoryAwaiting | null;
+      };
       const rows = data.messages || [];
       messages.value = rows.map((m) => ({
         id: uuid(),
@@ -169,8 +173,21 @@ export function useChat() {
             }))
           : undefined,
       }));
-      pendingAwait.value = null;
-      status.value = rows.length ? `已加载 ${rows.length} 条历史` : "就绪";
+      const aw = data.awaiting;
+      if (aw?.run_id && aw?.await_token) {
+        pendingAwait.value = {
+          runId: aw.run_id,
+          awaitToken: aw.await_token,
+          kind: (aw.kind || "ask").trim() || "ask",
+          prompt: aw.prompt || "",
+        };
+        status.value = rows.length
+          ? `已加载 ${rows.length} 条历史 · 等待你的回复`
+          : "等待你的回复…";
+      } else {
+        pendingAwait.value = null;
+        status.value = rows.length ? `已加载 ${rows.length} 条历史` : "就绪";
+      }
     } catch {
       /* ignore */
     }

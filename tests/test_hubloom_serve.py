@@ -172,6 +172,15 @@ def test_health_and_chat_resume_sse() -> None:
                     await_run_id = data["await_run_id"]
         assert await_token and await_run_id
 
+        hist_await = client.get(
+            "/v1/chat/history",
+            params={"session_id": "serve-demo"},
+        )
+        assert hist_await.status_code == 200
+        aw = hist_await.json().get("awaiting")
+        assert aw and aw["await_token"] == await_token
+        assert aw["run_id"] == await_run_id
+
         llm.extend(
             [
                 _out(
@@ -247,6 +256,7 @@ def test_health_and_chat_resume_sse() -> None:
         assert "用 echo_pet" in finish_msg["thought"]
         assert "完成回复" in finish_msg["thought"]
         assert finish_msg.get("tools")
+        assert hist_thought.json().get("awaiting") is None
 
     print("ok: /health + /v1/chat + /v1/chat/resume SSE + history thought")
 

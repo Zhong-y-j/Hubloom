@@ -36,6 +36,7 @@ from server.schemas import (
     HistoryToolBlock,
     McpStatusResponse,
     ResumeRequest,
+    SessionAwaitingInfo,
 )
 from server.sse import event_to_sse, format_sse
 
@@ -443,10 +444,29 @@ def create_app(
         store = _runtime.conversation_store
         rows = await asyncio.to_thread(store.get_chat_history, resolved)
         messages = _history_messages(rows, include_thought=include_thought)
+
+        awaiting: SessionAwaitingInfo | None = None
+        session_store = getattr(_runtime, "session_store", None)
+        if session_store is not None:
+            rec = await asyncio.to_thread(session_store.get, resolved)
+            snap = getattr(rec, "awaiting", None) if rec is not None else None
+            if (
+                rec is not None
+                and getattr(rec, "status", None) == "awaiting_user"
+                and snap is not None
+            ):
+                awaiting = SessionAwaitingInfo(
+                    run_id=str(snap.run_id or ""),
+                    await_token=str(snap.await_token or ""),
+                    kind=str(snap.kind or "ask"),
+                    prompt=str(snap.prompt or ""),
+                )
+
         return ChatHistoryResponse(
             session_id=resolved,
             messages=messages,
             total=len(messages),
+            awaiting=awaiting,
         )
 
     # ----- Events -----
