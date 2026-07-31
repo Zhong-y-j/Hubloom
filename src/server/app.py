@@ -33,6 +33,7 @@ from server.schemas import (
     ChatSyncResponse,
     EventIngestResponse,
     HistoryMessage,
+    HistoryToolBlock,
     McpStatusResponse,
     ResumeRequest,
 )
@@ -90,30 +91,146 @@ def _result_to_sync(session_id: str, result: RunResult) -> ChatSyncResponse:
     )
 
 
-def _history_messages(rows: list[dict[str, Any]]) -> list[HistoryMessage]:
-    out: list[HistoryMessage] = []
-    for row in rows:
-        role = str(row.get("role") or "").strip()
-        if role not in ("user", "assistant"):
-            continue
-        content = str(row.get("content") or "")
-        meta_raw = row.get("metadata_json") or row.get("metadata")
-        source = row.get("source")
-        if isinstance(meta_raw, str) and meta_raw.strip():
-            try:
-                meta = json.loads(meta_raw)
-                if isinstance(meta, dict) and meta.get("source"):
+def _row_has_tool_calls(row: dict[str, Any]) -> bool:
+    raw = row.get("tool_calls_json")
+    if not isinstance(raw, str) or not raw.strip():
+        return False
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return bool(raw.strip())
+    return isinstance(data, list) and len(data) > 0
+
+
+def _parse_tool_calls(row: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = row.get("tool_calls_json")
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, list):
+        return []
+    return [x for x in data if isinstance(x, dict)]
+
+
+def _extract_history_meta(
+    row: dict[str, Any],
+) -> tuple[str | None, str | None, bool | None]:
+    """返回 (source, reasoning_content, is_error)。"""
+    meta_raw = row.get("metadata_json") or row.get("metadata")
+    source = row.get("source")
+    reasoning: str | None = None
+    is_error: bool | None = None
+    if isinstance(meta_raw, str) and meta_raw.strip():
+        try:
+            meta = json.loads(meta_raw)
+            if isinstance(meta, dict):
+                if meta.get("source"):
                     source = meta.get("source")
-            except json.JSONDecodeError:
-                pass
-        out.append(
-            HistoryMessage(
-                role=role,  # type: ignore[arg-type]
-                content=content,
-                created_at=row.get("created_at"),
-                source=str(source) if source else None,
+                raw_thought = meta.get("reasoning_content")
+                if raw_thought is not None:
+                    text = str(raw_thought).strip()
+                    reasoning = text or None
+                if "is_error" in meta:
+                    is_error = bool(meta.get("is_error"))
+        except json.JSONDecodeError:
+            pass
+    return (str(source) if source else None, reasoning, is_error)
+
+
+def _tool_call_blocks(row: dict[str, Any]) -> list[HistoryToolBlock]:
+    blocks: list[HistoryToolBlock] = []
+    for tc in _parse_tool_calls(row):
+        name = str(tc.get("name") or "tool").strip() or "tool"
+        args = tc.get("arguments") if isinstance(tc.get("arguments"), dict) else {}
+        blocks.append(
+            HistoryToolBlock(
+                title=f"调用 · {name}",
+                body=json.dumps(args, ensure_ascii=False, indent=2),
             )
         )
+    return blocks
+
+
+def _history_messages(
+    rows: list[dict[str, Any]],
+    *,
+    include_thought: bool = False,
+) -> list[HistoryMessage]:
+    """面向聊天 UI：把中间轮折叠进最终助手气泡（thought + tools），对齐实时 SSE。"""
+    out: list[HistoryMessage] = []
+    pending_thoughts: list[str] = []
+    pending_tools: list[HistoryToolBlock] = []
+
+    for row in rows:
+        role = str(row.get("role") or "").strip()
+        if role not in ("user", "assistant", "tool"):
+            continue
+
+        content = str(row.get("content") or "")
+        source, reasoning, is_error = _extract_history_meta(row)
+
+        if role == "user":
+            pending_thoughts = []
+            pending_tools = []
+            out.append(
+                HistoryMessage(
+                    role="user",
+                    content=content,
+                    created_at=row.get("created_at"),
+                    source=source,
+                    thought=None,
+                    tools=None,
+                )
+            )
+            continue
+
+        if role == "tool":
+            name = str(row.get("name") or "").strip() or "tool"
+            label = "失败" if is_error else "返回"
+            pending_tools.append(
+                HistoryToolBlock(
+                    title=f"{label} · {name}",
+                    body=content,
+                )
+            )
+            continue
+
+        # assistant
+        if _row_has_tool_calls(row):
+            pending_tools.extend(_tool_call_blocks(row))
+            if include_thought:
+                if reasoning:
+                    pending_thoughts.append(reasoning)
+                text = content.strip()
+                if text:
+                    pending_thoughts.append(text)
+            continue
+
+        thought: str | None = None
+        if include_thought:
+            parts = list(pending_thoughts)
+            if reasoning:
+                parts.append(reasoning)
+            thought = "\n\n".join(parts) if parts else None
+
+        tools = list(pending_tools) if pending_tools else None
+        pending_thoughts = []
+        pending_tools = []
+
+        out.append(
+            HistoryMessage(
+                role="assistant",
+                content=content,
+                created_at=row.get("created_at"),
+                source=source,
+                thought=thought,
+                tools=tools,
+            )
+        )
+
     return out
 
 
@@ -312,6 +429,10 @@ def create_app(
     async def chat_history(
         session_id: str | None = Query(default=None),
         x_session_id: str | None = Header(default=None, alias="X-Session-Id"),
+        include_thought: bool = Query(
+            default=False,
+            description="为 true 时在消息中填回 thought（来自落库的 reasoning_content）",
+        ),
     ) -> ChatHistoryResponse:
         if _runtime is None:
             raise HTTPException(status_code=503, detail="运行时尚未初始化")
@@ -321,7 +442,7 @@ def create_app(
 
         store = _runtime.conversation_store
         rows = await asyncio.to_thread(store.get_chat_history, resolved)
-        messages = _history_messages(rows)
+        messages = _history_messages(rows, include_thought=include_thought)
         return ChatHistoryResponse(
             session_id=resolved,
             messages=messages,

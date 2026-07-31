@@ -293,7 +293,7 @@ class ConversationPostgresStore:
                 """
                 SELECT role, content,
                        to_char(created_at, 'YYYY-MM-DD HH24:MI:SS') AS created_at,
-                       metadata_json, name, source
+                       metadata_json, name, source, tool_calls, tool_call_id
                 FROM conversation_memory
                 WHERE session_id = %s
                   AND role IN ('user', 'assistant', 'tool')
@@ -310,6 +310,8 @@ class ConversationPostgresStore:
                 "metadata_json": row["metadata_json"] or "{}",
                 "name": row["name"] or "",
                 "source": row["source"] or "",
+                "tool_calls_json": row["tool_calls"] or "",
+                "tool_call_id": row["tool_call_id"] or "",
             }
             for row in rows
         ]

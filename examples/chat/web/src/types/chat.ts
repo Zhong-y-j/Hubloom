@@ -35,4 +35,8 @@ export type HistoryMessage = {
   content: string;
   created_at?: string | null;
   source?: string | null;
+  /** 仅 include_thought=true 时返回 */
+  thought?: string | null;
+  /** 本轮折叠的工具调用/返回，对齐实时 SSE */
+  tools?: ToolBlock[] | null;
 };

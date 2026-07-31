@@ -12,6 +12,7 @@ const {
   status,
   agentPhase,
   showTools,
+  includeThought,
   mcpReady,
   mcpDetail,
   awaitingUser,
@@ -246,6 +247,14 @@ onMounted(async () => {
         <label class="checkbox">
           <input v-model="showTools" type="checkbox" />
           显示工具调用
+        </label>
+        <label class="checkbox">
+          <input
+            v-model="includeThought"
+            type="checkbox"
+            @change="persist"
+          />
+          历史填回思考
         </label>
         <button type="button" class="btn ghost" @click="refreshMcpStatus">
           刷新状态

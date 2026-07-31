@@ -22,7 +22,7 @@ cd examples/chat/web && npm install && npm run dev
 | GET | `/health` | 探活（含 `events_enabled` / `wecom_enabled`） |
 | POST | `/v1/chat` | 新一轮对话（SSE 或 JSON） |
 | POST | `/v1/chat/resume` | interactive 挂起后续跑 |
-| GET | `/v1/chat/history` | 会话历史 |
+| GET | `/v1/chat/history` | 会话历史；`include_thought=true` 时填回 `thought` |
 | GET | `/v1/mcp/status` | MCP 就绪 |
 | GET | `/v1/events/types` | 已登记事件类型（需 `events.enable`） |
 | POST | `/v1/events` | 业务 Webhook 入站（需 `events.enable`） |
@@ -102,3 +102,18 @@ SSE 事件（节选）：`run_started` / `step` / `tool_call` / `tool_result` / 
   "stream": true
 }
 ```
+
+### GET /v1/chat/history
+
+查询参数：
+
+- `session_id`（或头 `X-Session-Id`）
+- `include_thought`（默认 `false`）：为 `true` 时在**最终助手消息**上填回 `thought`（含中间工具轮折叠进来的思考）
+
+面向聊天 UI：带 `tool_calls` 的中间 assistant / tool 行会折叠进最终助手气泡的 `tools`（及可选 `thought`），与实时 SSE 一条气泡一致。
+
+```bash
+curl -s "http://127.0.0.1:8765/v1/chat/history?session_id=demo-1&include_thought=true"
+```
+
+助手消息示例字段：`role` / `content` / `created_at` / `source` / `thought`（可选）。

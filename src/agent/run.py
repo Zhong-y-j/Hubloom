@@ -192,6 +192,7 @@ async def _agent_loop(
         prompt: str,
         slots: list[str],
         payload: dict[str, Any],
+        reasoning_content: str = "",
     ) -> AsyncIterator[AgentEvent | RunResult]:
         nonlocal active_pending
 
@@ -202,6 +203,8 @@ async def _agent_loop(
         )
         yield StepEvent(step=rounds, action=kind, journal_ids=[entry.id])
 
+        reasoning = (reasoning_content or "").strip() or None
+
         if wait_profile == "no_wait":
             summary = (
                 f"当前入口不允许等待用户（no_wait），无法完成追问/确认："
@@ -209,7 +212,11 @@ async def _agent_loop(
             )
             await _remember(
                 memory,
-                Message(role=Role.ASSISTANT, content=summary),
+                Message(
+                    role=Role.ASSISTANT,
+                    content=summary,
+                    reasoning_content=reasoning,
+                ),
                 source="agent",
                 metadata={"status": "failed", "kind": kind, "wait_profile": "no_wait"},
             )
@@ -229,7 +236,11 @@ async def _agent_loop(
 
         await _remember(
             memory,
-            Message(role=Role.ASSISTANT, content=prompt),
+            Message(
+                role=Role.ASSISTANT,
+                content=prompt,
+                reasoning_content=reasoning,
+            ),
             source="agent",
             metadata={
                 "status": "waiting_user"
@@ -477,7 +488,15 @@ async def _agent_loop(
                 return
 
             for m in exec_result.messages:
-                await _remember(memory, m, source="agent")
+                meta: dict[str, Any] | None = None
+                if m.role == Role.TOOL:
+                    err = False
+                    for call, _text, is_err in exec_result.results:
+                        if call.id == m.tool_call_id:
+                            err = bool(is_err)
+                            break
+                    meta = {"is_error": err}
+                await _remember(memory, m, source="agent", metadata=meta)
                 turn_messages.append(m)
             parse_retries = 0
             continue
@@ -488,6 +507,7 @@ async def _agent_loop(
                 prompt=action.question,
                 slots=list(action.slots),
                 payload={},
+                reasoning_content=action.reasoning_content,
             ):
                 yield item
             return
@@ -498,6 +518,7 @@ async def _agent_loop(
                 prompt=action.prompt,
                 slots=[],
                 payload=dict(action.payload),
+                reasoning_content=action.reasoning_content,
             ):
                 yield item
             return
@@ -512,7 +533,11 @@ async def _agent_loop(
             yield StepEvent(step=rounds, action="finish", journal_ids=[entry.id])
             await _remember(
                 memory,
-                Message(role=Role.ASSISTANT, content=content),
+                Message(
+                    role=Role.ASSISTANT,
+                    content=content,
+                    reasoning_content=(action.reasoning_content or None),
+                ),
                 source="agent",
                 metadata={"status": "completed", "cites": action.cites},
             )

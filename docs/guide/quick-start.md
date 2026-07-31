@@ -158,6 +158,7 @@ curl -s http://127.0.0.1:8010/v1/chat \
 
 ```bash
 curl -s "http://127.0.0.1:8010/v1/chat/history?session_id=demo-session"
+# 可选填回思考：&include_thought=true
 ```
 
 ---

@@ -65,9 +65,10 @@ class EchoPetTool(BaseTool):
         return f"registered:{kwargs.get('name', '')}"
 
 
-def _out(*calls: ToolCall) -> LLMOutput:
+def _out(*calls: ToolCall, thinking: str = "") -> LLMOutput:
     return LLMOutput(
         content="",
+        thinking=thinking,
         tool_calls=list(calls),
         stop_reason=StopReason.TOOL_CALLS,
     )
@@ -119,7 +120,12 @@ def test_cli_help() -> None:
 def test_health_and_chat_resume_sse() -> None:
     tmp = Path(tempfile.mkdtemp())
     llm = ScriptedLLM(
-        [_out(_tc("q1", CONTROL_ASK, {"question": "叫什么名字？"}))]
+        [
+            _out(
+                _tc("q1", CONTROL_ASK, {"question": "叫什么名字？"}),
+                thinking="先问名字再登记",
+            )
+        ]
     )
     rt = _make_runtime(llm, tmp / "m.db")
     app = create_app(runtime=rt)
@@ -168,13 +174,17 @@ def test_health_and_chat_resume_sse() -> None:
 
         llm.extend(
             [
-                _out(_tc("a1", "echo_pet", {"name": "小花"})),
+                _out(
+                    _tc("a1", "echo_pet", {"name": "小花"}),
+                    thinking="用 echo_pet 登记",
+                ),
                 _out(
                     _tc(
                         "f1",
                         CONTROL_FINISH,
                         {"summary": "已登记小花"},
-                    )
+                    ),
+                    thinking="完成回复",
                 ),
             ]
         )
@@ -202,9 +212,43 @@ def test_health_and_chat_resume_sse() -> None:
             params={"session_id": "serve-demo"},
         )
         assert hist.status_code == 200
-        assert hist.json()["total"] >= 2
+        plain = hist.json()["messages"]
+        assert hist.json()["total"] == len(plain)
+        # 中间工具轮不单独成气泡：user / ask / user / finish
+        assert [m["role"] for m in plain] == [
+            "user",
+            "assistant",
+            "user",
+            "assistant",
+        ]
+        assert all(m.get("thought") is None for m in plain)
+        assert plain[-1]["content"] == "已登记小花"
+        finish_tools = plain[-1].get("tools") or []
+        assert any(
+            (t.get("title") or "").startswith("调用 · echo_pet") for t in finish_tools
+        )
+        assert any(
+            (t.get("title") or "").startswith("返回 · echo_pet") for t in finish_tools
+        )
+        assert any("registered:小花" in (t.get("body") or "") for t in finish_tools)
 
-    print("ok: /health + /v1/chat + /v1/chat/resume SSE")
+        hist_thought = client.get(
+            "/v1/chat/history",
+            params={"session_id": "serve-demo", "include_thought": "true"},
+        )
+        assert hist_thought.status_code == 200
+        with_thought = hist_thought.json()["messages"]
+        assert len(with_thought) == 4
+        ask_msg = with_thought[1]
+        finish_msg = with_thought[3]
+        assert ask_msg.get("thought") and "先问名字" in ask_msg["thought"]
+        # 工具轮思考折叠进最终助手消息
+        assert finish_msg.get("thought")
+        assert "用 echo_pet" in finish_msg["thought"]
+        assert "完成回复" in finish_msg["thought"]
+        assert finish_msg.get("tools")
+
+    print("ok: /health + /v1/chat + /v1/chat/resume SSE + history thought")
 
 
 def main() -> None:

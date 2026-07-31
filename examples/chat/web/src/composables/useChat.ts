@@ -9,6 +9,7 @@ import type {
 
 const STORAGE_SESSION = "hubloom_session_key";
 const STORAGE_TOKEN = "hubloom_mcp_token";
+const STORAGE_INCLUDE_THOUGHT = "hubloom_include_thought";
 
 /** 网页对话默认可挂起等人 */
 const WAIT_PROFILE = "interactive";
@@ -66,6 +67,9 @@ export function useChat() {
   const status = ref("就绪");
   const agentPhase = ref<AgentPhase>(null);
   const showTools = ref(true);
+  const includeThought = ref(
+    localStorage.getItem(STORAGE_INCLUDE_THOUGHT) !== "0",
+  );
   const mcpReady = ref<boolean | null>(null);
   const mcpDetail = ref("");
   const currentRunId = ref<string | null>(null);
@@ -79,6 +83,10 @@ export function useChat() {
     localStorage.setItem(
       STORAGE_SESSION,
       normalizeSessionKey(sessionId.value),
+    );
+    localStorage.setItem(
+      STORAGE_INCLUDE_THOUGHT,
+      includeThought.value ? "1" : "0",
     );
   }
 
@@ -137,11 +145,12 @@ export function useChat() {
     if (!ready.value) return;
     persist();
     const key = normalizeSessionKey(sessionId.value);
+    const qs = new URLSearchParams({ session_id: key });
+    if (includeThought.value) qs.set("include_thought", "true");
     try {
-      const res = await fetch(
-        `/v1/chat/history?session_id=${encodeURIComponent(key)}`,
-        { headers: buildHeaders() },
-      );
+      const res = await fetch(`/v1/chat/history?${qs.toString()}`, {
+        headers: buildHeaders(),
+      });
       if (!res.ok) return;
       const data = (await res.json()) as { messages?: HistoryMessage[] };
       const rows = data.messages || [];
@@ -150,6 +159,15 @@ export function useChat() {
         role: m.role,
         content: m.content || "",
         source: m.source || undefined,
+        thought: includeThought.value
+          ? m.thought || undefined
+          : undefined,
+        tools: Array.isArray(m.tools) && m.tools.length
+          ? m.tools.map((t) => ({
+              title: t.title || "tool",
+              body: t.body || "",
+            }))
+          : undefined,
       }));
       pendingAwait.value = null;
       status.value = rows.length ? `已加载 ${rows.length} 条历史` : "就绪";
@@ -422,6 +440,7 @@ export function useChat() {
     status,
     agentPhase,
     showTools,
+    includeThought,
     mcpReady,
     mcpDetail,
     pendingAwait,

@@ -53,11 +53,24 @@ class ChatSyncResponse(BaseModel):
     elapsed_ms: int = 0
 
 
+class HistoryToolBlock(BaseModel):
+    title: str
+    body: str = ""
+
+
 class HistoryMessage(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     created_at: str | None = None
     source: str | None = None
+    thought: str | None = Field(
+        default=None,
+        description="模型思考/推理内容；仅 include_thought=true 时返回",
+    )
+    tools: list[HistoryToolBlock] | None = Field(
+        default=None,
+        description="本轮折叠进来的工具调用/返回（对齐实时 SSE 展示）",
+    )
 
 
 class ChatHistoryResponse(BaseModel):
