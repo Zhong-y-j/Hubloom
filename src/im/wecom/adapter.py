@@ -28,13 +28,13 @@ from im.wecom.token_resolve import (
 )
 
 RunAgentFn = Callable[..., Awaitable[str]]
-# run_agent(message, *, session_id, bearer_token) -> reply markdown
+# run_agent(message, *, session_id, bearer_token) -> reply text
 
 
 @dataclass
 class WeComAdapterConfig:
     session_prefix: str = "wecom"
-    # 企微宜短：默认 650；客户端 markdown 硬上限 2048
+    # 企微宜短：默认 650；应用 text 内容上限约 2048 字节
     max_reply_chars: int = 650
 
 
@@ -145,9 +145,7 @@ class WeComChatAdapter:
 
         调用方应立即对企微返回空 200，再 ``schedule_handle_message``。
         """
-        plain = self.crypto.decrypt_message(
-            msg_signature, timestamp, nonce, post_data
-        )
+        plain = self.crypto.decrypt_message(msg_signature, timestamp, nonce, post_data)
         msg = parse_message_xml(plain)
         return plain, msg
 
@@ -279,22 +277,17 @@ class WeComChatAdapter:
         await self._push(userid, self._format_reply(reply, session_id))
 
     def _format_reply(self, reply: str, session_id: str) -> str:
+        del session_id  # 保留参数以兼容调用方；推送不再附带页脚
         text = (reply or "").strip() or "（无回复内容）"
         max_chars = self.config.max_reply_chars
-        footer = f"\n\n——\n详情见网页会话 `{session_id}`"
-        if len(text) > max_chars:
-            keep = max(40, max_chars - len(footer) - 12)
-            return text[:keep] + "\n…(已截断)" + footer
-        if len(text) + len(footer) <= max_chars:
-            return text + footer
-        return text
+        if len(text) <= max_chars:
+            return text
+        keep = max(40, max_chars - 12)
+        return text[:keep] + "\n…(已截断)"
 
     async def _push(self, userid: str, content: str) -> None:
-        try:
-            await self.client.send_markdown(userid=userid, content=content)
-        except Exception:
-            logger.warning("wecom markdown send failed, fallback text")
-            await self.client.send_text(userid=userid, content=content)
+        # 当前仅推送应用消息 text（暂不做 markdown / 卡片）
+        await self.client.send_text(userid=userid, content=content)
 
 
 async def run_agent_via_runtime(

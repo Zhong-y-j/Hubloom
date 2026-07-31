@@ -206,7 +206,7 @@ PYTHONPATH=src .venv/bin/python -m pytest \
 
 | 场景 | 命令 / 入口 | 期望 |
 |------|-------------|------|
-| 出站推送 | `python tests/test_im_wecom.py send --to <UserId>` | 手机收到 markdown |
+| 出站推送 | `python tests/test_im_wecom.py send --to <UserId>` | 手机收到 text |
 | 回调管道 | `python tests/test_im_wecom.py echo` + 公网隧道 | GET 验 URL；POST 收信并回声 |
 | Redis 队列 | `python tests/test_im_wecom.py queue` | 同 session FIFO、MsgId 去重 |
 | 正式 Serve | 后台 URL → Serve 回调 | ACK 快、异步 Agent、短回复截断 |

@@ -249,4 +249,5 @@ def test_wecom_format_reply_short() -> None:
     long = "结论：" + ("很长" * 40)
     out = adapter._format_reply(long, "wecom:u1")
     assert len(out) <= 120
-    assert "已截断" in out or "详情见网页会话" in out
+    assert "已截断" in out
+    assert "网页会话" not in out

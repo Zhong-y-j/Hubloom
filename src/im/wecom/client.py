@@ -57,12 +57,18 @@ class WeComAppClient:
         return token
 
     async def send_text(self, *, userid: str, content: str) -> dict[str, Any]:
+        # 应用消息 text；官方 content 上限约 2048 字节，此处按字符截断保底
+        text = (content or "").strip() or "（空）"
+        if len(text.encode("utf-8")) > 2048:
+            # 按字节截断，避免中文超限
+            raw = text.encode("utf-8")[:2000]
+            text = raw.decode("utf-8", errors="ignore") + "\n…(已截断)"
         return await self._send(
             {
                 "touser": userid,
                 "msgtype": "text",
                 "agentid": self.agent_id,
-                "text": {"content": content},
+                "text": {"content": text},
             }
         )
 

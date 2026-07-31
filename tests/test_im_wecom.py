@@ -122,8 +122,8 @@ async def cmd_send(*, to_user: str, text: str) -> None:
     body = (text or "").strip() or (
         f"Hubloom IM 联调（无 Agent）\n时间：{datetime.now().isoformat(timespec='seconds')}"
     )
-    print("【发送】 markdown …")
-    result = await client.send_markdown(userid=userid, content=body)
+    print("【发送】 text …")
+    result = await client.send_text(userid=userid, content=body)
     print("【结果】", result)
     print("请到企业微信里看该应用是否收到上述消息。")
 
@@ -188,8 +188,8 @@ def cmd_echo(*, host: str, port: int) -> None:
 
             async def _push() -> None:
                 try:
-                    await client.send_markdown(userid=userid, content=reply)
-                    print("【回推】 markdown ok →", userid)
+                    await client.send_text(userid=userid, content=reply)
+                    print("【回推】 text ok →", userid)
                 except Exception as exc:
                     print("【回推失败】", exc)
 

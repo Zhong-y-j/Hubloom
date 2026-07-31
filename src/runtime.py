@@ -280,6 +280,7 @@ class HubloomRuntime:
         wait_profile: str | WaitProfile | None = None,
         pending: PendingState | None = None,
         playbook: Playbook | None = None,
+        system_extra: str | None = None,
         # 兼容旧关键字
         present_mode: str | None = None,
         max_think_rounds: int | None = None,
@@ -297,6 +298,13 @@ class HubloomRuntime:
         )
         book = playbook if playbook is not None else self.playbook
 
+        system_before = self.system_before
+        system_after = self.system_after
+        extra = (system_extra or "").strip()
+        if extra:
+            system_before = f"{system_before.rstrip()}\n\n{extra}".strip()
+            system_after = f"{system_after.rstrip()}\n\n{extra}".strip()
+
         self._bind_request_context(session_id=sid, bearer_token=bearer_token)
         memory = self._make_memory(sid)
         runner, tool_defs = self._make_runner(memory)
@@ -307,8 +315,8 @@ class HubloomRuntime:
                 runner=runner,
                 tools=tool_defs,
                 trigger=trigger,
-                system_before=self.system_before,
-                system_after=self.system_after,
+                system_before=system_before,
+                system_after=system_after,
                 max_rounds=max_rounds or self.max_rounds,
                 trigger_source=trigger_source,
                 wait_profile=profile,

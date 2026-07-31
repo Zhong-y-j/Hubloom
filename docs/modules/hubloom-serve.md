@@ -46,7 +46,7 @@ curl -sS -X POST "http://127.0.0.1:8765/v1/events" \
 
 - 配置：`im.wecom.enable` + corp 凭证 + 回调 `token` / `encoding_aes_key`
 - 回调尽快空 200，消息入 Redis 会话队列异步跑 Agent
-- **短回复**：默认 `max_reply_chars=650`，并在提示中要求结论优先；完整内容仍写会话历史
+- **短回复**：默认 `max_reply_chars=650`；企微通道把纯文本短回复要求注入 **system**（不拼进用户消息）；推送使用应用消息 `msgtype=text`；完整内容仍写会话历史
 - 会话键：`{session_prefix}:{UserId}`（默认 `wecom:…`）
 - 换票：`im.wecom.token_resolve`（可选；未配则 Bearer 为空）
 

@@ -24,9 +24,12 @@ from runtime import HubloomRuntime
 # 企微默认短回复上限（可被 im.wecom.max_reply_chars 覆盖）
 DEFAULT_WECOM_MAX_REPLY_CHARS = 650
 
-_WECOM_SHORT_PREFIX = (
-    "【企微通道】请用简短 Markdown 回复：先给结论，最多约 8 行，"
-    "少用长列表与大段说明；细节用户可在网页会话历史查看。\n\n"
+# 企微通道：注入 system（不拼进用户消息，避免污染会话历史）
+_WECOM_SYSTEM_EXTRA = (
+    "## 当前通道：企业微信\n"
+    "请用纯文本简短回复（不要 Markdown / 代码块 / 表格）："
+    "先给结论，缺参时用编号列出即可；"
+    "少用长列表与大段说明。"
 )
 
 
@@ -71,9 +74,7 @@ def build_event_dispatcher(
         result_callback_url=cfg.events_result_callback_url,
         wait_profile="no_wait",
     )
-    dispatcher.bind_agent(
-        StreamHostAgentRunner(runtime, wait_profile="no_wait")
-    )
+    dispatcher.bind_agent(StreamHostAgentRunner(runtime, wait_profile="no_wait"))
     return dispatcher
 
 
@@ -102,15 +103,16 @@ async def run_wecom_agent_turn(
     wait_profile: str | None = "turn_based",
 ) -> str:
     """企微通道跑一轮 Typed ReAct，返回推送正文。"""
-    text = f"{_WECOM_SHORT_PREFIX}{(message or '').strip()}"
+    user_text = (message or "").strip()
     async with runtime.session_lock.hold(session_id):
         final: RunResult | None = None
         async for item in runtime.run_stream(
-            Message(role=Role.USER, content=text),
+            Message(role=Role.USER, content=user_text),
             session_id=session_id,
             bearer_token=bearer_token,
             wait_profile=wait_profile,
             trigger_source="user",
+            system_extra=_WECOM_SYSTEM_EXTRA,
         ):
             if isinstance(item, RunResult):
                 final = item
@@ -147,9 +149,7 @@ def build_wecom_adapter(
     aes_key = (cfg.wecom_encoding_aes_key or "").strip()
     agent_id = cfg.wecom_agent_id
     if not corp_id or not corp_secret or agent_id is None:
-        raise ValueError(
-            "im.wecom.enable=true 时需要 corp_id / corp_secret / agent_id"
-        )
+        raise ValueError("im.wecom.enable=true 时需要 corp_id / corp_secret / agent_id")
     if not token or not aes_key:
         raise ValueError(
             "im.wecom.enable=true 时需要 token / encoding_aes_key（回调验签）"

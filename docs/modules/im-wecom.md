@@ -19,7 +19,7 @@ IM 层自己负责加解密、去重、换票、推送和会话键约定——�
 
 ## 设计思路
 
-最容易走偏的做法，是在 IM 里另写一套对话引擎：自己拼提示、自己调业务、自己决定回复格式。那样会和网页路径分叉，工具面和记忆都要维护两份。Hubloom 反过来：`WeComChatAdapter` 只做通道适配——验签解密、去重、换票、调用注入进来的 `run_agent`、把结果 `send_markdown` 推回——真正办事仍走 Runtime 的 `run_stream`。代价是企微侧的体验受 Agent 快慢影响；收益是网页会的，企微里也能用。
+最容易走偏的做法，是在 IM 里另写一套对话引擎：自己拼提示、自己调业务、自己决定回复格式。那样会和网页路径分叉，工具面和记忆都要维护两份。Hubloom 反过来：`WeComChatAdapter` 只做通道适配——验签解密、去重、换票、调用注入进来的 `run_agent`、把结果 `send_text` 推回——真正办事仍走 Runtime 的 `run_stream`。代价是企微侧的体验受 Agent 快慢影响；收益是网页会的，企微里也能用。
 
 回调协议上也故意拆开。企微推来的是加密包，必须用 Token、EncodingAESKey、企业 corp_id 按官方算法验签解密，这一层放在 `crypto`，与「怎么跑 Agent」无关。主动发消息走应用 `gettoken` + `message/send`，放在 `client`，网页对话根本用不到这套 API。适配器把两段粘起来，但测试时可以只用 client 做 send、或只用 crypto+client 做 echo，**不经 Agent 也能验证管道**——这正是本章后面动手脚本的设计动机：先证明「收得到、发得回」，再接换票和编排，排障时不会把密钥错误和模型错误混在一起。主动推送还受企微「企业可信 IP」约束：cloudflared 只解决回调打进来，本机调 `message/send` 仍走宽带公网 IP，白名单要单独配。
 
@@ -243,7 +243,7 @@ PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py queue
 | --- | --- |
 | `im/session_queue/` | Redis 会话队列 / Worker / Job |
 | `im/wecom/crypto.py` | 回调验签、加解密、明文 XML 解析 |
-| `im/wecom/client.py` | `gettoken`、应用消息 text / markdown |
+| `im/wecom/client.py` | `gettoken`、应用消息 text（markdown 方法保留未默认使用） |
 | `im/wecom/adapter.py` | 适配器；可选 Redis 入队 |
 | `im/wecom/token_resolve.py` | 企微 UserId → 业务 Bearer |
 | `tests/test_im_wecom.py` | send / echo / queue |
