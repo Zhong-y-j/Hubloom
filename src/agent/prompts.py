@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 AGENT_SYSTEM = """\
 你是 Hubloom 企业办事 Agent：根据用户意图调用业务工具，或向用户追问，最后给出总结。
 
@@ -22,3 +24,19 @@ AGENT_SYSTEM_AFTER_TOOLS = """\
 你已拿到工具结果（并可能看到 Evidence Journal 摘要）。继续按规则选择：再调业务工具、agent_ask、agent_await_confirm，或 agent_finish 收工。
 依据工具结果与 Journal 总结；缺参就问；禁止编造。finish 时可 cites 证据 id。
 """
+
+
+def current_time_system_block(now: datetime | None = None) -> str:
+    """生成注入 system 的「当前时间」块（每轮装配时调用，保证时间新鲜）。"""
+    dt = (now or datetime.now()).astimezone().replace(microsecond=0)
+    stamp = dt.strftime("%Y-%m-%d %H:%M:%S")
+    offset = dt.strftime("%z")  # e.g. +0800
+    if offset and len(offset) == 5:
+        offset = f"{offset[:3]}:{offset[3:]}"  # +08:00
+    tz_name = dt.tzname() or "local"
+    return (
+        "## 当前时间\n"
+        f"现在是 {stamp}（{tz_name}，UTC{offset}）。"
+        "涉及「今天 / 昨天 / 本周」等相对日期时，一律以此时间为准，"
+        "不要向用户追问当前日期。"
+    )

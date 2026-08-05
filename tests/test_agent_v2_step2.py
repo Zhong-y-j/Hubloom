@@ -229,7 +229,9 @@ async def test_assemble_journal_block() -> None:
         systems = [m for m in msgs if m.role == Role.SYSTEM]
         assert len(systems) >= 2
         assert any("asm:1" in (m.content or "") for m in systems)
-        print("ok: assemble 注入 journal system 块")
+        assert any("## 当前时间" in (m.content or "") for m in systems)
+        assert any("不要向用户追问当前日期" in (m.content or "") for m in systems)
+        print("ok: assemble 注入 journal system 块与当前时间")
     finally:
         Path(path).unlink(missing_ok=True)
 

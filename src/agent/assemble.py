@@ -14,7 +14,11 @@ from skill import build_skills_prompt, load_skills
 from agent.agent_log import agent_trace
 from agent.evidence import EvidenceJournal
 from agent.policy import Playbook
-from agent.prompts import AGENT_SYSTEM, AGENT_SYSTEM_AFTER_TOOLS
+from agent.prompts import (
+    AGENT_SYSTEM,
+    AGENT_SYSTEM_AFTER_TOOLS,
+    current_time_system_block,
+)
 from agent.session import PendingState
 
 
@@ -91,7 +95,9 @@ async def assemble_messages(
     all_rows = await load_conversation(memory, top_k=history_limit)
     prior = _strip_turn_suffix(all_rows, turn)
 
-    system_msg = Message(role=Role.SYSTEM, content=system_prompt)
+    # 每轮注入本地当前时间，供「今天/昨天」等相对日期理解
+    full_system = f"{(system_prompt or '').rstrip()}\n\n{current_time_system_block()}"
+    system_msg = Message(role=Role.SYSTEM, content=full_system)
     extra_system: list[Message] = []
     if playbook is not None:
         block = playbook.summary_for_prompt()
