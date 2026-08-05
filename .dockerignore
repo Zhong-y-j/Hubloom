@@ -8,9 +8,14 @@ __pycache__
 .env.*
 !.env.example
 
+# 本地密钥配置（运行时挂载）
+config/env.yaml
+config/env.docker.yaml
+
 data/
 logs/*
 !logs/.gitkeep
+.run/
 
 .pytest_cache
 .mypy_cache
@@ -31,5 +36,8 @@ build
 public
 agent-transcripts
 assets
+tests
+examples
+docs
 *.md
 !README.md

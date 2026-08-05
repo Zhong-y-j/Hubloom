@@ -9,6 +9,7 @@ __pycache__/
 
 # 本地 YAML 配置（含密钥）；模板保留 config/env.example.yaml
 config/env.yaml
+config/env.docker.yaml
 !config/env.example.yaml
 
 # 运行时数据（memory.db、knowledge_db、chroma 等）
@@ -25,6 +26,9 @@ examples/travel/scripts/logs/
 # 运行时日志（保留 logs/.gitkeep）
 logs/*
 !logs/.gitkeep
+
+# start.sh 进程文件
+.run/
 
 public/
 
