@@ -229,7 +229,7 @@ def awaiting_from_dict(raw: dict[str, Any] | None) -> AwaitingSnapshot | None:
         system_before=str(raw.get("system_before") or ""),
         system_after=str(raw.get("system_after") or ""),
         parse_retries=int(raw.get("parse_retries") or 0),
-        max_rounds=int(raw.get("max_rounds") or 8),
+        max_rounds=int(raw.get("max_rounds") or 32),
         progress=progress_from_dict(
             raw.get("progress") if isinstance(raw.get("progress"), dict) else None
         ),

@@ -102,7 +102,7 @@ class HubloomRuntime:
     session_lock: RedisSessionLock = field(default=None)  # type: ignore[assignment]
     conversation_store: ConversationStore = field(default=None)  # type: ignore[assignment]
     default_wait_profile: str = "turn_based"
-    max_rounds: int = 8
+    max_rounds: int = 32
     _redis_sync: Any = field(default=None, repr=False)
     _redis_async: Any = field(default=None, repr=False)
 
@@ -111,7 +111,7 @@ class HubloomRuntime:
         cls,
         cfg: HubloomConfig,
         *,
-        max_rounds: int = 8,
+        max_rounds: int = 32,
         session_store: SessionStore | None = None,
         session_lock: RedisSessionLock | None = None,
         # 兼容旧调用方关键字（已忽略）
@@ -215,7 +215,7 @@ class HubloomRuntime:
         cls,
         path: str | Path,
         *,
-        max_rounds: int = 8,
+        max_rounds: int = 32,
         session_store: SessionStore | None = None,
         session_lock: RedisSessionLock | None = None,
         default_present_mode: str | None = None,

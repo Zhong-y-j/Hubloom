@@ -584,7 +584,7 @@ async def run_stream(
     trigger: Message | list[Message],
     system_before: str,
     system_after: str,
-    max_rounds: int = 8,
+    max_rounds: int = 32,
     trigger_source: str = "user",
     journal: EvidenceJournal | None = None,
     wait_profile: str | WaitProfile = "turn_based",
