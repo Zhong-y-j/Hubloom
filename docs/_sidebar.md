@@ -11,8 +11,6 @@
   * [概念总览](core-concepts/README.md)
   * [架构](core-concepts/architecture.md)
   * [MCP 协议](core-concepts/mcp-protocol.md)
-  * [A2UI 协议](core-concepts/a2ui-protocol.md)
-  * [AG-UI 协议](core-concepts/ag-ui-protocol.md)
   * [Skill](core-concepts/skill.md)
 
 * 模块导读

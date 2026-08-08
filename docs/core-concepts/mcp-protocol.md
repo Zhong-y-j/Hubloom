@@ -219,10 +219,10 @@ sequenceDiagram
 | ------------------- | -------------------------------------- | ---------------------------------- |
 | **MCP**             | 能调哪些 HTTP、参数 schema、鉴权怎么带 | 业务上「该不该删」「要不要先选型」 |
 | **Skill**           | 领域规程、禁区、多步顺序               | 不执行脚本、不代替 `call_api`      |
-| **Markdown / A2UI** | 怎么把结果/表单给用户                  | 不负责发业务 HTTP                  |
+| **Markdown / SSE** | 怎么把结果与过程给用户                 | 不负责发业务 HTTP                  |
 
-典型顺序：意图匹配 Skill → `read_skill` → `list_api` / `call_api` → Respond（Markdown 或 A2UI）。  
-Skill 见 [Skill](skill.md)；呈现见 [A2UI](a2ui-protocol.md)、[AG-UI](ag-ui-protocol.md)。
+典型顺序：意图匹配 Skill → `read_skill` → `list_api` / `call_api` → 回复（Markdown + SSE 过程事件）。  
+Skill 见 [Skill](skill.md)；整体拼装见 [架构](architecture.md)。
 
 ---
 
@@ -246,7 +246,7 @@ Skill 见 [Skill](skill.md)；呈现见 [A2UI](a2ui-protocol.md)、[AG-UI](ag-ui
 | 改配置接自家 API | [接入 Swagger](../usage/import-swagger.md) |
 | MCP 代码怎么拆 | [MCP Adapter 模块导读](../modules/mcp-adapter.md) |
 | 全仓模块地图 | [模块导读总览](../modules/README.md) |
-| 表单 / 事件通道 | [A2UI](a2ui-protocol.md) · [AG-UI](ag-ui-protocol.md) |
 | 约束怎么调 | [Skill](skill.md) · [创建第一个 Skill](../guide/first-skill.md) |
+| 接口一览 | [API 参考](../reference/api-reference.md) |
 
-← [核心概念](README.md) · 👉 [A2UI 协议 →](a2ui-protocol.md)
+← [核心概念](README.md) · 👉 [Skill →](skill.md)

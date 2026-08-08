@@ -23,4 +23,4 @@
 - 过程备忘：[agent-design.md](agent-design.md)
 - 上一篇：[Runtime](runtime.md)
 - 下一篇：[Tools](tools.md)
-- 概念：[AG-UI](../core-concepts/ag-ui-protocol.md) · [A2UI](../core-concepts/a2ui-protocol.md)
+- 概念：[架构](../core-concepts/architecture.md) · [MCP](../core-concepts/mcp-protocol.md)
