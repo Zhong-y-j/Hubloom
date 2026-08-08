@@ -54,4 +54,5 @@
 * 社区
   * [概览](community/README.md)
   * [贡献指南](community/contribute.md)
+  * [测试计划](community/testing.md)
   * [更新日志](community/changelog.md)

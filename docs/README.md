@@ -1,128 +1,59 @@
 # Hubloom 文档
 
-> 🧱 如果说 Spring Boot 是接口地基、Vue Admin 是后台脚手架，那 Hubloom 就是 AI Agent 时代的**基座脚手架**。
+> 如果说 Spring Boot 是接口地基、Vue Admin 是后台脚手架，那 Hubloom 就是 AI Agent 时代的**基座脚手架**。
 
-🔌 接上你现有的 Swagger/OpenAPI 文档，用自然语言在真实业务 API 上办事。
-
-📍 面向**需要把 AI Agent 接到现有业务系统上**的开发者：先懂为什么，再按路径跑通、二次开发。
+**快速把企业 API 编成私有化 Agent，策略约束下自动执行业务操作。**
 
 ---
 
-## 💡 为什么要做 Hubloom？
+跑通后，示例站大致如此——左边对话，右边交互：
 
-很多团队都在重复造轮子——从零搭建 Agent 的接入层、交互层、集成层：
+![对话与交互面板](./assets/hubloom-chat-a2ui-panel.png)
 
-- 🥲 有的把工具调用写死在框架胶水里，**换模型或换 API 就要改代码**
-- 🥲 有的让用户用纯文本 / JSON「操作」系统，**体验极差**
-- 🥲 有的想引入 Agent，又**担心被某个云平台锁定**
-
-**Hubloom 的答案很简单：**
-
-> 🎯 **AI Agent 不应该是一个「独立产品」，而应该是现有业务系统的「自然延伸」。**
-
-设计时遵循三条原则：
-
-| 原则                          | 含义                                                                                                                             |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| 🔌 **协议驱动，而非代码锁定** | 以 MCP / A2UI / AG-UI 等开放协议对接工具与前端；换模型、换 Swagger 主要改配置；换皮与领域规程走二次开发面，不必重写 Runtime 核心 |
-| 🏠 **嵌入优先，而非替代系统** | 业务逻辑留在你手里，Hubloom 只做「翻译」和「路由」                                                                               |
-| 🪜 **脚手架，而非平台**       | 给你一个可私有化、可二开的起点，而不是「用完就锁死」的 SaaS                                                                      |
-
-📌 **补充约定**：**主路径优先**（先跑通对话 → 调 API → Markdown / A2UI）。会话历史默认保留；**长期记忆**、RAG、事件、企微等默认可关、按需开启。领域规程写在 `skills/`，不搞重型 BPM。
-
-✅ **是：** Runtime 模板 + 示例站；说明用 Markdown，办事用 A2UI。  
-❌ **不是：** Agent 应用商店、多租户运营中台、替企业重做业务系统。
-
-📖 更细的说明见 [Hubloom 是什么](guide/what-is-hubloom.md)。
+例如：「在杭州西湖区加一个阳光花园小区，再给它加个钥匙柜」→ Agent 调真实 API → 缺参时弹出表单 → 确认后落库。业务逻辑仍在你的系统里；流程用 **Skill** 约束，也可经 **Events** 接口事件驱动触发。
 
 ---
 
-## ✨ 它能帮你做什么？
+## 定位
 
-| 你的场景                                   | Hubloom 怎么帮你                                        |
-| ------------------------------------------ | ------------------------------------------------------- |
-| 📋 有 Swagger，想让用户用自然语言操作后台  | 把 API 变成 Agent 工具，**对话即操作**                  |
-| 🎨 希望操作界面动态生成，而不是纯文本 JSON | A2UI 声明式渲染表单/表格/确认框，**少写死页面**         |
-| 🔓 不想被 Agent 平台锁定                   | 可私有化部署，**代码与配置在你手里**                    |
-| 🔗 要把 Agent 能力嵌进现有后台门户         | Runtime + `/v1/chat` 等接口嵌入（会话与鉴权由宿主传入） |
+Hubloom 是可私有化的 **Agent 服务**，不是应用商店，也不替你重做业务系统。  
+推荐 **浏览器 / App → 企业后端（BFF）→ Hubloom**：鉴权与限流放在你这边，Hubloom 负责编排与调工具；前端用示例站，或嵌进自有门户。
 
----
+对外主要是这些 HTTP 接口（经 BFF 转发即可）：
 
-## 🧭 从哪开始读？
+| 能力 | 接口 |
+| --- | --- |
+| 对话办事 | `POST /v1/chat` · `POST /v1/chat/resume` · `GET /v1/chat/history` |
+| 事件驱动 | `POST /v1/events`（需开启） |
+| 企微入口 | `GET\|POST /v1/im/wecom/callback`（需开启） |
 
-| 你是谁                    | 建议路径                                                                            |
-| ------------------------- | ----------------------------------------------------------------------------------- |
-| 🆕 完全没接触过           | [Hubloom 是什么](guide/what-is-hubloom.md) → [5 分钟快速上手](guide/quick-start.md) |
-| 🔧 会配项目，要接业务 API | [接入 Swagger](usage/import-swagger.md) + [编写 Skill](usage/write-skill.md)        |
-| 🏢 要嵌进现有门户 / App   | [嵌入 Runtime](usage/embed-runtime.md)                                              |
-| 🔍 只想查配置或排错       | [配置项说明](reference/configuration.md) · [FAQ](reference/faq.md)                  |
-| 🧭 要翻源码 / 二开模块    | [模块导读](modules/README.md)                                                       |
+完整说明见 [API 参考](reference/api-reference.md)；产品定位见 [Hubloom 是什么](guide/what-is-hubloom.md)。
 
 ---
 
-## 🎁 你将收获
+## 从这里开始
 
-- ⏱️ 半天内跑通：**对话 → 调真实 API → 看到 Markdown 或表单**
-- 🧠 弄清 MCP、A2UI、AG-UI **各自解决什么问题**（先会用，再深入协议）
-- 📝 会配 `env.yaml`、会写第一个 Skill，知道二次开发面在哪
-- 🚦 知道事件、企微、RAG 等**何时再开**，不挡主路径
+**先跑起来 →** [5 分钟快速上手](guide/quick-start.md)  
+（想先搞清边界，可先看 [Hubloom 是什么](guide/what-is-hubloom.md)）
 
----
+| 你是谁 | 去读 |
+| --- | --- |
+| 接业务 API | [接入 Swagger](usage/import-swagger.md) · [编写 Skill](usage/write-skill.md) |
+| 嵌入门户 | [嵌入 Runtime](usage/embed-runtime.md) |
+| 查配置 / 排错 | [配置项](reference/configuration.md) · [FAQ](reference/faq.md) |
+| 翻源码二开 | [模块导读](modules/README.md) |
 
-## 🚀 5 分钟跑起来
-
-配置就绪后，最短路径见 [5 分钟快速上手](guide/quick-start.md)（第一次接自己的 Swagger / 鉴权，按「半天内跑通」预期更稳妥）：
-
-1. 📦 克隆仓库，复制并填写 `config/env.yaml`（LLM + Swagger）
-2. ▶️ 启动后端与示例站
-3. 💬 发一句能触发业务 API 的话，验证对话与工具调用
-
-📖 环境与安装细节见 [安装与部署](guide/installation.md)；命令总览也可看仓库根目录 [README](../README.md)。
+配好 `config/env.yaml`（LLM + Swagger）→ 启动 → 发一句能调到业务 API 的话。卡住了看 [安装与部署](guide/installation.md)。
 
 ---
 
-## 🗺️ 文档地图
+## 文档地图
 
-| 部分          | 说明                                     | 入口                                                                  |
-| ------------- | ---------------------------------------- | --------------------------------------------------------------------- |
-| 🪜 入门指南   | 第一天：是什么、安装、跑通、第一个 Skill | [guide/](guide/README.md)                                             |
-| 🧠 核心概念   | 架构与协议（短文 + 图）                  | [core-concepts/](core-concepts/README.md)                             |
-| 🗂️ 模块导读   | 全仓代码地图：Runtime / Agent / MCP…     | [modules/](modules/README.md)                                         |
-| 🔧 使用指南   | 配模型、接 Swagger、写 Skill、定制与嵌入 | [usage/](usage/README.md)                                             |
-| 🚀 进阶功能   | 记忆、RAG、A2A、事件、企微（可选）       | [advanced/](advanced/README.md)                                       |
-| 📚 参考与社区 | API、配置全表、FAQ、贡献与更新日志       | [reference/](reference/README.md) · [community/](community/README.md) |
-
----
-
-## 🖼️ 界面预览
-
-跑通后，示例站大致是这样：左侧对话，右侧 A2UI 交互面板。
-
-![对话与 A2UI 面板](./assets/hubloom-chat-a2ui-panel.png)
-
----
-
-## 📖 建议阅读顺序
-
-✅ 先 **跑通**（入门 → 快速上手）  
-✅ 再 **补概念**（核心概念）  
-✅ 要二开 / 跟代码 → **模块导读**  
-✅ 再按项目需要进 **使用指南**  
-⏭️ 进阶章**默认跳过**，直到你真的要开长期记忆、事件或企微
-
-> 📝 各章正文正在逐步编写；页面里若标注「大纲 / 待编写」，表示目录已定、内容未填满。
-
----
-
-## 🔗 相关链接
-
-- 📦 仓库根目录 [README](../README.md)：特性总览、安装命令、路线图
-- 🤝 [贡献指南](community/contribute.md)
-
----
-
-### 🖥️ 本地预览本站（Docsify）
-
-```bash
-npx --yes serve docs -p 3000
-```
+| 部分 | 说明 | 入口 |
+| --- | --- | --- |
+| 入门指南 | 是什么、安装、跑通、第一个 Skill | [guide/](guide/README.md) |
+| 核心概念 | 架构与协议 | [core-concepts/](core-concepts/README.md) |
+| 使用指南 | 配模型、接 Swagger、写 Skill、嵌入 | [usage/](usage/README.md) |
+| 模块导读 | Runtime / Agent / MCP 等代码地图 | [modules/](modules/README.md) |
+| 进阶功能 | 记忆、RAG、事件、企微（可选） | [advanced/](advanced/README.md) |
+| 参考与社区 | API、配置、FAQ、贡献 | [reference/](reference/README.md) · [community/](community/README.md) |
