@@ -10,7 +10,7 @@
 
 对 Hubloom 这种企业 Agent 平台来说，MCP 最对口的场景是：**你们已经有（或即将有）REST API，并有 OpenAPI / Swagger 契约**。不必把业务逻辑搬进 Hubloom 核心，也不必为每个接口手写一个 Python Tool 类——用契约生成可调用的 MCP 工具，再让 Agent 按协议去调。业务仍在原有 HTTP 服务里，鉴权仍是原来的 Bearer / JWT；Hubloom 负责编排与「怎么发现、怎么调用」。
 
-读完这一节，你应能用自己的话说明：MCP 解决什么问题、和「纯聊天模型」差在哪、为什么企业场景特别适合「契约 → 工具」。下一节落到 Hubloom 里这条链具体起什么作用；再下一节讲为什么建成现在这样。协议官网与规范细节见 [MCP 协议（概念篇）](../core-concepts/mcp-protocol.md)；按配置接入见 [接入 Swagger](../usage/import-swagger.md)。
+读完这一节，你应能用自己的话说明：MCP 解决什么问题、和「纯聊天模型」差在哪、为什么企业场景特别适合「契约 → 工具」。下一节落到 Hubloom 里这条链具体起什么作用；再下一节讲为什么建成现在这样。概念速览见 [MCP 协议](../core-concepts/mcp-protocol.md)；按配置接入见 [接入 Swagger](../usage/import-swagger.md)。
 
 ---
 

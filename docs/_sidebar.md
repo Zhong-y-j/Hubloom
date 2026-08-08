@@ -10,6 +10,8 @@
 * 核心概念
   * [概念总览](core-concepts/README.md)
   * [架构](core-concepts/architecture.md)
+  * [Runtime](core-concepts/runtime.md)
+  * [Agent](core-concepts/agent.md)
   * [MCP 协议](core-concepts/mcp-protocol.md)
   * [Skill](core-concepts/skill.md)
 
