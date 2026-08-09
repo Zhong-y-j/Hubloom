@@ -17,6 +17,7 @@
 
 * 模块导读
   * [概览](modules/README.md)
+  * [Hubloom Serve](modules/hubloom-serve.md)
   * [Runtime](modules/runtime.md)
   * [Agent](modules/agent.md)
   * [Tools](modules/tools.md)
