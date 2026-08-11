@@ -1,78 +1,93 @@
 # Runtime
 
-本章讲 **`HubloomRuntime`（进程级运行时）**：把配置装配成可复用的 Agent 能力，并按会话跑每一轮。
+**`HubloomRuntime`**（主要在 `src/runtime.py`）是可嵌入的办事内核：启动时按配置装配一套可复用能力，之后按会话执行每一轮，并把事件交给宿主（Serve 或自有应用）。
 
-服务启动时调用 `from_config`：加载 `HubloomConfig`，创建 LLM；可选拉起 MCP；编译 Skill → Playbook；挂 `SessionStore` 与默认 Wait Profile；拼 Typed ReAct 用的 system。这一步整个进程只做一次。
+一句话：
 
-之后每次用户开口，走 `run_stream`（可覆盖 `wait_profile`）：写入 request context，按 session 装配 memory / tools，再委托 `agent.run.run_stream`（Decide → Gate → Act/Ask/Confirm/Finish）。interactive 挂起后用 `resume_stream` 续同一 Run。
-
-进程退出时调用 `aclose`，关闭 MCP 客户端。
-
-Runtime **不**负责渲染前端，也**不**替代 Agent 内核编排。示例站改接新事件见后续 Step；装配单测：`tests/test_runtime_agent_assembly.py`。
-
----
-
-## 一句话职责
-
-> **进程级装配一次 → 按 `session_id` 执行 `run_stream` / `resume_stream` → `aclose` 释放 MCP。**
+> **进程级装配一次 → 按 `session_id` 跑 `run_stream` / `resume_stream` → `aclose` 释放资源。**
 
 ```python
-agent = await HubloomRuntime.from_config(cfg)
-async for item in agent.run_stream(trigger, session_id=..., wait_profile="turn_based"):
+runtime = await HubloomRuntime.from_config(cfg)
+async for item in runtime.run_stream(trigger, session_id=..., wait_profile="interactive"):
     ...
-await agent.aclose()
+await runtime.aclose()
 ```
 
----
-
-## 边界（管什么 / 不管什么）
-
-| 管                                                                | 不管（链走）                                                                    |
-| ----------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| 读 `HubloomConfig`、建 LLM、可选拉起 MCP、拼 Think/Respond system | Think / Present / Respond 循环细节 → [Agent](agent.md)                          |
-| 每轮挂 memory、拼 `ToolRunner`、写入 request context              | `list_api` 如何打到 HTTP → [Tools](tools.md) · [MCP Adapter](mcp-adapter.md)    |
-| 对外 `run_stream` / `aclose` 生命周期                             | 路由、SSE 包装、企微回调 → [示例站](examples-chat.md) · [企业微信](im-wecom.md) |
-
-Runtime **不是** HTTP 框架本身，也**不是**业务 Service 层；它是「把 Agent 跑起来」的装配与会话入口。
+概念速览见 [Runtime（核心概念）](../core-concepts/runtime.md)。
 
 ---
 
-## 谁在用 Runtime
+## 边界
 
-| 调用方                          | 关系                                                               |
-| ------------------------------- | ------------------------------------------------------------------ |
-| `main.py` / `python -m server serve` | 产品 API 进程内创建 Runtime，暴露 `/v1/chat` 等              |
-| 自有后端 / 门户                 | 直接 `from_config` / `from_config_file`，自己喂 `trigger` 与 Token |
-| 事件 Webhook、企微入口          | **同一套** Runtime；换的是入口适配，不是另起一套编排               |
+**管：**
 
-通常一个进程里 **一个 Runtime 实例** 复用；不要每个 HTTP 请求 `from_config` 一次（MCP 子进程与 system 文案都很重）。
+- 读 `HubloomConfig`，建 LLM；可选拉起 MCP
+- 装配 system、Playbook、Redis 会话/锁、conversation_store
+- 每轮绑定 request context、按 session 建 memory / ToolRunner
+- 对外生命周期：`from_config` → `run_stream` / `resume_stream` → `aclose`
+
+**不管：**
+
+- HTTP 路由与 SSE 编码 → [Hubloom Serve](hubloom-serve.md)
+- Decide / Gate / 动作循环细节 → [Agent](agent.md)
+- `list_api` / `call_api` 如何打企业 HTTP → [Tools](tools.md) · [MCP Adapter](mcp-adapter.md)
+- Skill 文件怎么写 → [Skill](skill.md) · [编写 Skill](../usage/write-skill.md)
+
+Runtime **不是** HTTP 框架，也**不是**业务 Service；它是「把 Agent 跑起来」的装配与会话入口。拆开是为了：同一套编排可以挂在 Serve、门户、Events、企微上，而不把 HTTP / IM 细节渗进内核。
 
 ---
 
-## 两个生命周期
+## 谁在用
+
+- **Hubloom Serve** — 进程内创建一个 Runtime，`/v1/chat` 等调 `run_stream`
+- **自有后端 / 门户** — 直接 `from_config` / `from_config_file`，自己传 trigger 与 Token
+- **Events / 企微** — 同一套 Runtime；换的是入口适配，不是另起编排
+
+通常一个进程里 **复用一个 Runtime 实例**。不要每个 HTTP 请求都 `from_config`：MCP 要起子进程、拉 OpenAPI、编 catalog；system / Playbook 也要扫 skills——这些成本应按进程摊，不按请求摊。
+
+---
+
+## 两个生命周期（先建立这张图）
+
+要解决的问题很具体：**哪些东西贵、且跨请求不变；哪些东西便宜、且每用户每轮都不同。** 混在一起要么每请求冷启动（慢、泄漏子进程），要么把 Token / session 挂在全局（串台、越权）。
 
 ```mermaid
 flowchart TB
-  subgraph proc["进程级：from_config / from_config_file"]
+  subgraph proc["进程级：from_config"]
     C["HubloomConfig"] --> L["create_llm"]
     C --> M["可选 load_agent_mcp_bindings"]
-    C --> S["build_think_systems + respond systems"]
-    L --> R["HubloomRuntime 实例"]
-    M --> R
-    S --> R
+    C --> S["build_agent_systems + Playbook"]
+    C --> Rds["Redis SessionStore / Lock"]
+    C --> Conv["conversation_store"]
+    L --> RT["HubloomRuntime"]
+    M --> RT
+    S --> RT
+    Rds --> RT
+    Conv --> RT
   end
+
   subgraph req["请求级：每次 run_stream"]
-    R --> CTX["set_request_context"]
+    RT --> CTX["set_request_context"]
     CTX --> MEM["_make_memory(session_id)"]
     MEM --> TR["_make_runner"]
     TR --> RUN["agent.run.run_stream → yield 事件"]
   end
+
+  classDef proc fill:#e8f2f3,stroke:#0e4a52,color:#0e4a52
+  classDef req fill:#fff7e8,stroke:#c4922a,color:#5c3d0a
+  class C,L,M,S,Rds,Conv,RT proc
+  class CTX,MEM,TR,RUN req
 ```
 
-| 生命周期   | 做什么                                                                                              | 频率                                          |
-| ---------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| **进程级** | 日志、LLM、MCP bindings + 元工具、Think/Respond system、默认 `present_mode`                         | 启动时一次（改配置 / Swagger 后通常重启重建） |
-| **请求级** | Bearer / session 进 context、清本轮 `read_skill` 状态、按 session 建 memory、拼本轮 tools、委托编排 | 每个 `run_stream`                             |
+- **进程级**（启动一次）：LLM、MCP 客户端与元工具、system、Playbook、Redis 挂起态/锁、会话历史存储、默认 Wait Profile。这些绑定的是**环境**（模型、Swagger、技能目录），不是某个用户。改配置 / Swagger 后通常要**重启重建** Runtime——catalog 与子进程在装配时定死，热改会半新半旧。
+- **请求级**（每轮对话）：写入 Token / session 到 context、清本轮 `read_skill` 状态、按 session 建 memory 与工具面、委托 `agent.run`，结束后清 context。这些绑定的是**这一轮是谁、聊哪条会话**；必须可并发、可隔离。
+
+切分原则：
+
+| 放进程级                                          | 放请求级                                               |
+| ------------------------------------------------- | ------------------------------------------------------ |
+| 贵、启动慢、跨用户可共享                          | 含用户身份 / 会话身份、不能共享                        |
+| 例：MCP client、system 名片、Playbook、Redis 连接 | 例：`bearer_token`、`session_id`、本轮 memory / runner |
 
 这是读 `runtime.py` 时最重要的心智模型。
 
@@ -80,73 +95,77 @@ flowchart TB
 
 ## 配置如何进来
 
-1. `config/env.yaml`（或 `HUBLOOM_CONFIG` 指向的文件）
+1. `config/env.yaml`（或 `HUBLOOM_CONFIG`）
 2. `HubloomConfig.from_file`（`src/config.py`）
-3. `HubloomRuntime.from_config(cfg)`，或一步到位的 `from_config_file(path)`
+3. `HubloomRuntime.from_config(cfg)`，或 `from_config_file(path)`
 
-路径约定：相对路径相对**配置文件所在仓库根**（`source_path` 的上一级，见 `_project_root`），例如 `skills_dir`、`memory_db_path`。
+相对路径相对**配置文件所在仓库根**（见 `_project_root`），例如 `skills_dir`、`memory.db_path`。
 
-本章只点名与 Runtime 强相关的块；全表见 [配置项说明](../reference/configuration.md)。
+和 Runtime 强相关的块：
 
-| 配置块（概念）                                            | Runtime 里怎么用                                              |
-| --------------------------------------------------------- | ------------------------------------------------------------- |
-| `llm.*`                                                   | `create_llm`；缺 `api_key` 直接报错                           |
-| `mcp.enable` / `swagger_url` / `base_url` / `auth_scheme` | 决定是否 `load_agent_mcp_bindings`；scheme/token 进子进程 env |
-| `skills_dir` / `skills_exclude`                           | Think system 名片 + 每轮 `build_skill_tools`                  |
-| 日志开关（`agent_log` 等）                                | `configure_agent_logging`                                     |
+- `llm.*` — `create_llm`；缺 `api_key` 直接报错
+- `redis.url` — **必填**；挂起态与 session 锁（interactive 跨请求续跑、同 session 串行，都靠它）
+- `mcp.*` — 是否 `load_agent_mcp_bindings`；scheme 等进子进程 env
+- `skills_dir` / `skills_exclude` — system 名片 + Playbook + 每轮 skill 工具
+- `memory.conversation_store` — sqlite / postgres 会话历史
+- `agent.default_wait_profile` — 默认 Wait Profile
 
-用户业务 Token **不是**配置文件职责，见下文 `run_stream(bearer_token=...)`。
+用户业务 Token **不要**写进 yaml：配置是进程共享的；Token 是用户私有的。写进 yaml 等于所有会话共用一把钥匙。正确路径是 `run_stream(bearer_token=...)`（或 Serve 从 Header 注入后再传入）。全表见 [配置项说明](../reference/configuration.md)。
 
 ---
 
 ## `from_config` 装配清单
 
-按源码顺序（`HubloomRuntime.from_config`）：
+按当前源码顺序（`HubloomRuntime.from_config`）：
 
-1. **校验** `llm.api_key`
-2. **`configure_agent_logging`**
-3. **`create_llm`**（`core.factory`）
-4. 若 `enable_mcp`：
-   - 校验 `swagger_url`
-   - 预置部分 MCP 相关 context
-   - 组装 `child_env`（`MCP_AUTH_SCHEME` / 可选 `MCP_TOKEN`）
-   - `load_agent_mcp_bindings` → `mcp_setup` + `_mcp_tools`（即 `list_api` / `call_api`）
-5. **`build_think_systems`**：注入 skills 名片；若有 MCP 则注入 API 分组 catalog
-6. **`build_respond_markdown_system` / `build_respond_a2ui_system`**
-7. 填入 dataclass 并返回
+1. 校验 `llm.api_key`
+2. `configure_agent_logging`
+3. `create_llm`
+4. 若 `mcp.enable`：校验 `swagger_url` → `load_agent_mcp_bindings` → 得到 MCP 元工具（如 `list_api` / `call_api`）
+5. `build_agent_systems` — Skill 名片；有 MCP 时注入 API 分组 catalog
+6. 从 skills 编译 **Playbook**
+7. 创建 **Redis** SessionStore + session 锁（未注入自定义 store/lock 时）
+8. 创建 **conversation_store**
+9. 返回 `HubloomRuntime` 实例
 
-实例上常驻的字段包括：`cfg`、`llm`、`think_system` / `think_system_after`、两套 respond system、`default_present_mode`、`mcp_setup`、`_mcp_tools`、`max_think_rounds`。
+实例上常驻：`cfg`、`llm`、`system_before` / `system_after`、`playbook`、`mcp_setup` / `_mcp_tools`、`session_store` / `session_lock`、`conversation_store`、`default_wait_profile` 等。
 
-> system 字符串的**内容怎么写**属 Agent / prompts；这里只需知道：**装配时就算好，跑流时反复传入**。
+system 在装配时算好、跑流时反复传入：名片与 API catalog 相对稳定，不必每轮扫盘重编；需要本轮特例时用 `system_extra` 追加，而不是整份重装。文案**怎么写**属 Agent / prompts。
+
+`session_store` / `session_lock` 可注入，是为了测试或自有基础设施替换 Redis，而不改 `run_stream` 签名。
 
 ---
 
 ## `run_stream` 每轮做什么
 
-签名要点：
+常用参数：
 
-| 参数               | 含义                                                                            |
-| ------------------ | ------------------------------------------------------------------------------- |
-| `trigger`          | 单条用户 `Message`，或表单回传的 `assistant` + `tool` 消息列表                  |
-| `session_id`       | **必填**；多轮与 memory 命名空间                                                |
-| `bearer_token`     | 当前用户鉴权 → context → MCP `call_api` 透传；空则回退配置/环境里的 `MCP_TOKEN` |
-| `present_mode`     | 覆盖默认；`auto` 时交 Present 再选 Markdown / A2UI                              |
-| `trigger_source`   | 如 `user` / 事件侧标记，供编排区分来源                                          |
-| `max_think_rounds` | 可覆盖实例默认                                                                  |
+- `trigger` — 用户 `Message`（或消息列表）
+- `session_id` — **必填**；多轮与 memory 的命名空间。没有它，历史、挂起态、锁都无处归属
+- `bearer_token` — 当前用户鉴权 → context → MCP 透传（打业务 API 用「这个用户」的身份，而不是服务账号）
+- `wait_profile` — 覆盖默认（`interactive` / `turn_based` / `no_wait`）。同一 Runtime 可服务「人对着屏幕可挂起」和「事件触发绝不等」——差别在入口参数，不在两套内核
+- `trigger_source` — 如 `user`；事件/企微可标不同来源，便于策略与审计区分
+- `system_extra` — 本轮追加进 system（企微短回复等会用到），避免为渠道差异重建 Runtime
 
-每轮步骤：
+步骤：
 
-1. 解析 `present_mode`、校验 `session_id`
-2. **`set_request_context`**（token、session、MCP 相关 URL/scheme）
-3. **`clear_read_skill_turn_state`**（本轮 `read_skill` 计数清零）
-4. **`_make_memory(session_id)`** → `MemoryManager`（当前工厂路径里 vector/graph 默认为 `none` 的会话向用法）
-5. **`_make_runner`**：`SearchMemoryTool` + skill 工具 + 进程级 `_mcp_tools` → `ToolRegistry` / `ToolRunner`
-6. **`async for`** 委托 `agent.run.run_stream(...)`，原样 **yield** `AgentEvent | RunResult`
+1. 校验 `session_id`
+2. 解析 Wait Profile；选用实例 Playbook（可被参数覆盖）
+3. `_bind_request_context`（Token、session、MCP 相关 URL/scheme）+ 清本轮 `read_skill` 状态
+4. `_make_memory(session_id)` → `MemoryManager`（会话向；长期记忆另议）
+5. `_make_runner`：`SearchMemoryTool` + skill 工具 + 进程级 `_mcp_tools`
+6. 委托 `agent.run.run_stream(...)`，原样 **yield** 事件 / `RunResult`
+7. `finally`：`clear_request_context`
 
 注意：
 
-- **MCP 客户端在进程级**，每轮只是复用 `_mcp_tools` 背后的同一 client；
-- **memory / runner 按轮（按 session）新建**，避免会话串台。
+- **MCP 客户端在进程级**；每轮复用 `_mcp_tools` 背后的同一 client——避免每句对话拉起子进程
+- **memory / runner 按轮（按 session）新建**——memory 绑 `session_id`；runner 绑本轮工具面与 memory。共享会串历史或串 Token 调用链
+- Runtime **不解释**事件语义，只透传；宿主（Serve / 门户）决定 SSE、日志还是落库
+
+### `resume_stream`
+
+interactive 下进入 `awaiting_user` 后，用同一 `session_id`（及 `run_id` / `await_token`）续跑。这是**恢复挂起的同一 Run**，不是再开一轮并行 `run_stream`——否则挂起态、已执行步骤与锁会对不上。Serve 的 `/v1/chat/resume` 最终也落到这里。
 
 ---
 
@@ -154,86 +173,54 @@ flowchart TB
 
 文件：`src/context.py`。
 
-用 **contextvars** 在单次异步调用链里传递「当前请求」信息，避免把 Token 塞进每个工具参数或全局可变单例。
+用 **contextvars** 在单次异步调用链里传递「当前请求」信息。工具（尤其 `call_api`）深处需要 Token，但不宜给每个 `execute` 加鉴权参数——参数面会脏、也容易漏传。context 让 Runtime 在边界写入、工具在深处读取；`finally` 里 `clear_request_context`，避免异步任务间残留。
 
-Runtime 在 `run_stream`（以及 MCP 装配前后）会 **写入**，例如：
+Runtime 在跑流前写入，例如：`bearer_token`、`session_id`、`mcp_auth_scheme` / `mcp_swagger_url` / `mcp_base_url`。工具与 MCP 侧读取（如 `get_bearer_token()`）再透传。
 
-- `bearer_token`、`session_id`
-- `mcp_auth_scheme` / `mcp_swagger_url` / `mcp_base_url`
+对照：
 
-工具与 MCP 侧 **读取**（如 `get_bearer_token()`），再交给鉴权解析与透传。
+- **HubloomConfig** — 进程级：模型、Swagger、是否开 MCP、Redis…（环境）
+- **request context** — 请求级：这个用户的 Token、这个 session（身份）
 
-和配置的分工：
+---
 
-| 来源            | 典型内容                               |
-| --------------- | -------------------------------------- |
-| `HubloomConfig` | 进程级：模型、Swagger 地址、是否开 MCP |
-| request context | 请求级：这个用户的 Token、这个 session |
+## 关键文件
 
-另有 A2A 相关 context（远程过程队列、入站防环等），嵌入主路径时可先忽略，细节见 [A2A Adapter](a2a-adapter.md)。
+- `src/runtime.py` — Runtime 本体
+- `src/config.py` — 配置模型与读文件
+- `src/context.py` — 请求级 Token / session
+- `src/core/factory.py` — `create_llm`
+- `src/agent/assemble.py` — system 组装（由 Runtime 调用）
+- `src/agent/run.py` — 真正编排循环
+- `src/mcp_adapter/discovery.py` — MCP 装配
+- `src/server/app.py` — Serve 如何调用 Runtime
 
 ---
 
 ## 生命周期与资源
 
-| API                                | 作用                                                  |
-| ---------------------------------- | ----------------------------------------------------- |
-| `from_config` / `from_config_file` | 创建并装配                                            |
-| `run_stream`                       | 跑一轮（可多次）                                      |
-| `aclose`                           | 关闭 `mcp_setup.bindings.client`，避免 MCP 子进程泄漏 |
+- `from_config` / `from_config_file` — 创建并装配
+- `run_stream` / `resume_stream` — 跑一轮（可多次）
+- `aclose` — 关闭 MCP client、conversation_store、Redis 连接
 
-进程退出前应 `await runtime.aclose()`。改了 `swagger_url` 或 MCP 相关配置后，一般需要**重启进程**（重建 Runtime），不能指望只改 yaml 热更新子进程。
-
----
-
-## 代码地图
-
-| 你想了解…                 | 优先看                                     |
-| ------------------------- | ------------------------------------------ |
-| Runtime 本体              | `src/runtime.py`                           |
-| 配置模型与读文件          | `src/config.py`                            |
-| 请求级 Token / session    | `src/context.py`                           |
-| 演示入口                  | `main.py` → `examples/chat/`               |
-| LLM 工厂                  | `src/core/factory.py`（`create_llm`）      |
-| Think/Respond system 组装 | `src/agent/assemble.py`（由 Runtime 调用） |
-| 真正编排循环              | `src/agent/run.py`（`run_stream`）         |
-| MCP 装配                  | `src/mcp_adapter/discovery.py`             |
-
----
-
-## 和上下游
-
-| 方向     | 模块                                     | 关系                                                       |
-| -------- | ---------------------------------------- | ---------------------------------------------------------- |
-| 下游     | [Agent](agent.md)                        | Runtime 把 llm / memory / tools / system 塞进 `run_stream` |
-| 下游     | [Tools](tools.md)                        | `_make_runner` 组装本轮工具面                              |
-| 下游     | [MCP Adapter](mcp-adapter.md)            | `from_config` 时 `load_agent_mcp_bindings`                 |
-| 下游     | [Skill](skill.md) / [Memory](memory.md)  | system 名片 + 每轮 skill/memory 工具                       |
-| 上游入口 | [示例站](examples-chat.md)、Events、企微 | 创建 Runtime 并调用 `run_stream`                           |
-
-概念总图：[架构](../core-concepts/architecture.md)（偏产品拼装）；本章偏**这一个类**的装配与生命周期。
+MCP 子进程与 Redis 连接不会因 Python 对象被 GC 就干净退出；进程退出前应 `await runtime.aclose()`，否则容易残留进程/连接。改了 `swagger_url` 或 MCP 相关配置后，需要**重启进程**重建 Runtime（与「进程级定死 catalog」同一原因）。
 
 ---
 
 ## 常见误解
 
-| 误解                        | 实际                                                    |
-| --------------------------- | ------------------------------------------------------- |
-| Runtime = 整个 HTTP 服务    | 服务在示例站 / 你的应用里；Runtime 是可嵌入的 Agent 核  |
-| 每个请求 `from_config` 一次 | 应进程内复用实例；请求只调 `run_stream`                 |
-| 不传 `session_id` 也能聊    | 会直接 `ValueError`                                     |
-| 用户 Token 写进 `env.yaml`  | 应 `run_stream(bearer_token=...)`（或网关注入后再传入） |
-| 改完 Swagger 不用重启       | catalog 与 MCP 子进程在装配时创建，通常需重建 Runtime   |
+- **Runtime = 整个 HTTP 服务** — 服务在 Serve / 你的应用里；Runtime 是可嵌入的核（多入口共用一套编排）
+- **每个请求 `from_config` 一次** — 把进程级成本当成请求级付；应复用实例，只调 `run_stream`
+- **不传 `session_id` 也能聊** — 会直接报错；没有命名空间就无法安全存历史与挂起态
+- **用户 Token 写进 `env.yaml`** — 配置共享、Token 私有；应 `bearer_token=`（或网关注入后再传入）
+- **改完 Swagger 不用重启** — catalog 与 MCP 子进程在装配时固定，通常需重建 Runtime
 
 ---
 
-## 下一步
+## 延伸阅读
 
-| 需求            | 去哪                                      |
-| --------------- | ----------------------------------------- |
-| 编排与 SSE 细节 | [Agent](agent.md)                         |
-| 工具面怎么挂    | [Tools](tools.md)                         |
-| 嵌入到自有服务  | [嵌入 Runtime](../usage/embed-runtime.md) |
-| 模块总览        | [模块导读](README.md)                     |
-
-← [模块导读](README.md) · 👉 [Agent →](agent.md)
+- 上一篇：[Hubloom Serve](hubloom-serve.md)
+- 下一篇：[Agent](agent.md)
+- 工具面：[Tools](tools.md) · [MCP Adapter](mcp-adapter.md)
+- 嵌入自有服务：[嵌入 Runtime](../usage/embed-runtime.md)
+- 模块总览：[模块导读](README.md)
