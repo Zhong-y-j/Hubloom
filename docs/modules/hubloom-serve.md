@@ -1,97 +1,115 @@
-# Hubloom Serve（产品 HTTP API）
+# Hubloom Serve
 
-> 演示前端：`examples/chat/web`（仅前端，代理到本服务；无 A2UI / AG-UI）。
+**Hubloom Serve**（`src/server/`）是产品 HTTP 门面：对外提供对话、续跑、历史等接口；进程内持有一个 **Runtime**，把请求交给编排，再把事件编成 SSE 或 JSON 返回。
 
-## 启动
+一句话：
 
-```bash
-# 仓库根；需已配置 config/env.yaml（含真 LLM）
-PYTHONPATH=src .venv/bin/python -m server serve --config config/env.yaml
-# 或：PYTHONPATH=src .venv/bin/python main.py
+> **收 HTTP → 调 Runtime → 用 `sse.py` 编码 → 同一次响应流回（或 JSON 一次返回）。**
 
-# 可选：演示前端
-cd examples/chat/web && npm install && npm run dev
+演示前端在 `examples/chat/web/`，只负责 UI，通过代理打到本服务。
+
+---
+
+## 边界
+
+**管：**
+
+- 路由与请求/响应模型（`schemas.py`）
+- Header 里的 `session_id` / 业务 Token
+- session 锁、SSE 编码（`sse.py`）
+- 生命周期里装配 Runtime；按配置挂上 Events / 企微
+
+**不管：**
+
+- 编排怎么决策 → [Agent](agent.md)
+- OpenAPI 怎么变成工具、怎么打企业 HTTP → [MCP Adapter](mcp-adapter.md)
+- Skill 怎么写、怎么加载 → [Skill](skill.md)
+- Events / 企微业务怎么开、怎么联调 → [Events](events.md) · [企业微信](im-wecom.md) · [进阶](../advanced/README.md)
+
+---
+
+## 目录与关键入口
+
+```text
+src/server/
+  app.py        # FastAPI 路由、_stream_chat / _stream_resume
+  sse.py        # Agent 事件 → SSE 文本
+  schemas.py    # ChatRequest / ResumeRequest / History 等
+  assembly.py   # Events Dispatcher、企微 Adapter 装配
+  cli.py        # python -m server serve
+  __main__.py
+main.py         # 仓库根入口（默认转成 serve）
 ```
 
-默认端口见配置 `http.port`（常见 8765）。须配置并启动 **Redis**（`redis.url`）：挂起态、session 锁、Events 幂等/串行、企微会话队列均走 Redis。OpenAPI：`/docs`。
+启动后进程内单例：`_runtime`；若开启对应开关，还有 `_dispatcher`、`_wecom`。
 
-## 接口（无 A2UI / AG-UI）
+---
 
-| 方法 | 路径 | 说明 |
-| --- | --- | --- |
-| GET | `/health` | 探活（含 `events_enabled` / `wecom_enabled`） |
-| POST | `/v1/chat` | 新一轮对话（SSE 或 JSON） |
-| POST | `/v1/chat/resume` | interactive 挂起后续跑 |
-| GET | `/v1/chat/history` | 会话历史；`include_thought=true` 时填回 `thought` |
-| GET | `/v1/mcp/status` | MCP 就绪 |
-| GET | `/v1/events/types` | 已登记事件类型（需 `events.enable`） |
-| POST | `/v1/events` | 业务 Webhook 入站（需 `events.enable`） |
-| GET/POST | `/v1/im/wecom/callback` | 企微 URL 验证与消息回调（需 `im.wecom.enable`） |
+## 主调用链：`POST /v1/chat`
 
-## Events
+流式（默认 `stream: true`）时大致是：
 
-- 配置：`events.enable` / `shared_secret`（头 `X-Event-Secret`）/ `result_callback_url` / `catalog`
-- Redis：`event_id` 幂等 + `session_id` 串行；与 chat 共用 `redis.url`
-- Agent：`wait_profile=no_wait`；Bearer 仅来自事件体 `bearer_token`
-- 规程：`skills/events/*.md`
-
-```bash
-curl -sS -X POST "http://127.0.0.1:8765/v1/events" \
-  -H "Content-Type: application/json" \
-  -H "X-Event-Secret: change-me" \
-  -d '{"event_id":"evt-1","type":"locker.created","session_id":"demo-1","payload":{"deviceId":"LK-A-001"}}'
+```text
+客户端 POST /v1/chat
+  → app.chat
+  → StreamingResponse(_stream_chat(...))
+       → session_lock.hold(session_id)
+       → yield run_started
+       → runtime.run_stream(...)          # Agent 边跑边 yield 事件
+            → event_to_sse(item)          # sse.py 编码
+            → yield SSE 行
+       → yield run_finished
+  ← 同一 HTTP 响应（text/event-stream）回到客户端
 ```
 
-## 企微 IM
+要点：
 
-- 配置：`im.wecom.enable` + corp 凭证 + 回调 `token` / `encoding_aes_key`
-- 回调尽快空 200，消息入 Redis 会话队列异步跑 Agent
-- **短回复**：默认 `max_reply_chars=650`；企微通道把纯文本短回复要求注入 **system**（不拼进用户消息）；推送使用应用消息 `msgtype=text`；完整内容仍写会话历史
-- 会话键：`{session_prefix}:{UserId}`（默认 `wecom:…`）
-- 换票：`im.wecom.token_resolve`（可选；未配则 Bearer 为空）
+- 事件是 **Agent → Runtime → Serve 向上交回**，不是 Serve 旁路另开推送通道
+- `sse.py` 只负责编码；真正写出响应的是 `app._stream_chat`
+- `stream: false` 时走 `_run_chat_once`，一次返回 JSON（`ChatSyncResponse`）
 
-## 测试怎么分
+**Resume：** 收到 `awaiting_user` 后，前端应带 `run_id` / `await_token` 调 `POST /v1/chat/resume`，不要再开一轮并行的 `/v1/chat`（同 session 有锁，也易触发「禁止并行 begin_run」）。
 
-| 文件 | 是否真 LLM | 用途 |
-| --- | --- | --- |
-| `tests/test_hubloom_serve.py` | 否（ScriptedLLM） | chat / resume SSE 冒烟 |
-| `tests/test_hubloom_serve_events_wecom.py` | 否 | Events 幂等 + 企微回调 ACK 冒烟 |
-| `tests/test_hubloom_serve_chat_task.py` | **是** | 联调：对**已启动**的 serve 打 `/v1/chat` |
-| `tests/test_events.py` | 否（FakeAgent） | Events 调度层（需 Redis） |
-| `tests/test_im_wecom.py` | 否 | 企微 send/echo/queue 联调 |
+**History：** `GET /v1/chat/history` 读会话；可选 `include_thought=true`。若 session 正挂起，响应可带 `awaiting`，前端加载历史后应据此走 resume。
 
-真模型联调：
+---
 
-```bash
-# 终端 1
-PYTHONPATH=src .venv/bin/python -m server serve --config config/env.yaml
+## 接口一览
 
-# 终端 2
-export HUBLOOM_SERVE_URL=http://127.0.0.1:8765
-export HUBLOOM_MCP_TOKEN=你的业务Bearer   # mcp.enable 时需要
-PYTHONPATH=src .venv/bin/python tests/test_hubloom_serve_chat_task.py
-```
+主路径（常用）：
 
-可选：`HUBLOOM_CHAT_MESSAGE` / `HUBLOOM_WAIT_PROFILE=interactive` / `HUBLOOM_RESUME_REPLY=小花`。
+- `GET /health` — 探活（含 `events_enabled` / `wecom_enabled`）
+- `POST /v1/chat` — 新一轮对话（SSE 或 JSON）
+- `POST /v1/chat/resume` — interactive 挂起后续跑
+- `GET /v1/chat/history` — 会话历史
+- `GET /v1/mcp/status` — MCP 是否就绪
 
-### POST /v1/chat
+可选（需配置开启）：
+
+- `GET /v1/events/types` · `POST /v1/events` — 业务事件入站
+- `GET|POST /v1/im/wecom/callback` — 企微回调
+
+交互式 OpenAPI：启动后打开 `http://127.0.0.1:<port>/docs`。
+
+### 对话请求（节选）
 
 ```json
 {
-  "message": "帮我加一只宠物",
+  "message": "帮我查一下状态",
   "session_id": "demo-1",
   "stream": true,
   "wait_profile": "interactive"
 }
 ```
 
-Header：`X-Session-Id`；业务 Token（`Authorization` / `X-MCP-Token`）**可选**，有则注入 MCP 鉴权。
+常用头：
 
-SSE 事件（节选）：`run_started` / `step` / `tool_call` / `tool_result` / `awaiting_user` / `run_complete` / `run_result` / `run_finished`。
+- `X-Session-Id` — 也可放在 body 的 `session_id`
+- `Authorization: Bearer …` 或 `X-MCP-Token` — 业务 Token，有则透传给 MCP；**不要写进 env.yaml**
 
-### POST /v1/chat/resume
+SSE 事件名（节选）：`run_started` / `text_delta` / `thought_delta` / `step` / `tool_call` / `tool_result` / `awaiting_user` / `final_answer` / `run_complete` / `run_result` / `run_finished` / `error`。
 
-收到 `awaiting_user` 后：
+### 续跑（节选）
 
 ```json
 {
@@ -103,19 +121,68 @@ SSE 事件（节选）：`run_started` / `step` / `tool_call` / `tool_result` / 
 }
 ```
 
-### GET /v1/chat/history
+字段与事件全表可后补到 [API 参考](../reference/api-reference.md)；排错时也可对照 `schemas.py`、`sse.py`。
 
-查询参数：
+---
 
-- `session_id`（或头 `X-Session-Id`）
-- `include_thought`（默认 `false`）：为 `true` 时在**最终助手消息**上填回 `thought`（含中间工具轮折叠进来的思考）
-
-响应还可带 `awaiting`（`run_id` / `await_token` / `kind` / `prompt`）：session 正挂起等人时返回，前端加载历史后应据此走 `/v1/chat/resume`，避免误调 `/v1/chat` 触发「禁止并行 begin_run」。
-
-面向聊天 UI：带 `tool_calls` 的中间 assistant / tool 行会折叠进最终助手气泡的 `tools`（及可选 `thought`），与实时 SSE 一条气泡一致。
+## 启动与依赖
 
 ```bash
-curl -s "http://127.0.0.1:8765/v1/chat/history?session_id=demo-1&include_thought=true"
+# 仓库根；需已配置 config/env.yaml
+PYTHONPATH=src uv run python main.py
+# 或：PYTHONPATH=src uv run python -m server serve --config config/env.yaml
+
+# 可选：演示前端
+cd examples/chat/web && npm install && npm run dev
 ```
 
-助手消息示例字段：`role` / `content` / `created_at` / `source` / `thought`（可选）。
+- 端口：`http.port`（常见 **8765**）
+- **Redis 必填**（`redis.url`）：挂起态、session 锁；Events 幂等/串行、企微队列也共用
+- LLM / MCP 等仍由 Runtime 按同一份 `env.yaml` 装配
+
+---
+
+## Serve 如何挂可选入口
+
+**Events**（`events.enable=true`）：`assembly.build_event_dispatcher` 挂上 Dispatcher；Agent 侧 `wait_profile=no_wait`。路由在 `app.py` 的 `/v1/events*`。细则见 [Events](events.md)。
+
+**企微**（`im.wecom.enable=true`）：`assembly.build_wecom_adapter` 挂上回调适配；回调尽快 ACK，消息进 Redis 会话队列异步跑 Agent。细则见 [企业微信](im-wecom.md)。
+
+两者都是 **同一套 Runtime**，换的是入口，不是另起编排。
+
+---
+
+## 和上下游的关系
+
+- **上游：** 演示前端 / 企业 BFF / 企微 / 业务 Webhook
+- **下游：** `HubloomRuntime.run_stream` / `resume_stream`
+- **并列模块：** 编排看 Agent；工具看 Tools + MCP；规程看 Skill
+
+---
+
+## 测试
+
+- `tests/test_hubloom_serve.py` — chat / resume SSE 冒烟（ScriptedLLM，无真模型）
+- `tests/test_hubloom_serve_events_wecom.py` — Events 幂等 + 企微回调 ACK
+- `tests/test_hubloom_serve_chat_task.py` — 对**已启动**的 Serve 打真对话（需 LLM）
+
+```bash
+# 终端 1
+PYTHONPATH=src uv run python main.py
+
+# 终端 2
+export HUBLOOM_SERVE_URL=http://127.0.0.1:8765
+export HUBLOOM_MCP_TOKEN=你的业务Bearer   # mcp.enable 时需要
+PYTHONPATH=src uv run python tests/test_hubloom_serve_chat_task.py
+```
+
+更多清单见 [测试计划](../community/testing.md)。
+
+---
+
+## 延伸阅读
+
+- 概念：[架构](../core-concepts/architecture.md) · [Runtime](../core-concepts/runtime.md)
+- 下一篇建议：[Runtime](runtime.md)
+- 上手：[5 分钟快速上手](../guide/quick-start.md)
+- 示例前端：[示例站](examples-chat.md)
