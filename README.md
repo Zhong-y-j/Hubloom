@@ -2,7 +2,7 @@
 
 **快速把企业 API 编成私有化 Agent，策略约束下自动执行业务操作。**
 
-接上现有的 Swagger/OpenAPI，用自然语言在真实业务 API 上办事。业务逻辑仍在你的系统里；Hubloom 是可私有化的 **Agent 服务**，推荐经 **企业后端（BFF）** 转发接入（鉴权 / 限流放在你这边）。流程用 **Skill** 约束，也可经 **Events** 事件驱动触发。
+接上现有的 Swagger/OpenAPI，用自然语言在真实业务 API 上办事。业务逻辑仍在你的系统里；Hubloom 是可私有化的 **Agent 服务**，生产推荐经 **企业后端（BFF）** 转发接入（鉴权 / 限流放在后端内部）。流程用 **Skill** 约束，也可经 **Events** 事件驱动触发。
 
 完整说明见 [在线文档](https://zhong-y-j.github.io/Hubloom/)。
 
