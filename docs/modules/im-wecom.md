@@ -1,257 +1,339 @@
 # 企业微信（IM）
 
-## 企业微信介绍
+**企业微信入口**（`src/im/wecom/` + `src/im/session_queue/`）让成员在企微自建应用里跟**同一套 Agent**对话：加密回调 → 尽快 ACK → 按 session 入队串行 → UserId 换业务 Bearer → `run_stream` → 应用消息推回手机。它是通道适配，不是第二套编排引擎。
 
-网页对话的起点是人在浏览器里打字。运维、客服、业务同事日常却更常泡在**企业微信**里：手机上一句「帮我查一下 A 区柜子」，若还要切到 Hubloom 网页才能问 Agent，门槛就高了。  
-**企业微信入口要解决的，就是让同一个人在企微自建应用里也能跟同一套 Agent 对话**：成员发文字 → 企微把加密回调推到 Hubloom → 验签解密 → 按企微账号换成业务 Bearer → 用约定好的会话 id 跑一轮编排 → 再把 Markdown 结果用应用消息推回手机。人不换入口，能力也不另起一套。
+一句话：
 
-可以把它理解成：**同一套 Agent，换了一扇门。** 网页门吃的是浏览器里的自然语言和 SSE；企微门吃的是回调 XML 和应用消息 API。后面的推理、工具、记忆，尽量复用 Runtime，而不是在 IM 模块里再写一个「企微专用大脑」。事件入口（Events）也是换门，但那边是业务系统推结构化通知；这边是人对人说话，只是通道换成了企微。
+> **回调验签解密 → 空 200 ACK → Redis 按 session 串行 → 换票 → Agent（默认 `turn_based`）→ `send_text` 推送。**
 
-这条路上有几件必须先想清楚的事。企微要求回调尽快应答（大约数秒内），而跑一轮 Agent 往往更慢，所以正式路径通常是：先空 200 确认收到，再异步处理、主动推送结果——不能卡在「等模型说完再回 HTTP」。成员发的同一条消息也可能被重试，要用消息 id 做去重，避免同一句话跑两轮。企微 UserId 和业务系统里的登录态也不是一回事，中间要有一次「换票」：用 UserId 去业务接口换 Bearer，Agent 调 MCP 时才带得上权限；本地联调可以用 mock 接口，生产必须指到真实换票地址。会话要落在稳定的键上，例如 `wecom:{UserId}`，这样网页历史和企微里聊的是同一条线，人事后打开对话页还能对得上。
+```mermaid
+flowchart LR
+  Phone["企微成员"] --> WX["企微回调"]
+  WX --> SV["Serve /v1/im/wecom/callback"]
+  SV --> ACK["空 200 ACK"]
+  SV --> Q["session_queue"]
+  Q --> TR["token_resolve"]
+  TR --> AG["run_agent → Runtime"]
+  AG --> Push["client.send_text"]
 
-整体上可以记三句：  
-**入口换成企微回调与应用消息；身份靠换票接到业务 Token；执行仍走同一套 Agent。**  
-IM 层自己负责加解密、去重、换票、推送和会话键约定——不管前端怎么画，也不把钉钉、飞书一次做完。当前 MVP 以文字为主，表单/卡片等放在路线图的 IM 增强里。
+  classDef entry fill:#e8f2f3,stroke:#0e4a52,color:#0e4a52
+  classDef core fill:#0e4a52,stroke:#0e4a52,color:#fff
+  classDef store fill:#fff7e8,stroke:#c4922a,color:#5c3d0a
+  classDef run fill:#eef6ee,stroke:#2f6b3a,color:#1e3d24
 
-读完上面，你应能说清：企微入口解决什么问题、和网页 / Events 差在哪、为什么要异步推送和换票。下一节讲这些需求如何落成取舍；再往后是不经 Agent 的收发联调，方便先把管道跑通。
-
----
-
-## 设计思路
-
-最容易走偏的做法，是在 IM 里另写一套对话引擎：自己拼提示、自己调业务、自己决定回复格式。那样会和网页路径分叉，工具面和记忆都要维护两份。Hubloom 反过来：`WeComChatAdapter` 只做通道适配——验签解密、去重、换票、调用注入进来的 `run_agent`、把结果 `send_text` 推回——真正办事仍走 Runtime 的 `run_stream`。代价是企微侧的体验受 Agent 快慢影响；收益是网页会的，企微里也能用。
-
-回调协议上也故意拆开。企微推来的是加密包，必须用 Token、EncodingAESKey、企业 corp_id 按官方算法验签解密，这一层放在 `crypto`，与「怎么跑 Agent」无关。主动发消息走应用 `gettoken` + `message/send`，放在 `client`，网页对话根本用不到这套 API。适配器把两段粘起来，但测试时可以只用 client 做 send、或只用 crypto+client 做 echo，**不经 Agent 也能验证管道**——这正是本章后面动手脚本的设计动机：先证明「收得到、发得回」，再接换票和编排，排障时不会把密钥错误和模型错误混在一起。主动推送还受企微「企业可信 IP」约束：cloudflared 只解决回调打进来，本机调 `message/send` 仍走宽带公网 IP，白名单要单独配。
-
-身份上不假设企微 UserId 能直接当业务 Token。正式路径通过可配置的 `token_resolve` HTTP 去换 Bearer；未绑定账号时给用户一句人话提示，而不是让 Agent 带着空权限去调 API。本地可以用示例站的 mock 换票地址加 `dev_bearer_token` 顶上。会话键用 `wecom:{UserId}`（前缀可配），与网页 `session_id` 同一套记忆隔离语义——产品上一人一会话，Web 与企微若共用同一键，就不能靠「只给企微加全局锁」了事。
-
-同用户连发、多实例重试，不能只靠进程内字典。IM 模块已落地 **按 session 的 Redis 队列**（`im/session_queue`）：入站先入队并尽快 ACK，再由持锁的 Worker FIFO **一条一条**消费；MsgId 走 Redis 幂等键。Hubloom Serve 装配时注入该队列；未注入时仍保留进程内 `create_task`（联调脚本可用）。
-
-HTTP 路由在 **Hubloom Serve**（`GET|POST /v1/im/wecom/callback`），`src/im/wecom` 与 `session_queue` 保持可嵌入：换主机、换端口、配 cloudflared 公网 HTTPS，都是部署问题，不是模块内核。企微要求接收消息 URL 必须是 HTTPS，本地开发用临时隧道是务实做法。当前只认真支持文字；图片等类型先回一句「请发文字」，表单与卡片推送留给后续 IM 增强。
-
----
-
-## 本章怎么读
-
-介绍与设计思路之后，先用最小脚本做**不经 Agent** 的收发联调（send / echo），再用 `queue` 验证 Redis 会话串行；需要完整对话时再接示例站与 Runtime（示例站接队列尚待装配）。进阶后台与可信 IP 等见：[企业微信入口](../advanced/wecom-integration.md)。
-
----
-
-## 最小动手：不经 Agent 的收发联调
-
-脚本：[`tests/test_im_wecom.py`](../../tests/test_im_wecom.py)。
-
-两种模式，都**不**换业务票、**不**跑 Agent：
-
-| 模式     | 方向               | 作用                                                   |
-| -------- | ------------------ | ------------------------------------------------------ |
-| **send** | 本机 → 企微        | `gettoken` + `message/send`，手机应用能收到一条消息    |
-| **echo** | 企微 → 本机 → 企微 | 起回调服务：解密打印收到的内容，再主动回推一条固定文案 |
-
-### 前置配置
-
-在 `config/env.yaml`（或 `HUBLOOM_CONFIG`）里打开并填好 `im.wecom`：
-
-```yaml
-im:
-  wecom:
-    enable: true
-    corp_id: ...
-    corp_secret: ...
-    agent_id: 1000002
-    token: ... # 与企微后台「接收消息」Token 一致
-    encoding_aes_key: ... # 43 字符，与后台一致
+  class Phone,WX,SV,ACK entry
+  class Q,TR store
+  class AG core
+  class Push run
 ```
 
-- **send** 至少需要：`corp_id` / `corp_secret` / `agent_id`
-- **echo** 额外需要：`token` / `encoding_aes_key`（回调验签解密）
-- 接收人用企微通讯录里的 **UserId**（如 `ZhongYuJian`），不是昵称
-
-密钥只放本地配置，**不要提交仓库**。字段说明见 [`config/env.example.yaml`](../../config/env.example.yaml)。
+HTTP 在 [Hubloom Serve](hubloom-serve.md)；`src/im/` 不绑 FastAPI，可嵌进自有后端。
 
 ---
 
-### 案例 A：本机主动发到企微（send）
+## 企业微信是什么（为何需要）
 
-在仓库根目录：
+网页对话要人打开浏览器；运维、客服、一线同事更常在**企微里发一句**。企微入口换的是**门**，不是大脑：后面仍走 Runtime / Agent / MCP / Memory，和网页对话共用同一套编排与工具权限模型。
+
+和另外两条入口对照：
+
+| | 网页对话 | 企微 IM | Events |
+| --- | --- | --- | --- |
+| 谁开口 | 浏览器用户 | 企微成员文字 | 业务系统结构化事件 |
+| 入站 | `POST /v1/chat`（可 SSE） | 加密回调 XML | `POST /v1/events` |
+| 出站 | 同响应 / SSE | 应用消息 `send_text` | HTTP 响应 + 可选 callback |
+| Wait Profile | 常 `interactive` | 默认 **`turn_based`** | **`no_wait`** |
+| 会话键 | 请求带来的 `session_id` | `{prefix}:{UserId}`（默认 `wecom:`） | 事件体 `session_id` |
+
+必须先钉死的约束：
+
+1. **回调要快 ACK** — 企微要求数秒内应答；Agent 往往更慢 → 先空 200，再异步处理并主动推送。  
+2. **MsgId 去重** — 回调可能重试；队列用 Redis `dedupe`，无队列时用进程内 `MsgIdDeduper`。  
+3. **换票** — 企微 UserId ≠ 业务 Bearer；经可配置的 `token_resolve` HTTP 换票后再调 MCP。  
+4. **同用户串行** — Serve 正式路径注入 Redis `session_queue`，按 session FIFO 一条一条跑。
+
+---
+
+## 边界
+
+**管：**
+
+- 回调验签 / 加解密 / 明文 XML 解析（`crypto`）
+- 应用 `gettoken` + 成员消息推送（`client`；主路径用 **`send_text`**）
+- `WeComChatAdapter`：ACK 后调度、非文字提示、换票、调 `run_agent`、截断推送
+- `im/session_queue`：按 session 入队、持锁消费、MsgId 幂等
+- UserId → Bearer（`token_resolve`）
+
+**不管：**
+
+- `GET|POST /v1/im/wecom/callback` 路由与 lifespan 装配 → [Hubloom Serve](hubloom-serve.md)（`app.py` / `assembly.py`）
+- Decide / Gate / Wait Profile 细节 → [Agent](agent.md)
+- 业务 API → [MCP Adapter](mcp-adapter.md) · [Tools](tools.md)
+- 事件 Webhook → [Events](events.md)
+- 企微长期固定域名、卡片/表单交互产品化 → 部署与进阶（开通只交代联调所需）
+
+---
+
+## 现状（必读）：Serve 已挂 Redis 队列
+
+| 事实 | 含义 |
+| --- | --- |
+| `im.wecom.enable: true` | `build_wecom_adapter(runtime)`；否则回调 503 |
+| 必备配置 | `corp_id` / `corp_secret` / `agent_id` / `token` / `encoding_aes_key`；另需 **`redis.url`** |
+| 队列 | Serve 装配时**总会** `create_session_queue` 并注入 Adapter（`session_queue=queue`） |
+| 无队列时 | 仅当自行构造 Adapter 且不传 `session_queue` → 进程内 `create_task` + `MsgIdDeduper`（联调脚本可能如此） |
+| Wait Profile | `run_wecom_agent_turn` 默认 **`turn_based`**；注入企微专用 `system_extra`（要求短纯文本、勿 Markdown） |
+| 推送 | Adapter 只调 **`send_text`**（`send_markdown` 在 client 里保留，主路径不用） |
+| 截断 | `max_reply_chars` 默认 650（配置可覆盖，装配时夹在约 200–2000） |
+| 换票 | 配了 `token_resolve.url` 用 `BusinessTokenResolver`；未配则 resolver 返回空串（Agent 可能无业务鉴权） |
+| `trigger_source` | `"user"`（与网页对话同属用户触发，不是 `event`） |
+
+装配要点（`server/assembly.py`）：
+
+```python
+queue = create_session_queue(redis_url=..., redis=client)
+adapter = WeComChatAdapter(
+    crypto=...,
+    client=...,
+    token_resolver=...,          # 或空实现
+    run_agent=_run_agent,        # → run_wecom_agent_turn(..., wait_profile=turn_based)
+    config=WeComAdapterConfig(session_prefix=..., max_reply_chars=...),
+    session_queue=queue,
+)
+```
+
+Serve：`handle_callback_sync_ack` → 立即空响应 → `schedule_handle_message`（有队列则入队）。
+
+---
+
+## 开通（配置与后台）
+
+目标：企微后台能把回调打到 Serve，Hubloom 能换票、跑 Agent、再 `send_text` 推回成员。建议按「后台 → 配置 → 出站可达 → 联调顺序」走，避免一上来就开全链路。
+
+### 1. 企微管理后台
+
+1. **自建应用** — 企业微信管理后台 → 应用管理 → 自建 → 创建应用。  
+2. **记下三元组** — 企业 ID（`corp_id`）、应用 Secret（`corp_secret`）、AgentId（`agent_id`）。这三项负责 **`gettoken` + 应用消息推送**。  
+3. **接收消息** — 在该应用里开启「接收消息」：  
+   - **URL**：正式路径是  
+     `https://<你的公网主机>/v1/im/wecom/callback`  
+     （与 Serve / echo 脚本路径一致；本地无公网时用临时 HTTPS 隧道，见下。）  
+   - **Token** / **EncodingAESKey**：自行设定或随机生成，**原样写入** `im.wecom.token` / `encoding_aes_key`（AESKey 一般为 43 字符）。  
+4. **保存时会走 URL 验证** — 企微发 **GET**（`msg_signature` / `timestamp` / `nonce` / `echostr`）；Serve 解密后回明文 `echostr`。验证失败时检查：隧道是否指到正确端口、路径是否含 `/v1/im/wecom/callback`、Token/AESKey/`corp_id` 是否与配置一字不差。  
+5. **可见范围** — 把联调账号放进应用可见范围，否则成员侧看不到应用、也发不进回调。
+
+### 2. Hubloom 配置（`config/env.yaml`）
+
+对照 `config/env.example.yaml` 的 `im.wecom`：
+
+| 项 | 作用 |
+| --- | --- |
+| `enable: true` | 才装配 Adapter；否则回调 503 |
+| `corp_id` / `corp_secret` / `agent_id` | 推送与 gettoken |
+| `token` / `encoding_aes_key` | 回调验签加解密（**不是**业务 Bearer） |
+| `redis.url` | Serve 正式路径**必填**（会话队列） |
+| `session_prefix` | 默认 `wecom` → session 为 `wecom:{UserId}` |
+| `max_reply_chars` | 默认 650；宜短 |
+| `token_resolve.*` | UserId → 业务 Bearer（强烈建议配，见下节） |
+
+注意：
+
+- `token` / `encoding_aes_key` 是**企微回调协议**用的，和业务登录 Token、MCP Bearer 不是一回事。  
+- `token_resolve.url` 填的是**业务换票 HTTP**，不要填回调 URL。  
+- 联调脚本 [`tests/test_im_wecom.py`](../../tests/test_im_wecom.py) 会要求 `enable: true` 且上述五项凭证齐全（即使 `send` 模式理论上只需三元组，脚本仍统一校验）。
+
+### 3. 公网回调 vs 企业可信 IP（两件不同的事）
+
+| | 解决什么 | 常见做法 |
+| --- | --- | --- |
+| **入站（回调）** | 企微服务器要 HTTPS 打到你的机器 | 本地：`cloudflared tunnel --url http://127.0.0.1:<端口>`，把后台 URL 设为隧道给出的 `https://….trycloudflare.com/v1/im/wecom/callback`；线上：正式域名 + TLS |
+| **出站（主动推送）** | 你的进程调企微 `message/send` 时，源 IP 须在企业「可信 IP」白名单 | 把**本机/出口公网 IP**配进企微后台；隧道**不能**代替出站白名单 |
+
+本地常见组合：隧道只保证「收得到回调」；`send` / 回推失败且报 IP 相关错误时，去查可信 IP，而不是再换一条隧道。
+
+### 4. 换票要不要先配
+
+- **只验加解密 / 回声**：`send` / `echo` 不经 Agent，可不配 `token_resolve`。  
+- **要跑真 Agent 且调需鉴权的 MCP**：必须配 `token_resolve`（或接受 Bearer 为空、工具侧无权限）。  
+- 未绑定企微账号时，业务接口常返回 404 等；可用 `unbound_http_statuses` / `unbound_codes` 转成对人可读的提示（见下节「换票」）。
+
+### 5. 建议联调顺序
+
+1. **`send`** — 本机 → 企微一条文字（验 Secret、AgentId、可信 IP）。  
+2. **`echo`** — 企微 → 本机解密 → 固定文案回推（验 Token/AES、HTTPS URL、入站出站管道；**不**跑 Agent）。  
+3. **`queue`**（可选）— 只验 Redis 串行与 MsgId 幂等。  
+4. **Serve 端到端** — `im.wecom.enable=true` + `redis.url` +（建议）`token_resolve`，后台 URL 指到 Serve 的同一回调路径；在企微发一句，应收到 Agent 短回复。
+
+命令细节见文末「动手」。
+
+---
+
+## 主调用链
+
+```mermaid
+flowchart TB
+  Post["POST callback"] --> Dec["decrypt + parse XML"]
+  Dec --> Ack["HTTP 空 200"]
+  Dec --> Sched["schedule_handle_message"]
+  Sched --> Enq["enqueue_and_kick"]
+  Enq --> Dup{"Redis dedupe MsgId?"}
+  Dup -->|"重复"| Skip["跳过"]
+  Dup -->|"新"| Lock["session 锁 FIFO"]
+  Lock --> TR["token_resolve"]
+  TR --> Run["run_wecom_agent_turn"]
+  Run --> Text["send_text 推回"]
+
+  classDef http fill:#e8f2f3,stroke:#0e4a52,color:#0e4a52
+  classDef gate fill:#fff7e8,stroke:#c4922a,color:#5c3d0a
+  classDef work fill:#f4fafb,stroke:#3d7a82,color:#0e4a52
+  classDef done fill:#eef6ee,stroke:#2f6b3a,color:#1e3d24
+
+  class Post,Dec,Ack http
+  class Dup,Lock,Skip gate
+  class Sched,Enq,TR,Run work
+  class Text done
+```
+
+文字路径细节：
+
+1. 非 `text` → 直接推「暂只支持文字消息…」，不入队 / 不跑 Agent  
+2. 空内容 → 推「请发送非空文字消息」  
+3. 换票抛 `TokenResolveError` → 把错误文案推给用户（含未绑定账号等）  
+4. Agent 失败 → 推「处理失败：…」  
+5. 等人（`awaiting_user` 等）→ 正文后附提示：可到网页打开该 `session_id` 继续，或在企微再回  
+
+会话键：`session_id_for(userid)` → `{session_prefix}:{UserId}`（默认 `wecom:ZhangSan`）。与网页是否同一条线，取决于产品是否共用该键。
+
+---
+
+## Redis 会话队列
+
+正式 Serve 路径已注入。键前缀默认 `hubloom:im:`：
+
+| 键 | 作用 |
+| --- | --- |
+| `q:{session_id}` | 待处理 List |
+| `processing:{session_id}` | 在途（防崩溃丢任务） |
+| `lock:{session_id}` | 消费者锁 |
+| `dedupe:{key}` | MsgId 等幂等（默认 TTL **24h**） |
+| `active:{session_id}` | 当前 Job（供后期打断） |
+| `cancel:{session_id}` | 取消标记（API 已暴露；主路径暂不自动打断） |
+
+行为：同 session **一条一条**消费；Handler 现为 `len(jobs)==1`，预留合并。`dedupe_key` 一般是企微 `MsgId`。
+
+---
+
+## 换票（token_resolve）
+
+配置块 `im.wecom.token_resolve`（见 `env.example.yaml`）：
+
+- `url` / `method` / `body_template`（可用 `{wecom_userid}`）  
+- `token_path`（默认 `accessToken`）  
+- 可选 `headers` / `service_token`  
+- `unbound_http_statuses`（默认含 404）等 → 转成对人说的未绑定提示  
+
+未配置 `url` 时 Serve 仍能装配 Adapter，但 Bearer 为空——调需鉴权的 MCP 会失败或行为受限。
+
+---
+
+## 关键入口与目录
+
+```text
+src/im/
+  session_queue/     # Redis 队列 / Worker / Job
+  wecom/
+    crypto.py        # 验签、加解密、parse_message_xml
+    client.py        # gettoken、send_text / send_markdown
+    adapter.py       # WeComChatAdapter
+    token_resolve.py # BusinessTokenResolver
+src/server/assembly.py   # build_wecom_adapter / run_wecom_agent_turn
+src/server/app.py        # GET|POST /v1/im/wecom/callback
+```
+
+| 角色 | 路径 |
+| --- | --- |
+| 适配器主路径 | `wecom/adapter.py` |
+| 队列 | `session_queue/` |
+| Serve 装配 / HTTP | `server/assembly.py` · `app.py` |
+
+---
+
+## 设计取舍
+
+| 若做成… | 我们选择… | 主要理由 |
+| --- | --- | --- |
+| IM 内另写对话引擎 | 注入 `run_agent` → Runtime | 与网页能力一致 |
+| 等 Agent 完再回 HTTP | 先 ACK 再异步推送 | 满足企微回调时限 |
+| 仅进程内去重/排队 | Serve 正式路径用 Redis 队列 | 多实例、同用户串行 |
+| 默认推 markdown 卡片 | 主路径 `send_text` + 短截断 | 企微宜短、少踩格式坑 |
+| UserId 当业务 Token | 可配置 HTTP 换票 | 权限仍在业务系统 |
+
+---
+
+## 动手（压缩）
+
+脚本 [`tests/test_im_wecom.py`](../../tests/test_im_wecom.py)。读 `config/env.yaml` 的 `im.wecom.*`（或 `HUBLOOM_CONFIG`）。开通步骤与后台说明见上文「开通」。
+
+**send**（本机 → 企微，不经 Agent）：
 
 ```bash
 PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py send \
   --to 你的UserId --text "联调：你好"
 ```
 
-也可用环境变量：`WECOM_TO_USER=你的UserId`。
-
-**成功时终端类似：**
-
-```text
-【模式】 send（本机 → 企微，不经 Agent）
-【配置】 .../config/env.yaml
-【应用】 agent_id= 1000002 corp_id= ww….…
-【接收人】 ZhongYuJian
-【gettoken】 ok，access_token 长度 214
-【发送】 markdown …
-【结果】 {'errcode': 0, 'errmsg': 'ok', 'msgid': '...'}
-请到企业微信里看该应用是否收到上述消息。
-```
-
-读法：`gettoken` 成功说明应用凭证可用；`errcode: 0` 说明消息已交给企微。打开手机企业微信，在该自建应用会话里应看到「联调：你好」。
-
-若 `81013` 一类「user invalid」：多半是 UserId 写错，或该成员不在应用可见范围。
-
----
-
-### 案例 B：企微发来、本机收到并回推（echo）
-
-需要**两个终端**，外加企微后台把回调指到公网 HTTPS。
-
-**终端 1 — 回声服务**
+**echo**（企微 → 本机解密 → 固定文案回推，不经 Agent）— 回调须 **HTTPS**；本地示例：
 
 ```bash
+# 终端 A：脚本监听
 PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py echo --port 8765
-```
 
-应看到：
-
-```text
-【模式】 echo（企微 → 本机解密打印 → 主动回推，不经 Agent）
-【监听】 http://0.0.0.0:8765/v1/im/wecom/callback
-...
-Uvicorn running on http://0.0.0.0:8765
-```
-
-**终端 2 — 临时公网隧道**（本机已装 `cloudflared` 时可直接用）
-
-```bash
+# 终端 B：临时隧道（把后台 URL 指到给出的 https://…/v1/im/wecom/callback）
 cloudflared tunnel --url http://127.0.0.1:8765
 ```
 
-日志里会出现类似：
-
-```text
-https://xxxx.trycloudflare.com
-```
-
-把企微管理后台该应用的「接收消息」URL 设为：
-
-```text
-https://xxxx.trycloudflare.com/v1/im/wecom/callback
-```
-
-Token / EncodingAESKey 与 `env.yaml` 里一致，保存。后台会先打 **GET** 做 URL 验证。
-
-**验证 + 收信成功时，终端 1 类似：**
-
-```text
-【URL 验证】 ok，echo= ...
-GET /v1/im/wecom/callback?... 200 OK
-【收到】 {'FromUserName': 'ZhongYuJian', 'MsgType': 'text', 'MsgId': '...', 'Content': '你好'}
-POST /v1/im/wecom/callback?... 200 OK
-【回推】 markdown ok → ZhongYuJian
-```
-
-读法：
-
-1. **【URL 验证】ok** — 加解密与后台配置一致，回调地址通
-2. **【收到】** — 企微已把成员消息推到本机，明文已解开
-3. **【回推】ok** — 本机又用应用消息 API 推回手机（固定 echo 文案，不是 Agent 回复）
-
-手机侧应先后看到：你发的「你好」，以及一条「Hubloom echo（无 Agent）已收到…」类回复。
-
-注意：`cloudflared tunnel --url` 是**临时隧道**，关掉后域名失效，需重新开隧道并改企微 URL。两个进程都要保持运行。
-
----
-
-### 和正式入口的差别
-
-|              | 本脚本（send / echo）      | 示例站正式路径                             |
-| ------------ | -------------------------- | ------------------------------------------ |
-| 目的         | 验管道：凭证、加解密、推送 | 真对话                                     |
-| Agent        | 不跑                       | `run_stream` 一轮                          |
-| 换业务 Token | 不换                       | `token_resolve` / 本地 `dev_bearer_token`  |
-| HTTP         | echo 自带最小回调          | `examples/chat` 的 `/v1/im/wecom/callback` |
-
-管道跑通后，再起示例站、把回调指到同一路径（或换端口与隧道），才会走「收信 → 换票 → Agent → 推回」。
-
----
-
-## Redis 会话队列（IM 模块已落地）
-
-按 **session（用户）** 串行的入站队列在 `im/session_queue/`，**不依赖 Runtime / 示例站**。当前行为是一条一条处理；Handler 与 `take_jobs` 使用 `list[SessionJob]`，并预留 `merged_from` / `request_cancel`，后期合并或打断不必换存储模型。
-
-### 对外用法
-
-```python
-from im import SessionJob, SessionWorker, create_session_queue
-
-queue = create_session_queue(redis_url="redis://localhost:6379/0")
-
-async def handle_jobs(jobs: list[SessionJob]) -> None:
-    # 现在 len(jobs)==1；后期合并时可能多条
-    job = jobs[0]
-    ...
-
-worker = SessionWorker(queue, handle_jobs)
-await worker.enqueue_and_kick(
-    SessionJob(
-        session_id="wecom:ZhongYuJian",
-        source="wecom",
-        text="你好",
-        dedupe_key="msgid-optional",
-        meta={"wecom_userid": "ZhongYuJian"},
-    )
-)
-```
-
-企微适配器可选注入同一套队列（示例站尚未改装配时仍走进程内 `create_task`）::
-
-```python
-from im import create_session_queue
-from im.wecom import WeComChatAdapter
-
-queue = create_session_queue(redis_url=...)
-adapter = WeComChatAdapter(
-    ...,
-    session_queue=queue,  # 注入后 schedule_handle_message → Redis 入队
-)
-```
-
-也可用 `wecom_message_to_job(...)` / `adapter.enqueue_message(msg)` 自行入队。
-
-本地只验队列（需 Redis，不连企微）::
+**queue**（只验 Redis 串行 / MsgId 幂等，不连企微）：
 
 ```bash
-PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py queue
+HUBLOOM_IM_REDIS_URL=redis://localhost:6379/0 \
+  PYTHONPATH=src .venv/bin/python tests/test_im_wecom.py queue
 ```
 
-### Redis 键
+（亦兼容环境变量 `HUBLOOM_EVENTS_REDIS_URL`。）
 
-| 键 | 作用 |
-| --- | --- |
-| `hubloom:im:q:{session_id}` | 待处理 List |
-| `hubloom:im:processing:{session_id}` | 在途（防崩溃丢任务） |
-| `hubloom:im:lock:{session_id}` | 消费者锁 |
-| `hubloom:im:dedupe:{key}` | MsgId 等幂等 |
-| `hubloom:im:active:{session_id}` | 当前 Job（供后期打断） |
-| `hubloom:im:cancel:{session_id}` | 取消标记（API 已暴露，主路径暂不自动打断） |
+端到端：Serve 开启 `im.wecom` + `redis.url` +（建议）`token_resolve`，企微「接收消息」URL 指到同一回调路径。
 
 ---
 
-## 代码锚点
+## 和上下游
 
-| 路径 | 职责 |
+| 模块 | 关系 |
 | --- | --- |
-| `im/session_queue/` | Redis 会话队列 / Worker / Job |
-| `im/wecom/crypto.py` | 回调验签、加解密、明文 XML 解析 |
-| `im/wecom/client.py` | `gettoken`、应用消息 text（markdown 方法保留未默认使用） |
-| `im/wecom/adapter.py` | 适配器；可选 Redis 入队 |
-| `im/wecom/token_resolve.py` | 企微 UserId → 业务 Bearer |
-| `tests/test_im_wecom.py` | send / echo / queue |
-| `src/server/app.py` / `assembly.py` | 挂 Runtime + Redis 队列的正式回调 |
+| [Hubloom Serve](hubloom-serve.md) | 回调路由、`build_wecom_adapter`、空 200 ACK |
+| [Runtime](runtime.md) / [Agent](agent.md) | `run_wecom_agent_turn` → `run_stream`（`turn_based` + 企微 system_extra） |
+| [Memory](memory.md) | 历史落在 `wecom:{UserId}`（或自定义前缀） |
+| [Events](events.md) | 同属入口；Events 无人值守 `no_wait`，企微是人对人 `turn_based` |
+| [MCP](mcp-adapter.md) | 换到的 Bearer 经 request context 调业务 API |
+
+---
+
+## 常见误解
+
+- **企微入口 = 另一套 Agent** — 只是通道；办事仍走 Runtime  
+- **HTTP 在示例前端里 / 队列未装配** — 正式路径在 **Serve**，且 **已注入** Redis 队列  
+- **等模型说完再回企微回调** — 必须先 ACK；结果靠主动 `send_text`  
+- **主路径推 markdown** — Adapter 当前只 `send_text`  
+- **未配 token_resolve 也能带业务权限** — 未配时 Bearer 为空  
+- **Events 与企微同一 Wait Profile** — Events 默认 `no_wait`；企微默认 `turn_based`  
+- **cloudflared 解决可信 IP** — 只解决回调打进来；本机出站 `message/send` 仍看公网 IP 白名单  
+- **回调 Token = 业务 Bearer** — 前者验签解密；后者来自 `token_resolve`  
 
 ---
 
 ## 延伸阅读
 
-- 进阶：[企业微信入口](../advanced/wecom-integration.md)
-- 同进程装配：[Runtime](runtime.md) · [示例站](examples-chat.md)
+- 配置：`config/env.example.yaml` 的 `im.wecom` · [配置项](../reference/configuration.md)
+- 测试：[`tests/test_im_wecom.py`](../../tests/test_im_wecom.py) · [测试计划](../community/testing.md)
+- Serve：[Hubloom Serve](hubloom-serve.md)
+- 对照入口：[Events](events.md)
+- 编排：[Agent](agent.md)（Wait Profile）
+- 回 [模块导读](README.md)
