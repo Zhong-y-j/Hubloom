@@ -9,7 +9,8 @@
     PYTHONPATH=src MCP_SWAGGER_URL=... \\
       python -m mcp_adapter.server.worker --http --host 0.0.0.0 --port 8001 --path /mcp
 
-容器示例环境变量：``MCP_SWAGGER_URL``、可选 ``MCP_BASE_URL`` / ``MCP_AUTH_SCHEME`` / ``MCP_TOKEN``。
+容器示例环境变量：``MCP_SWAGGER_URL``、可选 ``MCP_BASE_URL`` /
+``MCP_AUTH_SCHEME`` / ``MCP_TOKEN`` / ``MCP_HTTP_TIMEOUT``（下游 HTTP 读超时秒数，默认 900）。
 """
 
 from __future__ import annotations

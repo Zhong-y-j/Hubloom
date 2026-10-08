@@ -22,12 +22,26 @@ def endpoints_from_config(cfg: Any) -> list[McpEndpoint]:
         child_env["MCP_AUTH_SCHEME"] = str(scheme).strip()
     # 业务 Token 仅由请求透传，不从配置注入 MCP_TOKEN
 
+    raw_timeout = getattr(cfg, "mcp_timeout", None)
+    try:
+        timeout = float(raw_timeout) if raw_timeout is not None else 900.0
+    except (TypeError, ValueError):
+        timeout = 900.0
+    if timeout <= 0:
+        timeout = 900.0
+
     if transport == "http":
         url = (getattr(cfg, "mcp_url", None) or "").strip()
         if not url:
             raise ValueError("mcp.transport=http 时需要 mcp.url")
         endpoints.append(
-            McpEndpoint(id="primary", transport="http", url=url, env=child_env)
+            McpEndpoint(
+                id="primary",
+                transport="http",
+                url=url,
+                env=child_env,
+                timeout=timeout,
+            )
         )
     else:
         swagger = (getattr(cfg, "mcp_swagger_url", None) or "").strip()
@@ -40,6 +54,7 @@ def endpoints_from_config(cfg: Any) -> list[McpEndpoint]:
                 swagger_url=swagger,
                 base_url=getattr(cfg, "mcp_base_url", None),
                 env=child_env,
+                timeout=timeout,
             )
         )
 

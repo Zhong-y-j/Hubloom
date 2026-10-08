@@ -60,13 +60,15 @@ async def connect_full_mcp(
     base_url: str | None = None,
     env: dict[str, str] | None = None,
     cwd: str | None = None,
-    timeout: float = 120.0,
+    timeout: float = 900.0,
 ) -> MCPToolClient:
     """启动全量 worker（stdio）并返回已连接的客户端。"""
     child_env = dict(env or {})
     child_env["MCP_SWAGGER_URL"] = swagger_url.strip()
     if base_url and str(base_url).strip():
         child_env["MCP_BASE_URL"] = str(base_url).strip()
+    # 下游 OpenAPI HTTP 读超时（simulate 等长任务）；与 call_tool 等待对齐
+    child_env.setdefault("MCP_HTTP_TIMEOUT", str(timeout))
 
     command, args = mcp_full_stdio_cmd()
     work = cwd or str(Path(__file__).resolve().parents[1])
@@ -85,7 +87,7 @@ async def connect_http_mcp(
     url: str,
     *,
     headers: dict[str, str] | None = None,
-    timeout: float = 120.0,
+    timeout: float = 900.0,
 ) -> MCPToolClient:
     """连接已部署 / 线上的 Streamable HTTP MCP。"""
     client = MCPToolClient.http(url, headers=headers, timeout=timeout)
@@ -149,6 +151,7 @@ async def load_agent_mcp_bindings(
     base_url: str | None = None,
     env: dict[str, str] | None = None,
     cwd: str | None = None,
+    timeout: float = 900.0,
 ) -> AgentMcpSetup:
     """主路径：catalog + 全量 MCP（stdio）+ 原生 list_api/call_api。
 
@@ -163,6 +166,7 @@ async def load_agent_mcp_bindings(
         base_url=base_url,
         env=env,
         cwd=cwd,
+        timeout=timeout,
     )
     bindings = MCPBindings(
         tools=build_api_tools(catalog, client),

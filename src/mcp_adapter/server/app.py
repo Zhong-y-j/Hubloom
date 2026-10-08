@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 
+import httpx
 from fastmcp import FastMCP
 
 from mcp_adapter.auth import AuthPassthroughMiddleware
@@ -11,10 +12,24 @@ from mcp_adapter.config.models import McpServeConfig
 from mcp_adapter.server.http_client import AuthedHttpClient
 from mcp_adapter.spec.pipeline import prepare_openapi
 
+# 与 WorldQuant /simulate 等长任务对齐（服务端内部轮询可达约 900s）
+_DEFAULT_HTTP_TIMEOUT = 900.0
+
 
 def _env(key: str, default: str = "") -> str:
     """读进程 env（stdio 由父进程注入；HTTP 独立部署时由容器 env 注入）。"""
     return (os.getenv(key) or default).strip()
+
+
+def _env_float(key: str, default: float) -> float:
+    raw = _env(key)
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
 
 
 async def build_backend_mcp() -> FastMCP:
@@ -26,6 +41,7 @@ async def build_backend_mcp() -> FastMCP:
             "(stdio: Hubloom 经 child_env 注入；HTTP: 容器/进程环境变量)"
         )
     base_url = _env("MCP_BASE_URL") or None
+    http_timeout = _env_float("MCP_HTTP_TIMEOUT", _DEFAULT_HTTP_TIMEOUT)
 
     openapi, resolved_base = await prepare_openapi(
         swagger_url,
@@ -36,7 +52,8 @@ async def build_backend_mcp() -> FastMCP:
     client = AuthedHttpClient(
         base_url=resolved_base,
         trust_env=False,
-        timeout=30.0,
+        # connect 短、read 长：仿真等接口会同步等到完成才返回
+        timeout=httpx.Timeout(http_timeout, connect=30.0),
     )
 
     mcp = FastMCP.from_openapi(

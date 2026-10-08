@@ -155,12 +155,16 @@ class HubloomRuntime:
             child_env: dict[str, str] = {}
             if cfg.mcp_auth_scheme:
                 child_env["MCP_AUTH_SCHEME"] = str(cfg.mcp_auth_scheme).strip()
+            mcp_timeout = float(cfg.mcp_timeout) if cfg.mcp_timeout else 900.0
+            if mcp_timeout <= 0:
+                mcp_timeout = 900.0
             src_cwd = str(_project_root(cfg) / "src")
             mcp_setup = await load_agent_mcp_bindings(
                 swagger_url=swagger,
                 base_url=cfg.mcp_base_url,
                 env=child_env or None,
                 cwd=src_cwd,
+                timeout=mcp_timeout,
             )
             mcp_tools = list(mcp_setup.bindings.tools)
 

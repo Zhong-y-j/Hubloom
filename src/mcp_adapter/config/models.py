@@ -23,7 +23,7 @@ class McpEndpoint:
     url: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     env: dict[str, str] = field(default_factory=dict)
-    timeout: float = 120.0
+    timeout: float = 900.0
 
     def __post_init__(self) -> None:
         key = (self.id or "").strip()

@@ -52,7 +52,7 @@ class MCPToolClient:
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
-        timeout: float = 120.0,
+        timeout: float = 900.0,
         *,
         url: str | None = None,
         headers: dict[str, str] | None = None,
@@ -92,7 +92,7 @@ class MCPToolClient:
         *,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
-        timeout: float = 120.0,
+        timeout: float = 900.0,
     ) -> MCPToolClient:
         return cls(command=command, args=args or [], env=env, cwd=cwd, timeout=timeout)
 
@@ -102,7 +102,7 @@ class MCPToolClient:
         url: str,
         *,
         headers: dict[str, str] | None = None,
-        timeout: float = 120.0,
+        timeout: float = 900.0,
     ) -> MCPToolClient:
         return cls(url=url, headers=headers, timeout=timeout)
 

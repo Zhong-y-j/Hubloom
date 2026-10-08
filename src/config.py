@@ -54,6 +54,15 @@ def _as_int(value: Any) -> int | None:
         return None
 
 
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _as_str_list(value: Any) -> list[str]:
     """解析 YAML 字符串列表；也接受逗号分隔的单个字符串。"""
     if value is None:
@@ -90,6 +99,7 @@ class HubloomConfig:
     mcp_base_url: str | None = None
     mcp_url: str | None = None  # transport=http 时主路 URL
     mcp_auth_scheme: str | None = None
+    mcp_timeout: float | None = None  # 工具调用与下游 HTTP 读超时（秒）
     mcp_remotes: list[dict[str, Any]] = field(default_factory=list)
     mcp_serve_host: str | None = None
     mcp_serve_port: int | None = None
@@ -269,6 +279,7 @@ class HubloomConfig:
             mcp_base_url=_clean(mcp.get("base_url")),
             mcp_url=_clean(mcp.get("url")),
             mcp_auth_scheme=_clean(mcp.get("auth_scheme")),
+            mcp_timeout=_as_float(mcp.get("timeout")),
             mcp_remotes=mcp_remotes,
             mcp_serve_host=_clean(serve.get("host")),
             mcp_serve_port=_as_int(serve.get("port")),
