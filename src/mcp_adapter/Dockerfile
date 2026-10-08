@@ -1,11 +1,11 @@
 # 独立部署：OpenAPI → MCP（Streamable HTTP）
 # 构建（仓库根目录）:
-#   docker build -f src/mcp_adapter/Dockerfile -t hubloom-mcp .
+#   docker build -f src/mcp_adapter/Dockerfile -t hubloom_mcp .
 # 运行:
 #   docker run --rm -p 8001:8001 \
 #     -e MCP_SWAGGER_URL=https://.../swagger.json \
 #     -e MCP_BASE_URL=https://api.example.com \
-#     hubloom-mcp
+#     hubloom_mcp
 
 FROM python:3.12-slim
 

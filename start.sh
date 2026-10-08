@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Hubloom 本地一键启动 / 更新（Docker）
 #
-# 会拉起：
-#   - Redis + Qdrant（本仓库 docker-compose；端口已占用则复用现有服务）
-#   - Postgres（可选：端口空闲时才起 PersonalSmartSystem 的 postgres）
-#   - Hubloom Serve（Docker 镜像 hubloom-serve，读 config/env.docker.yaml）
+# 会拉起（本仓库 docker-compose）：
+#   - Redis + Qdrant（端口已占用则复用现有服务）
+#   - Postgres（hubloom_postgres；端口空闲才起，可用 HUBLOOM_SKIP_POSTGRES=1 跳过）
+#   - Hubloom Serve（镜像 hubloom_serve，读 config/env.docker.yaml）
 #
 # 不会：
 #   - 打包 / 部署示例站 Web（8080）
@@ -15,17 +15,16 @@
 #   ./start.sh              # 构建并启动（含 Serve）
 #   ./start.sh up           # 同上
 #   ./start.sh update       # 拉代码、重建 Serve 镜像并重启
-#   ./start.sh down         # 停 Serve + Hubloom 基础设施
-#   ./start.sh down --all   # 上者 + 停共享 Postgres
+#   ./start.sh down         # 停 Serve + Redis/Qdrant（Postgres 默认保留）
+#   ./start.sh down --all   # 上者 + 停 hubloom_postgres
 #   ./start.sh restart      # 仅重启 Serve 容器
 #   ./start.sh status       # 查看状态
 #   ./start.sh logs         # 跟踪 Serve 容器日志
 #   ./start.sh infra        # 仅起 Redis + Qdrant
 #
 # 环境变量（可选）：
-#   PERSONAL_SMART_ROOT     含 docker-compose 的业务仓，默认 ~/Desktop/PersonalSmartSystem
 #   HUBLOOM_SKIP_GIT=1      跳过 git pull
-#   HUBLOOM_SKIP_POSTGRES=1 不启动共享 Postgres
+#   HUBLOOM_SKIP_POSTGRES=1 不启动 Postgres
 #   HUBLOOM_NO_BUILD=1      不重建 Serve 镜像（仅 up -d）
 
 set -euo pipefail
@@ -37,8 +36,6 @@ COMPOSE=(docker compose -f "$ROOT/docker-compose.yml")
 RUN_DIR="$ROOT/.run"
 CFG="$ROOT/config/env.yaml"
 CFG_DOCKER="$ROOT/config/env.docker.yaml"
-PERSONAL_SMART_ROOT="${PERSONAL_SMART_ROOT:-$HOME/Desktop/PersonalSmartSystem}"
-PSS_COMPOSE="$PERSONAL_SMART_ROOT/docker-compose.yml"
 
 die() {
   echo "错误: $*" >&2
@@ -107,15 +104,18 @@ stop_legacy_local_agent() {
 }
 
 serve_running() {
-  docker inspect -f '{{.State.Running}}' hubloom_serve 2>/dev/null | grep -qx true
+  docker inspect -f '{{.State.Running}}' hubloom_serve 2>/dev/null | grep -qx true \
+    || docker inspect -f '{{.State.Running}}' Hubloom_serve 2>/dev/null | grep -qx true
 }
 
 stop_agent() {
   stop_legacy_local_agent
-  if docker inspect hubloom_serve >/dev/null 2>&1; then
+  # 兼容短暂用过的 Hubloom_serve
+  if docker inspect hubloom_serve >/dev/null 2>&1 || docker inspect Hubloom_serve >/dev/null 2>&1; then
     info "停止 Hubloom Serve 容器…"
     "${COMPOSE[@]}" stop serve >/dev/null 2>&1 || true
     "${COMPOSE[@]}" rm -f serve >/dev/null 2>&1 || true
+    docker rm -f hubloom_serve Hubloom_serve >/dev/null 2>&1 || true
   fi
 }
 
@@ -237,25 +237,34 @@ cmd_infra_up() {
 
   local services=()
 
-  if port_open 6379; then
+  if docker inspect -f '{{.State.Running}}' hubloom_redis 2>/dev/null | grep -qx true; then
+    info "hubloom_redis 已在运行"
+  elif port_open 6379; then
     info "6379 已可连接，复用现有 Redis（跳过 hubloom_redis）"
-    docker rm -f hubloom_redis >/dev/null 2>&1 || true
+    # 仅清理未运行的本项目容器名，绝不能 rm 正在提供 6379 的实例
+    for c in hubloom_redis Hubloom_redis; do
+      if docker inspect "$c" >/dev/null 2>&1 \
+        && ! docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null | grep -qx true; then
+        docker rm -f "$c" >/dev/null 2>&1 || true
+      fi
+    done
   else
     remove_exited_publishers 6379
+    docker rm -f Hubloom_redis >/dev/null 2>&1 || true
     services+=(redis)
   fi
 
-  if port_open 6333 && qdrant_ready; then
+  if docker inspect -f '{{.State.Running}}' hubloom_qdrant 2>/dev/null | grep -qx true \
+    && qdrant_ready; then
+    info "hubloom_qdrant 已在运行"
+  elif port_open 6333 && qdrant_ready; then
     info "6333 上 Qdrant 已就绪，复用现有实例（跳过 hubloom_qdrant）"
-    # 若已是本项目的 hubloom_qdrant 则保留
-    if ! docker inspect hubloom_qdrant >/dev/null 2>&1; then
-      :
-    fi
   else
     if port_open 6333 && ! qdrant_ready; then
       die "6333 有进程在听，但不是可用的 Qdrant（/readyz 失败）。请停掉占用进程后重试，或改 docker-compose 端口。"
     fi
     remove_exited_publishers 6333
+    docker rm -f Hubloom_qdrant >/dev/null 2>&1 || true
     # 常见：旧容器名就叫 qdrant、已退出但仍占映射
     if docker inspect qdrant >/dev/null 2>&1; then
       local st
@@ -281,8 +290,10 @@ cmd_infra_up() {
 
 cmd_infra_down() {
   need_cmd docker
-  info "停止 Hubloom Compose 服务（serve / redis / qdrant；不影响其它项目容器）…"
-  "${COMPOSE[@]}" down
+  # 与 postgres 同 compose：只停 serve/redis/qdrant，默认保留 hubloom_postgres
+  info "停止 Hubloom Serve / Redis / Qdrant（不影响其它项目容器）…"
+  "${COMPOSE[@]}" stop serve redis qdrant >/dev/null 2>&1 || true
+  "${COMPOSE[@]}" rm -f serve redis qdrant >/dev/null 2>&1 || true
 }
 
 update_hubloom_code() {
@@ -296,39 +307,40 @@ update_hubloom_code() {
   fi
 }
 
-pss_compose_available() {
-  [[ -f "$PSS_COMPOSE" ]]
-}
-
 cmd_postgres_up() {
   if [[ "${HUBLOOM_SKIP_POSTGRES:-0}" == "1" ]]; then
     info "跳过 Postgres（HUBLOOM_SKIP_POSTGRES=1）"
     return 0
   fi
-  if port_open 5432; then
-    info "5432 已可连接，复用现有 Postgres（不新建容器）"
+  need_cmd docker
+  docker info >/dev/null 2>&1 || die "Docker 未运行，请先打开 Docker Desktop"
+
+  if docker inspect -f '{{.State.Running}}' hubloom_postgres 2>/dev/null | grep -qx true; then
+    info "hubloom_postgres 已在运行"
     wait_tcp 127.0.0.1 5432 "Postgres" 10 || die "Postgres 未就绪"
     return 0
   fi
-  if ! pss_compose_available; then
-    echo "提示: 未找到 $PSS_COMPOSE，且 5432 空闲。"
-    echo "      请自行保证会话库可用，或设置 PERSONAL_SMART_ROOT。"
+
+  if port_open 5432; then
+    info "5432 已可连接，复用现有 Postgres（未启动 hubloom_postgres）"
+    echo "提示: 若要用本仓 hubloom_postgres，请先停掉占用 5432 的容器后再执行 ./start.sh。"
+    wait_tcp 127.0.0.1 5432 "Postgres" 10 || die "Postgres 未就绪"
     return 0
   fi
-  need_cmd docker
+
   remove_exited_publishers 5432
-  info "启动共享 Postgres（仅 postgres，不启 API/Web，不占用 8000/8080）…"
-  docker compose -f "$PSS_COMPOSE" up -d postgres
+  # 兼容曾用过的业务仓容器名，避免已退出实例占映射
+  docker rm -f personal_smart_system_postgres >/dev/null 2>&1 || true
+  info "启动 hubloom_postgres…"
+  "${COMPOSE[@]}" up -d postgres
   wait_tcp 127.0.0.1 5432 "Postgres" 40 || die "Postgres 未就绪"
 }
 
 cmd_postgres_down() {
-  if ! pss_compose_available; then
-    return 0
-  fi
   need_cmd docker
-  info "停止共享 Postgres…"
-  docker compose -f "$PSS_COMPOSE" stop postgres >/dev/null 2>&1 || true
+  info "停止 hubloom_postgres…"
+  "${COMPOSE[@]}" stop postgres >/dev/null 2>&1 || true
+  "${COMPOSE[@]}" rm -f postgres >/dev/null 2>&1 || true
 }
 
 check_mcp_swagger() {
@@ -358,7 +370,7 @@ print_urls() {
   API 文档        http://127.0.0.1:8765/docs
   Redis           localhost:6379
   Qdrant          http://127.0.0.1:6333
-  Postgres        localhost:5432   （仅库；不启示例 Web/API）
+  Postgres        localhost:5432   （Docker: hubloom_postgres）
   MCP OpenAPI     $swagger
   容器日志        ./start.sh logs
 
@@ -367,7 +379,7 @@ print_urls() {
   ./start.sh logs       # 看 Serve 容器日志
   ./start.sh status     # 状态
   ./start.sh down       # 停止 Serve + Redis/Qdrant
-  ./start.sh down --all # 再停共享 Postgres
+  ./start.sh down --all # 再停 hubloom_postgres
 
 EOF
 }
@@ -401,7 +413,7 @@ cmd_down() {
   if [[ "${1:-}" == "--all" ]]; then
     cmd_postgres_down
   else
-    echo "提示: 共享 Postgres 仍在运行；如需一并停止：./start.sh down --all"
+    echo "提示: hubloom_postgres 仍在运行；如需一并停止：./start.sh down --all"
   fi
   echo "已停止 Hubloom Serve 与基础设施（未动 8000/8080 上的其它服务）。"
 }
@@ -423,11 +435,6 @@ cmd_status() {
   else
     echo "(Docker 不可用)"
   fi
-  echo
-  if pss_compose_available && command -v docker >/dev/null 2>&1; then
-    echo "== 共享 Postgres（PersonalSmartSystem compose） =="
-    docker compose -f "$PSS_COMPOSE" ps postgres 2>/dev/null || true
-  fi
 }
 
 cmd_logs() {
@@ -436,7 +443,7 @@ cmd_logs() {
 }
 
 usage() {
-  sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main() {

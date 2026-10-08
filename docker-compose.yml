@@ -1,5 +1,5 @@
-# Hubloom 本地栈：Redis + Qdrant + Serve
-# Postgres / 业务 API(:8000) / 示例 Web(:8080) 不在此文件；见 ./start.sh
+# Hubloom 本地栈：Redis + Qdrant + Postgres + Serve
+# 业务 API(:8000) / 示例 Web(:8080) 不在此文件；见 ./start.sh
 #
 # 用法：
 #   ./start.sh            # 一键（含构建 Serve 镜像）
@@ -34,11 +34,31 @@ services:
     volumes:
       - hubloom_qdrant_data:/qdrant/storage
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: hubloom_postgres
+    restart: unless-stopped
+    ports:
+      - '5432:5432'
+    environment:
+      POSTGRES_USER: hubloom
+      POSTGRES_PASSWORD: hubloom
+      POSTGRES_DB: hubloom
+      TZ: Asia/Shanghai
+      PGTZ: Asia/Shanghai
+    volumes:
+      - hubloom_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U hubloom -d hubloom']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   serve:
     build:
       context: .
       dockerfile: Dockerfile
-    image: hubloom-serve:local
+    image: hubloom_serve:local
     container_name: hubloom_serve
     restart: unless-stopped
     ports:
@@ -52,8 +72,8 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     environment:
-      NO_PROXY: localhost,127.0.0.1,host.docker.internal,qdrant,redis
-      no_proxy: localhost,127.0.0.1,host.docker.internal,qdrant,redis
+      NO_PROXY: localhost,127.0.0.1,host.docker.internal,qdrant,redis,postgres
+      no_proxy: localhost,127.0.0.1,host.docker.internal,qdrant,redis,postgres
       # 避免容器继承宿主机代理去访问内网依赖
       HTTP_PROXY: ''
       HTTPS_PROXY: ''
@@ -65,3 +85,5 @@ volumes:
     name: hubloom_redis_data
   hubloom_qdrant_data:
     name: hubloom_qdrant_data
+  hubloom_postgres_data:
+    name: hubloom_postgres_data
