@@ -1,8 +1,8 @@
-# Hubloom 本地栈：Redis + Qdrant + Postgres + Serve
-# 业务 API(:8000) / 示例 Web(:8080) 不在此文件；见 ./start.sh
+# Hubloom 本地栈：Redis + Qdrant + Postgres + MCP + Serve
+# 业务 API / WorldQuantSwagger / 示例 Web 不在此文件；见 ./start.sh
 #
 # 用法：
-#   ./start.sh            # 一键（含构建 Serve 镜像）
+#   ./start.sh            # 一键（含构建 Serve / MCP 镜像）
 #   docker compose up -d  # 直接起 compose 服务
 
 name: hubloom
@@ -54,6 +54,33 @@ services:
       timeout: 5s
       retries: 12
 
+  mcp:
+    build:
+      context: .
+      dockerfile: src/mcp_adapter/Dockerfile
+    image: hubloom_mcp:local
+    container_name: hubloom_mcp
+    restart: unless-stopped
+    ports:
+      - '8001:8001'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    environment:
+      # start.sh 从 env.yaml 的 mcp.swagger_url 导出；默认指向本机 WorldQuantSwagger
+      MCP_SWAGGER_URL: ${MCP_SWAGGER_URL:-http://host.docker.internal:18765/openapi.json}
+      MCP_BASE_URL: ${MCP_BASE_URL:-}
+      MCP_AUTH_SCHEME: ${MCP_AUTH_SCHEME:-Bearer}
+      MCP_HTTP_TIMEOUT: ${MCP_HTTP_TIMEOUT:-900}
+      MCP_HTTP_HOST: 0.0.0.0
+      MCP_HTTP_PORT: 8001
+      MCP_HTTP_PATH: /mcp
+      NO_PROXY: localhost,127.0.0.1,host.docker.internal
+      no_proxy: localhost,127.0.0.1,host.docker.internal
+      HTTP_PROXY: ''
+      HTTPS_PROXY: ''
+      http_proxy: ''
+      https_proxy: ''
+
   serve:
     build:
       context: .
@@ -63,8 +90,11 @@ services:
     restart: unless-stopped
     ports:
       - '8765:8765'
+    depends_on:
+      - mcp
     volumes:
-      # start.sh 从 env.yaml 生成，把 localhost 改成 host.docker.internal
+      # start.sh 从 env.yaml 生成，把 localhost 改成 host.docker.internal；
+      # transport=http 时 mcp.url 再改成 compose 服务名 http://mcp:8001/mcp
       - ./config/env.docker.yaml:/app/config/env.yaml:ro
       - ./data:/app/data
       - ./logs:/app/logs
@@ -72,8 +102,8 @@ services:
     extra_hosts:
       - 'host.docker.internal:host-gateway'
     environment:
-      NO_PROXY: localhost,127.0.0.1,host.docker.internal,qdrant,redis,postgres
-      no_proxy: localhost,127.0.0.1,host.docker.internal,qdrant,redis,postgres
+      NO_PROXY: localhost,127.0.0.1,host.docker.internal,qdrant,redis,postgres,mcp
+      no_proxy: localhost,127.0.0.1,host.docker.internal,qdrant,redis,postgres,mcp
       # 避免容器继承宿主机代理去访问内网依赖
       HTTP_PROXY: ''
       HTTPS_PROXY: ''

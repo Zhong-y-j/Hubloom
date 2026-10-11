@@ -158,6 +158,10 @@ class HubloomRuntime:
             mcp_timeout = float(cfg.mcp_timeout) if cfg.mcp_timeout else 900.0
             if mcp_timeout <= 0:
                 mcp_timeout = 900.0
+            mcp_transport = (cfg.mcp_transport or "stdio").strip().lower()
+            mcp_url = (cfg.mcp_url or "").strip() or None
+            if mcp_transport == "http" and not mcp_url:
+                raise ValueError("mcp.transport=http 但未配置 mcp.url")
             src_cwd = str(_project_root(cfg) / "src")
             mcp_setup = await load_agent_mcp_bindings(
                 swagger_url=swagger,
@@ -165,6 +169,8 @@ class HubloomRuntime:
                 env=child_env or None,
                 cwd=src_cwd,
                 timeout=mcp_timeout,
+                transport=mcp_transport,
+                mcp_url=mcp_url,
             )
             mcp_tools = list(mcp_setup.bindings.tools)
 

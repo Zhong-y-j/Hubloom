@@ -152,22 +152,36 @@ async def load_agent_mcp_bindings(
     env: dict[str, str] | None = None,
     cwd: str | None = None,
     timeout: float = 900.0,
+    transport: str = "stdio",
+    mcp_url: str | None = None,
 ) -> AgentMcpSetup:
-    """主路径：catalog + 全量 MCP（stdio）+ 原生 list_api/call_api。
+    """主路径：catalog + 全量 MCP（stdio 或独立 HTTP）+ 原生 list_api/call_api。
 
-    Runtime 现有调用保持不变；多路 MCP / HTTP 请用 ``connect_mcp_endpoints``。
+    - ``transport=stdio``：本地拉起 OpenAPI worker（默认）。
+    - ``transport=http``：连接已部署的 MCP（需 ``mcp_url``）；catalog 仍读 ``swagger_url``。
+    多路 MCP 请用 ``connect_mcp_endpoints``。
     """
     from mcp_adapter.gateway.catalog import load_catalog
     from tools.builtin.api_tools import build_api_tools
 
+    mode = (transport or "stdio").strip().lower()
+    if mode not in ("stdio", "http"):
+        raise ValueError(f"mcp transport 仅支持 stdio|http，收到: {transport!r}")
+
     catalog = await load_catalog(swagger_url=swagger_url, base_url=base_url)
-    client = await connect_full_mcp(
-        swagger_url=swagger_url,
-        base_url=base_url,
-        env=env,
-        cwd=cwd,
-        timeout=timeout,
-    )
+    if mode == "http":
+        url = (mcp_url or "").strip()
+        if not url:
+            raise ValueError("mcp.transport=http 时需要 mcp.url")
+        client = await connect_http_mcp(url, timeout=timeout)
+    else:
+        client = await connect_full_mcp(
+            swagger_url=swagger_url,
+            base_url=base_url,
+            env=env,
+            cwd=cwd,
+            timeout=timeout,
+        )
     bindings = MCPBindings(
         tools=build_api_tools(catalog, client),
         client=client,

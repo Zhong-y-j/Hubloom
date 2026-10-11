@@ -173,9 +173,18 @@ class MCPToolClient:
                 timeout=httpx.Timeout(self.timeout, read=max(self.timeout, 300.0)),
             )
             await stack.enter_async_context(http_client)
-            read, write, _get_sid = await stack.enter_async_context(
+            # mcp>=2.x：yield (read, write)；旧版曾为 (read, write, get_session_id)
+            streams = await stack.enter_async_context(
                 streamable_http_client(self._url, http_client=http_client)
             )
+            if len(streams) == 2:
+                read, write = streams
+            elif len(streams) >= 3:
+                read, write = streams[0], streams[1]
+            else:
+                raise RuntimeError(
+                    f"streamable_http_client 返回异常: 期望 2+ 流，实际 {len(streams)}"
+                )
             session = await stack.enter_async_context(ClientSession(read, write))
             await asyncio.wait_for(session.initialize(), timeout=self.timeout)
         except BaseException:

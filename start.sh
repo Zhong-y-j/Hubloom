@@ -4,20 +4,21 @@
 # 会拉起（本仓库 docker-compose）：
 #   - Redis + Qdrant（端口已占用则复用现有服务）
 #   - Postgres（hubloom_postgres；端口空闲才起，可用 HUBLOOM_SKIP_POSTGRES=1 跳过）
+#   - MCP HTTP（hubloom_mcp:8001；OpenAPI→工具；读 mcp.swagger_url）
 #   - Hubloom Serve（镜像 hubloom_serve，读 config/env.docker.yaml）
 #
 # 不会：
 #   - 打包 / 部署示例站 Web（8080）
-#   - 启动业务 API 容器（8000）——留给你其它服务；MCP 只检查 config 里的 swagger_url
-#   - 强占已被其它容器占用的 6379 / 6333 / 5432
+#   - 启动业务 API / WorldQuantSwagger（如 :18765）——请自行保证 swagger_url 可访问
+#   - 强占已被其它容器占用的 6379 / 6333 / 5432 / 8001
 #
 # 用法：
-#   ./start.sh              # 构建并启动（含 Serve）
+#   ./start.sh              # 构建并启动（含 MCP + Serve）
 #   ./start.sh up           # 同上
-#   ./start.sh update       # 拉代码、重建 Serve 镜像并重启
-#   ./start.sh down         # 停 Serve + Redis/Qdrant（Postgres 默认保留）
+#   ./start.sh update       # 拉代码、重建 MCP/Serve 镜像并重启
+#   ./start.sh down         # 停 Serve + MCP + Redis/Qdrant（Postgres 默认保留）
 #   ./start.sh down --all   # 上者 + 停 hubloom_postgres
-#   ./start.sh restart      # 仅重启 Serve 容器
+#   ./start.sh restart      # 重启 MCP + Serve
 #   ./start.sh status       # 查看状态
 #   ./start.sh logs         # 跟踪 Serve 容器日志
 #   ./start.sh infra        # 仅起 Redis + Qdrant
@@ -25,7 +26,8 @@
 # 环境变量（可选）：
 #   HUBLOOM_SKIP_GIT=1      跳过 git pull
 #   HUBLOOM_SKIP_POSTGRES=1 不启动 Postgres
-#   HUBLOOM_NO_BUILD=1      不重建 Serve 镜像（仅 up -d）
+#   HUBLOOM_SKIP_MCP=1      不启动 hubloom_mcp（仅当你不用 transport=http 时）
+#   HUBLOOM_NO_BUILD=1      不重建镜像（仅 up -d）
 
 set -euo pipefail
 
@@ -85,6 +87,60 @@ generate_docker_config() {
         "$CFG_DOCKER" && rm -f "${CFG_DOCKER}.bak"
     fi
   fi
+
+  # transport=http：Serve 与 MCP 同 compose 网络，改用服务名（勿走 host 环回）
+  if grep -qE '^[[:space:]]*transport:[[:space:]]*http[[:space:]]*$' "$CFG_DOCKER"; then
+    sed -i.bak -E \
+      's|^([[:space:]]*url:[[:space:]]*)https?://(127\.0\.0\.1|localhost|host\.docker\.internal):8001/mcp|\1http://mcp:8001/mcp|' \
+      "$CFG_DOCKER" && rm -f "${CFG_DOCKER}.bak"
+  fi
+}
+
+# 只读 mcp: 段内的一行（避免误读 llm.base_url / llm.timeout）
+mcp_yaml_value() {
+  local key="$1"
+  [[ -f "$CFG" ]] || return 0
+  awk -v key="$key" '
+    /^[a-zA-Z0-9_]+:/ {
+      in_mcp = ($0 ~ /^mcp:/)
+      next
+    }
+    in_mcp && $0 ~ ("^[[:space:]]*" key ":") {
+      sub("^[[:space:]]*" key ":[[:space:]]*", "")
+      sub("[[:space:]]+#.*$", "")
+      gsub(/^["'\'']|["'\'']$/, "")
+      gsub(/\r/, "")
+      print
+      exit
+    }
+  ' "$CFG"
+}
+
+# 从 env.yaml 导出 MCP 容器所需的 OpenAPI 地址（容器内访问宿主机用 host.docker.internal）
+export_mcp_compose_env() {
+  local swagger base timeout scheme
+  swagger="$(swagger_url_from_config)"
+  if [[ -n "$swagger" ]]; then
+    swagger="${swagger//127.0.0.1/host.docker.internal}"
+    swagger="${swagger//localhost/host.docker.internal}"
+    export MCP_SWAGGER_URL="$swagger"
+  else
+    export MCP_SWAGGER_URL="${MCP_SWAGGER_URL:-http://host.docker.internal:18765/openapi.json}"
+  fi
+  base="$(mcp_yaml_value base_url || true)"
+  if [[ -n "$base" && "$base" != "..." ]]; then
+    base="${base//127.0.0.1/host.docker.internal}"
+    base="${base//localhost/host.docker.internal}"
+    export MCP_BASE_URL="$base"
+  fi
+  timeout="$(mcp_yaml_value timeout || true)"
+  if [[ -n "$timeout" ]]; then
+    export MCP_HTTP_TIMEOUT="$timeout"
+  fi
+  scheme="$(mcp_yaml_value auth_scheme || true)"
+  if [[ -n "$scheme" ]]; then
+    export MCP_AUTH_SCHEME="$scheme"
+  fi
 }
 
 stop_legacy_local_agent() {
@@ -119,6 +175,39 @@ stop_agent() {
   fi
 }
 
+cmd_mcp_up() {
+  if [[ "${HUBLOOM_SKIP_MCP:-0}" == "1" ]]; then
+    info "跳过 MCP（HUBLOOM_SKIP_MCP=1）"
+    return 0
+  fi
+  need_cmd docker
+  docker info >/dev/null 2>&1 || die "Docker 未运行，请先打开 Docker Desktop"
+  export_mcp_compose_env
+
+  if docker inspect -f '{{.State.Running}}' hubloom_mcp 2>/dev/null | grep -qx true; then
+    info "hubloom_mcp 已在运行"
+  elif port_open 8001; then
+    info "8001 已可连接，复用现有进程（未强制重建 hubloom_mcp）"
+    echo "提示: 若要用本仓 hubloom_mcp，请先停掉占用 8001 的容器后再执行 ./start.sh。"
+  else
+    remove_exited_publishers 8001
+  fi
+
+  local build_args=()
+  if [[ "${HUBLOOM_NO_BUILD:-0}" != "1" ]]; then
+    build_args+=(--build)
+    info "构建并启动 hubloom_mcp（OpenAPI → ${MCP_SWAGGER_URL}）…"
+  else
+    info "启动 hubloom_mcp（跳过 build）…"
+  fi
+  "${COMPOSE[@]}" up -d "${build_args[@]}" mcp
+  wait_tcp 127.0.0.1 8001 "MCP HTTP" 60 || {
+    echo "---- MCP 容器日志 ----" >&2
+    "${COMPOSE[@]}" logs --tail=80 mcp >&2 || true
+    die "hubloom_mcp 未就绪（请确认 MCP_SWAGGER_URL 可访问）"
+  }
+}
+
 start_agent() {
   ensure_dirs
   ensure_config
@@ -127,6 +216,7 @@ start_agent() {
 
   stop_legacy_local_agent
   generate_docker_config
+  cmd_mcp_up
 
   if port_open 8765 && ! serve_running; then
     die "8765 已被其它进程占用，请先停止后再启动 Hubloom Serve"
@@ -290,10 +380,10 @@ cmd_infra_up() {
 
 cmd_infra_down() {
   need_cmd docker
-  # 与 postgres 同 compose：只停 serve/redis/qdrant，默认保留 hubloom_postgres
-  info "停止 Hubloom Serve / Redis / Qdrant（不影响其它项目容器）…"
-  "${COMPOSE[@]}" stop serve redis qdrant >/dev/null 2>&1 || true
-  "${COMPOSE[@]}" rm -f serve redis qdrant >/dev/null 2>&1 || true
+  # 与 postgres 同 compose：停 serve/mcp/redis/qdrant，默认保留 hubloom_postgres
+  info "停止 Hubloom Serve / MCP / Redis / Qdrant（不影响其它项目容器）…"
+  "${COMPOSE[@]}" stop serve mcp redis qdrant >/dev/null 2>&1 || true
+  "${COMPOSE[@]}" rm -f serve mcp redis qdrant >/dev/null 2>&1 || true
 }
 
 update_hubloom_code() {
@@ -368,6 +458,7 @@ print_urls() {
 已就绪：
   Hubloom Serve   http://127.0.0.1:8765   （Docker: hubloom_serve）
   API 文档        http://127.0.0.1:8765/docs
+  MCP HTTP        http://127.0.0.1:8001/mcp   （Docker: hubloom_mcp）
   Redis           localhost:6379
   Qdrant          http://127.0.0.1:6333
   Postgres        localhost:5432   （Docker: hubloom_postgres）
@@ -375,10 +466,10 @@ print_urls() {
   容器日志        ./start.sh logs
 
 常用：
-  ./start.sh update     # 拉代码 + 重建镜像 + 重启
+  ./start.sh update     # 拉代码 + 重建 MCP/Serve 镜像 + 重启
   ./start.sh logs       # 看 Serve 容器日志
   ./start.sh status     # 状态
-  ./start.sh down       # 停止 Serve + Redis/Qdrant
+  ./start.sh down       # 停止 Serve + MCP + Redis/Qdrant
   ./start.sh down --all # 再停 hubloom_postgres
 
 EOF
@@ -422,7 +513,12 @@ cmd_restart() {
   ensure_config
   generate_docker_config
   need_cmd docker
-  info "重启 Hubloom Serve 容器…"
+  export_mcp_compose_env
+  info "重启 hubloom_mcp + Hubloom Serve…"
+  if [[ "${HUBLOOM_SKIP_MCP:-0}" != "1" ]]; then
+    "${COMPOSE[@]}" up -d mcp
+    wait_tcp 127.0.0.1 8001 "MCP HTTP" 60 || die "hubloom_mcp 未就绪"
+  fi
   "${COMPOSE[@]}" up -d serve
   wait_http "http://127.0.0.1:8765/docs" "Hubloom Serve" 60 || die "Hubloom Serve 未就绪"
   print_urls
@@ -443,7 +539,7 @@ cmd_logs() {
 }
 
 usage() {
-  sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 main() {
